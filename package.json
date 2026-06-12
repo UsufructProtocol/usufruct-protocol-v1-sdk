@@ -16,7 +16,7 @@
     "dev": "tsc --watch",
     "lint": "eslint src",
     "format": "prettier --write src",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run"
   },
   "keywords": [
     "sui",
@@ -34,7 +34,8 @@
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@mysten/sui": "^2.17.0"
