@@ -40,19 +40,37 @@ SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
    `apply.step` predicted the post-transition on-chain state bit-exactly on
    the first try (tenure expiry → descent → idle chain). Handover settlement
    (curve math) correctly refuses to ship without golden coverage.
-6. **Asset-generic `A` — partially refuted.** The `Uint8Array` fallback of
-   SPEC §10 is impossible: the asset sits mid-struct, so decoding *requires*
-   the exact schema, and a wrong schema misaligns silently (observed live
-   with `DummyAsset { id, uses }`). Proposed mitigation: re-serialize the
-   decoded value and byte-compare as a decode invariant.
+6. **Asset-generic `A` — refuted and amended.** The `Uint8Array` fallback of
+   SPEC §10 was impossible: the asset sits mid-struct, so decoding *requires*
+   the exact schema, and a wrong schema misaligned silently (observed live
+   with `DummyAsset { id, uses }`). **SPEC §10 is now amended**: integrator
+   schema required, `uidAssetSchema` for uid-only assets, and
+   `decodeEscrowState` enforces a serialize∘parse identity invariant
+   (`EscrowDecodeError` on mismatch — regression-tested against the fixture).
 7. **Kernel stress — none.** No 5th primitive, no methods on state, no
-   ambient time. Pattern A reads live as IO functions outside `View<T>`
-   (`src/views/inspect.ts`) — SPEC should name this category explicitly.
-   Time-as-parameter paid off: a ~15s local clock skew was harmless for
-   views (same `t` both sides) and only mattered for *waiting* on chain
-   boundaries (harness concern, solved by reading the `0x6` clock).
-8. **Drift detection — not yet exercised** (edit a Move signature → regen →
-   compile error placement). Follow-up.
+   ambient time. Pattern A reads are now a SPEC-named category — **Inspect
+   functions** (§6.2.1): IO `(client, target, t) => Promise<T>` in
+   `src/views/inspect.ts`. Time-as-parameter paid off: a ~15s local clock
+   skew was harmless for views (same `t` both sides) and only mattered for
+   *waiting* on chain boundaries (harness concern, solved by reading the
+   `0x6` clock). Open observation: inbox actions (collect) operate on no
+   `EscrowState`, so they fit none of the three §4.3 lifecycle variants —
+   classification deferred.
+8. **Drift detection — exercised and confirmed.** Renaming the
+   `TenancySchedule.phase_start` field in a scratch copy of the Move package
+   and regenerating produced compile errors *only* in the hand-written files
+   that mirror it (`src/views/temporal.ts`, `src/actions/apply.ts` — with
+   "Did you mean 'phase_started'?" suggestions); adding a `rent` parameter
+   produced exactly one error in `src/actions/rent.ts` ("Source has 3
+   element(s) but target requires 4"). Zero errors inside `src/codegen`.
+   SPEC §4.5's claim holds precisely.
+
+**§5.2 proven live (2026-06-12):** `integrate_into_portfolio` put
+`EarningsMessage<SUI>` and `EarningsMessage<DUMMY_COIN>` in one shared inbox;
+`discoverInboxMessages` partitioned them and `collectMessages` drained both
+coins in a single PTB (one fully-qualified `Receiving<…<C>>` vector + one
+collect call per coin), 900 mist each — the exact scenario that aborts in
+`0x2::transfer::receive_impl` when tickets mix coins.
 
 Chain-observed behaviors worth remembering: `accrued_credit_mist` aborts on a
 non-rented escrow; `BasisPoints` has no public constructor (pass pure `u64`,
