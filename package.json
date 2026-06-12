@@ -1,0 +1,40 @@
+{
+  "name": "@usufruct-protocol/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Usufruct protocol on Sui",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src",
+    "format": "prettier --write src",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "sui",
+    "usufruct",
+    "sdk"
+  ],
+  "author": "Antonio Jiménez <build@0xkurious.xyz>",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "@typescript-eslint/eslint-plugin": "^8.61.0",
+    "@typescript-eslint/parser": "^8.61.0",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0"
+  }
+}
