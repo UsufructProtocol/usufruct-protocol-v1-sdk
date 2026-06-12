@@ -250,6 +250,14 @@ TypeScript's exhaustiveness checking ensures the same total-function discipline
 that Move enforces on the producer side. This collapse is normative: the SDK
 does not expose the unrolled `_is_X` / `_field` API.
 
+The collapse extends beyond enum payloads to every unrolled FFI family
+(adopted 2026-06-12): the `*_kind` string views collapse into the same
+discriminated unions, and the per-field cycle-params accessors
+(`{active,pending,next}_ensemble_{floor,ceiling,handover,descent}_*`)
+collapse into record views (`activeCycleParams`, …). The unrolled on-chain
+views remain the parity oracle: the e2e harness reconstructs each union from
+them and asserts equality against the collapsed view.
+
 ### §5.2 — What Move enforces that TS cannot replicate
 
 - Linearity (no `drop`, no `copy`).
@@ -617,6 +625,7 @@ distinct packages under `sdk/packages/` once core stabilises.
 | Surfacing `&Random`, `&Clock`, `&mut TxContext` as SDK-visible parameters.          | Rejected    | These are FFI artefacts of Move signatures, not semantic inputs. The SDK injects the `0x8` and `0x6` singletons at `toPtb` time; `TxContext` is supplied by the Sui transaction runtime. |
 | `Uint8Array` fallback for unknown asset BCS layouts.                                | Rejected (amended 2026-06-12) | Refuted by the prototype: the asset sits mid-struct, so decoding requires the exact schema; a wrong schema misaligns silently. Replaced by required integrator schema + `uidAssetSchema` for uid-only assets + re-serialize byte-compare decode invariant (`EscrowDecodeError`). See §10. |
 | Inspect functions as the named category for Pattern A reads.                        | Adopted (2026-06-12) | IO of shape `(client, target, t) => Promise<T>` in `src/views/inspect.ts`; not a `View<T>`, not a fifth primitive. Client by parameter, mirroring time-as-parameter. See §6.2.1. |
+| Broad §5.1 collapse: `*_kind` views and cycle-params accessors fold into unions/records. | Adopted (2026-06-12) | ~68 TypeScript views cover the ~124 Move views; the unrolled API is reconstruction material for the parity oracle only. 128 live parity cases (64 × idle/occupied states) verified on testnet. |
 
 ---
 

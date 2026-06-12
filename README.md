@@ -65,6 +65,35 @@ SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
    element(s) but target requires 4"). Zero errors inside `src/codegen`.
    SPEC §4.5's claim holds precisely.
 
+### View surface — closed (2026-06-12)
+
+The full read surface of `escrow.move` (~124 public views) plus
+`cap.move`/`fees.move` is mirrored by **68 `View<T>` functions + 6 Inspect
+functions**, under the broad §5.1 collapse:
+
+| Move family (unrolled) | TS mirror (collapsed) |
+|---|---|
+| 8 state predicates (`is_*`) | 8 boolean views |
+| identity/inboxes/type names | `assetId`, `governanceCapId`, `earningsInboxId`, `feeInboxId`, `assetTypeName`, `coinTypeName` |
+| active/pending seat (8 views) | 8 views (caps, addrs, stakes, tenures) |
+| cap verification (4 views with arg) | 4 factories `(capId) => View<boolean>` |
+| 12 cycle-params accessors | 3 records: `activeCycleParams`, `nextCycleParams`, `pendingCycleParams` |
+| ~55 policy views (`*_is_X`, `*_kind`, fields) | 10 discriminated unions (`handover`, `auctionWindow`, `priceEscalation`, `creditShape`, …) |
+| temporal + commitments (~18 views) | 18 views (expiries, remaining, anchors, credit flags) |
+| settlement/curves (5 views) | 5 Inspect functions (Pattern A — math evaluated by the bytecode) |
+| constants (2) | `PROTOCOL_FEE_BPS`, `BPS_DENOMINATOR` |
+
+Verification: a shared data-driven table of **64 parity cases**
+(`test/parity-cases.ts`) reconstructs each collapsed value from the unrolled
+on-chain views and asserts equality — run live in two states (idle and
+occupied; 128 cases, all equal on first run) and replayed offline from
+chain-captured fixtures (181 tests). Marginal cost over the full surface:
+~7 lines/view — criterion #3's linear extrapolation held.
+
+Demand-state views (`pending*`, `handoverExpiryMs`, …) are validated offline
+against a synthetic Demand fixture; reaching Demand live needs a second
+bidder and a handover window (deferred with the remaining actions).
+
 **§5.2 proven live (2026-06-12):** `integrate_into_portfolio` put
 `EarningsMessage<SUI>` and `EarningsMessage<DUMMY_COIN>` in one shared inbox;
 `discoverInboxMessages` partitioned them and `collectMessages` drained both
