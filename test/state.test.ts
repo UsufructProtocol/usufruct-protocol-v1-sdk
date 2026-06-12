@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { bcs } from '@mysten/sui/bcs';
 import { describe, expect, it } from 'vitest';
 import { Escrow } from '../src/codegen/usufruct/escrow.js';
 import {
+  EscrowDecodeError,
   decodeEscrowState,
   escrowTypeArgs,
   uidAssetSchema,
@@ -80,5 +83,24 @@ describe('EscrowState', () => {
     // State is data: the type rejects mutation.
     // @ts-expect-error — EscrowState fields are readonly
     state.assetType = 'nope';
+  });
+
+  it('decode invariant: a wrong asset schema throws instead of misaligning', () => {
+    // Real chain-captured escrow whose asset is DummyAsset { id, uses } —
+    // before the invariant, decoding it as uid-only silently shifted every
+    // field after the asset by 8 bytes (observed live on testnet).
+    const fixture = JSON.parse(
+      readFileSync(new URL('../fixtures/testnet-escrow-1.json', import.meta.url), 'utf8'),
+    );
+    const snapshot = {
+      objectId: fixture.objectId,
+      type: fixture.type,
+      content: Uint8Array.from(Buffer.from(fixture.contentBase64, 'base64')),
+    };
+
+    expect(() => decodeEscrowState(snapshot, uidAssetSchema)).toThrow(EscrowDecodeError);
+
+    const correct = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
+    expect(() => decodeEscrowState(snapshot, correct)).not.toThrow();
   });
 });

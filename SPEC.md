@@ -323,6 +323,34 @@ maintenance liability that does not pay for itself when the on-chain call is
 cheap and deterministic. (See §8 mitigation 1 for the cross-runtime golden
 test discipline that applies *if* Pattern B is later chosen for any of these.)
 
+#### §6.2.1 — Inspect functions
+
+Pattern A reads have a named category: **Inspect functions**. An Inspect
+function is IO with the shape
+
+```
+(client: ClientWithCoreApi, target, t: Ms) => Promise<T>
+```
+
+living in `src/views/inspect.ts`. The discipline:
+
+- An Inspect function is **not** a `View<T>` — it cannot be, because it
+  performs IO — and it is **not** a fifth primitive. It is the on-chain
+  evaluation of a view the SDK chooses not to mirror (§6.2 rationale).
+- The client enters by parameter, never ambiently — the same principle as
+  time-as-parameter (§3). Nothing downstream captures a client.
+- One Inspect function per Pattern A view; constructed from the codegen call
+  wrapper plus `simulateTransaction` BCS return-value decoding.
+- Moving a view from Pattern A to Pattern B (golden-test gated, §8.2)
+  replaces its Inspect function with a `View<T>` of the same name; the
+  Inspect form is then deleted, not kept as a parallel path.
+
+Validated in the prototype: `floorPriceMist` and `accruedCreditMist` shipped
+as Inspect functions with no pressure on the four-primitive kernel.
+(Chain-observed: `accrued_credit_mist` aborts on a non-rented escrow — an
+Inspect function surfaces the protocol's own abort, which is the intended
+behaviour, not an SDK defect.)
+
 ### §6.3 — Pattern C (indexer) — non-core
 
 History, aggregations, and discovery queries (e.g. "all escrows owned by
@@ -530,7 +558,7 @@ form; it must use Pattern A (`devInspect`) until a golden test is added.
 | Risk                                                                                    | Mitigation                                                                                     |
 | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Bit-exactness drift between TS `Action::step` / `View` and Move semantics.              | Cross-runtime golden tests (§8.2). No `step` ships without coverage.                           |
-| `Asset: key + store` has user-defined BCS layout the SDK cannot know in advance.        | `EscrowState<A>` parameterised by integrator-supplied BCS schema; falls back to `Uint8Array`.  |
+| `Asset: key + store` has user-defined BCS layout the SDK cannot know in advance.        | `EscrowState<A>` parameterised by integrator-supplied BCS schema, which is **required** for any asset richer than `{ id: UID }` (`uidAssetSchema` covers only that shape). A blind `Uint8Array` fallback is impossible: the asset sits mid-struct inside `AssetCustodyOpen/Locked`, and BCS is not self-describing, so a wrong schema misaligns every subsequent field *silently* (observed live on testnet, 2026-06-12, decoding `DummyAsset { id, uses }` as uid-only). The decode invariant — `serialize(parse(bytes))` must reproduce the original bytes, else `EscrowDecodeError` — converts that silent corruption into an immediate failure. |
 | Move source evolves; TypeScript drifts silently.                                        | Codegen regenerated on `sui move build`; type errors in hand-written layer pinpoint changes.   |
 | Pattern A reliance accumulates if golden tests are deferred.                            | Golden test coverage is the prerequisite for moving any view from Pattern A to Pattern B.      |
 | Collecting from a coin-polymorphic inbox with a `Receiving<…<C>>` ticket whose target object is a different coin → opaque `0x2::transfer::receive_impl` abort (code 2), not a protocol error; Move can't pre-check a `Receiving<T>`'s target type. | Collect `Action` discovers the coin types present in the inbox and emits one collect PTB per `C`, filtering tickets by the fully-qualified `EarningsMessage<C>` / `FeeMessage<C>` type, so a mismatched ticket is never built (§5.2). Confirmed live in the v1.4.2 audit. |
@@ -587,6 +615,8 @@ distinct packages under `sdk/packages/` once core stabilises.
 | Implicit ambient clock (`now()` helper).                                            | Rejected    | Violates §3; closes off simulator and testbed.                                                     |
 | Type-level marker `Probabilistic<T>` on actions that consume `&Random` in Move.     | Rejected    | Leaks an FFI artefact into the SDK type system. Determinism is a property of the state's config, not of the action's type. Stochasticity is read from views over state (§8.1), not from action types. |
 | Surfacing `&Random`, `&Clock`, `&mut TxContext` as SDK-visible parameters.          | Rejected    | These are FFI artefacts of Move signatures, not semantic inputs. The SDK injects the `0x8` and `0x6` singletons at `toPtb` time; `TxContext` is supplied by the Sui transaction runtime. |
+| `Uint8Array` fallback for unknown asset BCS layouts.                                | Rejected (amended 2026-06-12) | Refuted by the prototype: the asset sits mid-struct, so decoding requires the exact schema; a wrong schema misaligns silently. Replaced by required integrator schema + `uidAssetSchema` for uid-only assets + re-serialize byte-compare decode invariant (`EscrowDecodeError`). See §10. |
+| Inspect functions as the named category for Pattern A reads.                        | Adopted (2026-06-12) | IO of shape `(client, target, t) => Promise<T>` in `src/views/inspect.ts`; not a `View<T>`, not a fifth primitive. Client by parameter, mirroring time-as-parameter. See §6.2.1. |
 
 ---
 

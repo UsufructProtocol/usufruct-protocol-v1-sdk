@@ -78,6 +78,25 @@ export function escrowTypeArgs(type: string): [asset: string, coin: string] {
   throw new Error(`Expected two type arguments in: ${type}`);
 }
 
+/**
+ * Thrown when the decoded value does not re-serialize to the original bytes
+ * — almost always a wrong asset schema. BCS is not self-describing: a wrong
+ * schema misaligns every field after the asset *silently* (observed live on
+ * testnet with `DummyAsset { id, uses }` decoded as uid-only). This
+ * invariant turns that silent corruption into an immediate failure.
+ */
+export class EscrowDecodeError extends Error {
+  constructor(type: string, schemaName: string) {
+    super(
+      `Decoded escrow does not re-serialize to its original bytes. ` +
+        `The asset schema "${schemaName}" does not match the asset inside ${type}. ` +
+        `Supply the asset's exact BCS schema (uidAssetSchema only fits assets ` +
+        `whose sole field is id: UID).`,
+    );
+    this.name = 'EscrowDecodeError';
+  }
+}
+
 /** Decode a fetched escrow object into an `EscrowState`. Pure. */
 export function decodeEscrowState<
   A extends AssetSchema = typeof uidAssetSchema,
@@ -85,7 +104,19 @@ export function decodeEscrowState<
 >(snapshot: EscrowSnapshot, assetSchema?: A): EscrowState<A, C> {
   const schema = (assetSchema ?? uidAssetSchema) as A;
   const [assetType, coinType] = escrowTypeArgs(snapshot.type);
-  const escrow = Escrow(schema).parse(snapshot.content) as EscrowData<A>;
+  const bcsSchema = Escrow(schema);
+  const escrow = bcsSchema.parse(snapshot.content) as EscrowData<A>;
+
+  // Decode invariant (SPEC §10): parse ∘ serialize must be the identity on
+  // the original bytes, otherwise the asset schema misaligned the read.
+  const reserialized = bcsSchema.serialize(escrow as never).toBytes();
+  if (
+    reserialized.length !== snapshot.content.length ||
+    !reserialized.every((b, i) => b === snapshot.content[i])
+  ) {
+    throw new EscrowDecodeError(snapshot.type, schema.name);
+  }
+
   return {
     objectId: id<'Escrow'>(snapshot.objectId),
     assetType,
