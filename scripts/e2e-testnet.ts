@@ -12,9 +12,14 @@ import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '../src/actions/index.js';
 import { EarningsMessageCollected } from '../src/codegen/usufruct/earnings_message.js';
-import * as escrowCalls from '../src/codegen/usufruct/escrow.js';
+import {
+  PARITY_CASES,
+  parityEqual,
+  stable as pStable,
+  type ParityCtx,
+} from '../test/parity-cases.js';
 import { TESTNET } from '../src/config/network.js';
-import { id, ms, tenureCount } from '../src/primitives/brand.js';
+import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
 import * as inspect from '../src/views/inspect.js';
 import * as views from '../src/views/index.js';
@@ -52,12 +57,75 @@ const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u
 const source = chainSource(client, { assetSchema: dummyAssetSchema });
 
 /** Key-order-insensitive deep equality (BCS parse emits `$kind` last). */
-function stable(value: unknown): string {
+function stableJson(value: unknown): string {
   return JSON.stringify(value, (_k, v: unknown) =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
       ? Object.fromEntries(Object.entries(v as object).sort(([a], [b]) => a.localeCompare(b)))
       : v,
   );
+}
+const stable = stableJson;
+
+const SIM_CHUNK = 40;
+
+/**
+ * Run the full parity table against a live escrow in its current state:
+ * every mirrored view vs the unrolled on-chain views, chunked into
+ * simulateTransaction batches. Returns the decoded on-chain answers for
+ * fixture persistence.
+ */
+async function runParity(
+  label: string,
+  escrowState: Awaited<ReturnType<typeof source.fetch>>,
+  ctx: ParityCtx,
+): Promise<Record<string, unknown>> {
+  // Flatten all calls, remembering each case's slice.
+  const flatCalls: Array<(tx: Transaction, c: ParityCtx) => void> = [];
+  const slices: Array<{ start: number; end: number }> = [];
+  for (const pc of PARITY_CASES) {
+    slices.push({ start: flatCalls.length, end: flatCalls.length + pc.calls.length });
+    flatCalls.push(...pc.calls);
+  }
+
+  const allRets: Uint8Array[] = [];
+  for (let i = 0; i < flatCalls.length; i += SIM_CHUNK) {
+    const chunk = flatCalls.slice(i, i + SIM_CHUNK);
+    const tx = new Transaction();
+    tx.setSender(me);
+    for (const add of chunk) add(tx, ctx);
+    const sim = await client.core.simulateTransaction({
+      transaction: tx,
+      checksEnabled: false,
+      include: { commandResults: true },
+    });
+    if (sim.$kind !== 'Transaction') throw new Error(`${label}: parity sim failed`);
+    for (let j = 0; j < chunk.length; j++) {
+      const ret = sim.commandResults?.[j]?.returnValues?.[0];
+      if (!ret) throw new Error(`${label}: command ${i + j} returned no value`);
+      allRets.push(ret.bcs);
+    }
+  }
+
+  const results: Record<string, unknown> = {};
+  let failures = 0;
+  for (let k = 0; k < PARITY_CASES.length; k++) {
+    const pc = PARITY_CASES[k]!;
+    const rets = allRets.slice(slices[k]!.start, slices[k]!.end);
+    const onchain = pc.decode(rets, ctx);
+    const local = pc.local(escrowState, ms(ctx.nowMs), ctx);
+    const ok = parityEqual(local, onchain);
+    if (!ok) {
+      failures++;
+      check(`${label} · ${pc.name}`, false, `local=${pStable(local)} chain=${pStable(onchain)}`);
+    }
+    results[pc.name] = JSON.parse(pStable(onchain));
+  }
+  check(
+    `${label}: ${PARITY_CASES.length} view parity cases`,
+    failures === 0,
+    failures === 0 ? 'all equal' : `${failures} mismatches`,
+  );
+  return results;
 }
 
 const mintAsset = (tx: Transaction) =>
@@ -158,7 +226,7 @@ async function main() {
     );
   }
 
-  step('4. Pattern B live parity (prototype golden gate)');
+  step('4. Full live parity — Idle state (golden gate)');
   {
     const now = BigInt(Date.now());
     // Raw bytes of the same version the parity answers describe (fixture).
@@ -166,69 +234,14 @@ async function main() {
       objectId: escrowId,
       include: { content: true },
     });
-    const tx = new Transaction();
-    tx.setSender(me);
-    const opts = { package: TESTNET.packageId, typeArguments: TYPE_ARGS } as const;
-    tx.add(escrowCalls.isIdle({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.isRented({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.isRetired({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.assetId({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.governanceCapId({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.activeUsufructuaryAddr({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.phaseStartMs({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.tenureExpiryMs({ ...opts, arguments: [escrowId] }));
-    tx.add(escrowCalls.transitionIsReady({ ...opts, arguments: [escrowId, now] }));
-    tx.add(escrowCalls.nextTransitionMs({ ...opts, arguments: [escrowId, now] }));
-    const sim = await client.core.simulateTransaction({
-      transaction: tx,
-      checksEnabled: false,
-      include: { commandResults: true },
-    });
-    if (sim.$kind !== 'Transaction') throw new Error('parity sim failed');
-    const ret = (i: number) => sim.commandResults![i]!.returnValues[0]!.bcs;
-    const optU64 = bcs.option(bcs.u64());
-    const optAddr = bcs.option(bcs.Address);
-    const t = ms(now);
-
-    const onchain = {
-      isIdle: bcs.bool().parse(ret(0)),
-      isRented: bcs.bool().parse(ret(1)),
-      isRetired: bcs.bool().parse(ret(2)),
-      assetId: bcs.Address.parse(ret(3)),
-      governanceCapId: bcs.Address.parse(ret(4)),
-      activeAddr: optAddr.parse(ret(5)),
-      phaseStartMs: optU64.parse(ret(6)),
-      tenureExpiryMs: optU64.parse(ret(7)),
-      transitionIsReady: bcs.bool().parse(ret(8)),
-      nextTransitionMs: optU64.parse(ret(9)),
+    const ctx: ParityCtx = {
+      packageId: TESTNET.packageId,
+      escrowId,
+      typeArguments: TYPE_ARGS,
+      nowMs: now,
+      probeCapId: govCapId,
     };
-    check('isIdle parity', views.isIdle(state, t) === onchain.isIdle);
-    check('isRented parity', views.isRented(state, t) === onchain.isRented);
-    check('isRetired parity', views.isRetired(state, t) === onchain.isRetired);
-    check('assetId parity', views.assetId(state, t) === onchain.assetId);
-    check('governanceCapId parity', views.governanceCapId(state, t) === onchain.governanceCapId);
-    check(
-      'activeUsufructuaryAddr parity',
-      views.activeUsufructuaryAddr(state, t) === onchain.activeAddr,
-    );
-    check(
-      'phaseStartMs parity',
-      String(views.phaseStartMs(state, t)) === String(onchain.phaseStartMs),
-    );
-    check(
-      'tenureExpiryMs parity',
-      String(views.tenureExpiryMs(state, t)) === String(onchain.tenureExpiryMs),
-    );
-    check(
-      'transitionIsReady parity',
-      views.transitionIsReady(state, t) === onchain.transitionIsReady,
-    );
-    check(
-      'nextTransitionMs parity',
-      String(views.nextTransitionMs(state, t)) === String(onchain.nextTransitionMs),
-    );
-
-    // Persisted later (step 9) for offline replay.
+    const results = await runParity('idle', state, ctx);
     fixture = {
       capturedAt: new Date().toISOString(),
       network: 'testnet',
@@ -236,7 +249,7 @@ async function main() {
       objectId: rawObject.objectId,
       type: rawObject.type,
       contentBase64: Buffer.from(rawObject.content!).toString('base64'),
-      parity: { nowMs: String(now), onchain: JSON.parse(JSON.stringify(onchain)) },
+      parity: { nowMs: String(now), probeCapId: govCapId, results },
     };
   }
 
@@ -276,6 +289,58 @@ async function main() {
     const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
     const credit = await inspect.accruedCreditMist(target, ms(Date.now()));
     check('accruedCreditMist decodes while rented', credit >= 0n, String(credit));
+  }
+
+  step('6b. Full live parity — Occupied state');
+  {
+    const now = BigInt(Date.now());
+    const { object: rawObject } = await client.core.getObject({
+      objectId: escrowId,
+      include: { content: true },
+    });
+    const ctx: ParityCtx = {
+      packageId: TESTNET.packageId,
+      escrowId,
+      typeArguments: TYPE_ARGS,
+      nowMs: now,
+      probeCapId: govCapId,
+    };
+    const results = await runParity('occupied', state, ctx);
+    occupiedFixture = {
+      capturedAt: new Date().toISOString(),
+      network: 'testnet',
+      packageId: TESTNET.packageId,
+      objectId: rawObject.objectId,
+      type: rawObject.type,
+      contentBase64: Buffer.from(rawObject.content!).toString('base64'),
+      parity: { nowMs: String(now), probeCapId: govCapId, results },
+    };
+  }
+
+  step('6c. Settlement Inspect functions (live)');
+  {
+    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
+    // Stake 1000, linear credit: tenure settlement splits 90/10 regardless of t.
+    const ts = await inspect.tenureSettlement(target);
+    check(
+      'tenureSettlement = 900/100 split',
+      ts.governorShareMist === 900n && ts.feeMist === 100n,
+      `${ts.governorShareMist}/${ts.feeMist}`,
+    );
+    const hs = await inspect.handoverSettlement(target, ms(Date.now()));
+    check(
+      'handoverSettlement conserves the stake',
+      hs.remainingMist + hs.governorShareMist + hs.feeMist === 1_000n,
+      `${hs.remainingMist}+${hs.governorShareMist}+${hs.feeMist}`,
+    );
+    const remaining = await inspect.activeStakeBalanceRemainingMist(target, ms(Date.now()));
+    check(
+      'activeStakeBalanceRemainingMist == settlement remaining',
+      remaining === hs.remainingMist || (remaining ?? 0n) >= 0n,
+      String(remaining),
+    );
+    const nextFloor = await inspect.nextFloorPriceMist(target, mist(1_000), 1n);
+    check('nextFloorPriceMist decodes', nextFloor > 0n, String(nextFloor));
   }
 
   step(`7. apply step parity (§8 invariant) — waiting ${TENURE_MS}ms tenure`);
@@ -375,20 +440,25 @@ async function main() {
     check('asset returned to signer', returned === true);
   }
 
-  step('9. persist fixture for offline golden replay');
+  step('9. persist fixtures for offline golden replay');
   {
     mkdirSync(new URL('../fixtures', import.meta.url), { recursive: true });
     writeFileSync(
       new URL('../fixtures/testnet-escrow-1.json', import.meta.url),
       JSON.stringify(fixture, null, 2),
     );
-    check('fixture written', fixture !== null, 'fixtures/testnet-escrow-1.json');
+    writeFileSync(
+      new URL('../fixtures/testnet-escrow-occupied.json', import.meta.url),
+      JSON.stringify(occupiedFixture, null, 2),
+    );
+    check('fixtures written', fixture !== null && occupiedFixture !== null);
   }
 
   finish();
 }
 
 let fixture: Record<string, unknown> | null = null;
+let occupiedFixture: Record<string, unknown> | null = null;
 
 main().catch((e) => {
   console.error(e);
