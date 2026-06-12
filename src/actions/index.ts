@@ -5,3 +5,4 @@ export * from './retire.js';
 export * from './claimAsset.js';
 export * from './collect.js';
 export * from './borrow.js';
+export * from './governance.js';
