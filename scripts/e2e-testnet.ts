@@ -11,7 +11,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '../src/actions/index.js';
-import { EarningsMessageCollected } from '../src/codegen/usufruct/earnings_message.js';
+import {
+  EarningsMessageCollected,
+  EarningsMessagePosted,
+} from '../src/codegen/usufruct/earnings_message.js';
 import {
   PARITY_CASES,
   parityEqual,
@@ -45,7 +48,8 @@ const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
 const SUI_T = '0x2::sui::SUI';
 const TYPE_ARGS: [string, string] = [ASSET_T, COIN_T];
 const TYPE_ARGS_SUI: [string, string] = [ASSET_T, SUI_T];
-const TENURE_MS = 30_000n;
+const TENURE_MS = 60_000n;
+const HANDOVER_MS = 25_000n;
 
 const client = makeClient();
 const signer = loadSigner();
@@ -140,6 +144,7 @@ const mintCoin = (tx: Transaction, amount: bigint) =>
 const ensembleCfg = {
   restPrice: 1_000n,
   tenureMs: TENURE_MS,
+  handover: { kind: 'fixed', floorMs: HANDOVER_MS },
 } as Parameters<typeof actions.integrate>[0]['ensemble'];
 
 async function integrateEscrow() {
@@ -474,6 +479,124 @@ async function main() {
     }
   }
 
+  step('6f. live Demand — bid, third parity state, supersede, handover');
+  {
+    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
+    // Ascending floor for the bid: next price over the active stake/tenure.
+    const bidFloor = await inspect.nextFloorPriceMist(target, mist(1_000), 1n);
+    check('ascending bid floor = 1001 (fixedDelta 1)', bidFloor === 1_001n, String(bidFloor));
+
+    // Place the bid: rent over an Occupied escrow → Demand.
+    const rentAction = actions.rent({ tenures: tenureCount(1) });
+    {
+      const tx = new Transaction();
+      const cap = rentAction.toPtb(tx, {
+        pkg: TESTNET,
+        escrowId,
+        payment: mintCoin(tx, bidFloor),
+        typeArguments: TYPE_ARGS,
+      });
+      tx.transferObjects([cap], me);
+      const res = await send(client, tx, signer);
+      check(
+        'BidPlaced event',
+        (res.events ?? []).some((e) => e.eventType.includes('BidPlaced')),
+      );
+    }
+    state = await source.fetch(escrowId);
+    check('escrow is Demand', views.isDemand(state, ms(Date.now())));
+    check('credit is capped while Demand', views.creditIsCapped(state, ms(Date.now())));
+
+    // Third parity state: the pending-seat views finally differ from None.
+    {
+      const now = BigInt(Date.now());
+      const { object: rawObject } = await client.core.getObject({
+        objectId: escrowId,
+        include: { content: true },
+      });
+      const results = await runParity('demand', state, {
+        packageId: TESTNET.packageId,
+        escrowId,
+        typeArguments: TYPE_ARGS,
+        nowMs: now,
+        probeCapId: govCapId,
+      });
+      demandFixture = {
+        capturedAt: new Date().toISOString(),
+        network: 'testnet',
+        packageId: TESTNET.packageId,
+        objectId: rawObject.objectId,
+        type: rawObject.type,
+        contentBase64: Buffer.from(rawObject.content!).toString('base64'),
+        parity: { nowMs: String(now), probeCapId: govCapId, results },
+      };
+    }
+
+    // Supersede: a higher bid displaces the pending one with a full refund.
+    {
+      const nextFloor = await inspect.nextFloorPriceMist(target, bidFloor, 1n);
+      const tx = new Transaction();
+      const cap = rentAction.toPtb(tx, {
+        pkg: TESTNET,
+        escrowId,
+        payment: mintCoin(tx, nextFloor),
+        typeArguments: TYPE_ARGS,
+      });
+      tx.transferObjects([cap], me);
+      const res = await send(client, tx, signer);
+      const superseded = (res.events ?? []).find((e) =>
+        e.eventType.includes('BidSuperseded'),
+      );
+      check('BidSuperseded event', superseded !== undefined);
+      state = await source.fetch(escrowId);
+      check(
+        'pending stake is the superseding bid',
+        views.pendingStakeBalanceMist(state, ms(Date.now())) === nextFloor,
+        String(nextFloor),
+      );
+      newTenantCapId = views.pendingUsufructCapId(state, ms(Date.now())) ?? '';
+    }
+
+    // Settlement preview over the live Demand boundary.
+    const expiry = views.handoverExpiryMs(state, ms(Date.now()))!;
+    {
+      const hs = await inspect.handoverSettlement(target, ms(expiry));
+      check(
+        'handoverSettlement at expiry conserves the stake',
+        hs.remainingMist + hs.governorShareMist + hs.feeMist === 1_000n,
+        `${hs.remainingMist}+${hs.governorShareMist}+${hs.feeMist}`,
+      );
+    }
+
+    // Cross the handover boundary and settle it.
+    await waitForChainTime(client, expiry, 1_500n);
+    const apply = actions.applyPendingTransitionStates();
+    // The handover settlement is curve math — the step correctly refuses
+    // to mirror it without golden coverage (SPEC §8.2).
+    let threw = false;
+    try {
+      apply.step(state, ms(expiry + 2_000n));
+    } catch (e) {
+      threw = e instanceof Error && e.name === 'NotImplementedStepError';
+    }
+    check('apply.step on firable Demand throws NotImplementedStepError', threw);
+
+    const tx = new Transaction();
+    apply.toPtb(tx, { pkg: TESTNET, escrowId, typeArguments: TYPE_ARGS });
+    const res = await send(client, tx, signer);
+    recordPosted(res);
+    check(
+      'HandoverCompleted event',
+      (res.events ?? []).some((e) => e.eventType.includes('HandoverCompleted')),
+    );
+    state = await source.fetch(escrowId);
+    check('new tenant occupies after handover', views.isOccupied(state, ms(Date.now())));
+    check(
+      'active cap is the superseding bidder',
+      views.activeUsufructCapId(state, ms(Date.now())) === newTenantCapId,
+    );
+  }
+
   step(`7. apply step parity (§8 invariant) — waiting ${TENURE_MS}ms tenure`);
   {
     const expiry = views.tenureExpiryMs(state, ms(Date.now()));
@@ -490,6 +613,7 @@ async function main() {
     // exact now — any t ≥ boundary mirrors the chain's clock evaluation.
     const t = ms(chainNow);
     const res = await send(client, tx, signer);
+    recordPosted(res);
     check(
       'TenureExpired event emitted',
       (res.events ?? []).some((e) => e.eventType.includes('TenureExpired')),
@@ -544,16 +668,25 @@ async function main() {
     const collected = (res.events ?? [])
       .filter((e) => e.eventType.includes('EarningsMessageCollected'))
       .map((e) => EarningsMessageCollected.parse(e.bcs));
-    check('2 EarningsMessageCollected events', collected.length === 2);
-    check(
-      'each coin collected 900 mist (90% of 1000 principal)',
-      collected.every((c) => c.amount === '900'),
-      collected.map((c) => `${c.coin_type.split('::').pop()}:${c.amount}`).join(', '),
-    );
+    check('EarningsMessageCollected events present', collected.length >= 2);
     check(
       'collected coin types are distinct',
       new Set(collected.map((c) => c.coin_type)).size === 2,
     );
+    // Conservation: per coin, collected == sum of all EarningsMessagePosted
+    // observed across the applies (handover settlement + tenure expiries).
+    const collectedByCoin = new Map<string, bigint>();
+    for (const c of collected) {
+      const key = c.coin_type.split('::').pop()!;
+      collectedByCoin.set(key, (collectedByCoin.get(key) ?? 0n) + BigInt(c.amount));
+    }
+    for (const [coin, posted] of postedEarnings) {
+      check(
+        `collected ${coin} == posted ${coin}`,
+        collectedByCoin.get(coin) === posted,
+        `collected=${collectedByCoin.get(coin)} posted=${posted}`,
+      );
+    }
 
     const after = await actions.discoverInboxMessages(client, inboxId, 'earnings');
     check('inbox drained', after.size === 0);
@@ -609,7 +742,14 @@ async function main() {
       new URL('../fixtures/testnet-escrow-occupied.json', import.meta.url),
       JSON.stringify(occupiedFixture, null, 2),
     );
-    check('fixtures written', fixture !== null && occupiedFixture !== null);
+    writeFileSync(
+      new URL('../fixtures/testnet-escrow-demand.json', import.meta.url),
+      JSON.stringify(demandFixture, null, 2),
+    );
+    check(
+      'fixtures written',
+      fixture !== null && occupiedFixture !== null && demandFixture !== null,
+    );
   }
 
   finish();
@@ -619,6 +759,18 @@ let fixture: Record<string, unknown> | null = null;
 let occupiedFixture: Record<string, unknown> | null = null;
 let mainCapId = '';
 let suiCapId = '';
+let demandFixture: Record<string, unknown> | null = null;
+let newTenantCapId = '';
+const postedEarnings = new Map<string, bigint>();
+
+function recordPosted(res: { events?: readonly { eventType: string; bcs: Uint8Array }[] | undefined }) {
+  for (const e of res.events ?? []) {
+    if (!e.eventType.includes('EarningsMessagePosted')) continue;
+    const p = EarningsMessagePosted.parse(e.bcs);
+    const key = p.coin_type.split('::').pop()!;
+    postedEarnings.set(key, (postedEarnings.get(key) ?? 0n) + BigInt(p.amount));
+  }
+}
 
 main().catch((e) => {
   console.error(e);

@@ -29,7 +29,11 @@ function loadFixture(name: string): Fixture {
   return JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 }
 
-for (const file of ['testnet-escrow-1.json', 'testnet-escrow-occupied.json']) {
+for (const file of [
+  'testnet-escrow-1.json',
+  'testnet-escrow-occupied.json',
+  'testnet-escrow-demand.json',
+]) {
   describe(`golden replay — ${file}`, () => {
     const fixture = loadFixture(file);
     const state = decodeEscrowState(
