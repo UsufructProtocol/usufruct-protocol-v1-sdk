@@ -1,3 +1,5 @@
-// Prototype slice: primitives land in the next commits.
-// The codegen substrate (src/codegen) is generated — see `npm run codegen`.
-export {};
+export * from './primitives/brand.js';
+export * from './primitives/state.js';
+export * from './primitives/view.js';
+export * from './primitives/action.js';
+export * from './primitives/source.js';
