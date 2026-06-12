@@ -1,3 +1,70 @@
+# Usufruct Protocol — SDK
+
+## Prototype status (`prototype/vertical-slice`)
+
+A vertical slice of the SPEC.md design is implemented and validated **live
+against testnet v1.4.2** (`npm run e2e` → ALL PASS, 25 offline tests green):
+
+- **Codegen substrate** (`npm run codegen`, `@mysten/codegen` from the local
+  Move source; regenerable, committed under `src/codegen/`).
+- **Four primitives** (`src/primitives/`): `EscrowState` + `decodeEscrowState`,
+  `View<T>`, `Origin/Transition/Terminal` actions, `Source` + `chainSource`.
+- **Views**: 14 Pattern B exemplars (predicates, identity, temporal,
+  `CurveShape` enum collapse §5.1) + 2 Pattern A `simulateTransaction` reads.
+- **Actions**: `integrate`, `rent`, `applyPendingTransitionStates`, `retire`,
+  `claimAsset` — `toPtb` complete; `apply.step` and `integrate.step` are real
+  and **bit-exact against the live chain** (§8 invariant observed on testnet).
+- **Golden gate**: `fixtures/testnet-escrow-1.json` is chain-captured;
+  `test/golden.test.ts` replays it offline in CI.
+
+Run the e2e (spends only gas from the signer):
+
+```bash
+SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
+```
+
+### Scalability findings (prototype assessment)
+
+1. **Codegen coverage — confirmed.** All 43 modules generate; generic
+   `Escrow/AssetState/PolicyEnsemble` schemas decode the live object. The
+   runtime package id threads cleanly through every wrapper's `package`
+   option. Note: generation writes `package_summaries/` inside the Move
+   package directory (gitignore it in the protocol repo).
+2. **Enum collapse — confirmed.** BCS enums parse as `$kind` discriminated
+   unions; the 9-view `credit_shape_*` family collapsed into ~30 lines.
+3. **Marginal view cost — confirmed.** ~12 lines/view including docs; the
+   remaining ~110 views are mechanical.
+4. **Marginal `toPtb` cost — confirmed.** 5–20 lines/action; `&Clock`/`&Random`
+   are auto-injected by the generated layer (SPEC §4.3 holds for free).
+5. **`step` feasibility — confirmed** for deterministic configs:
+   `apply.step` predicted the post-transition on-chain state bit-exactly on
+   the first try (tenure expiry → descent → idle chain). Handover settlement
+   (curve math) correctly refuses to ship without golden coverage.
+6. **Asset-generic `A` — partially refuted.** The `Uint8Array` fallback of
+   SPEC §10 is impossible: the asset sits mid-struct, so decoding *requires*
+   the exact schema, and a wrong schema misaligns silently (observed live
+   with `DummyAsset { id, uses }`). Proposed mitigation: re-serialize the
+   decoded value and byte-compare as a decode invariant.
+7. **Kernel stress — none.** No 5th primitive, no methods on state, no
+   ambient time. Pattern A reads live as IO functions outside `View<T>`
+   (`src/views/inspect.ts`) — SPEC should name this category explicitly.
+   Time-as-parameter paid off: a ~15s local clock skew was harmless for
+   views (same `t` both sides) and only mattered for *waiting* on chain
+   boundaries (harness concern, solved by reading the `0x6` clock).
+8. **Drift detection — not yet exercised** (edit a Move signature → regen →
+   compile error placement). Follow-up.
+
+Chain-observed behaviors worth remembering: `accrued_credit_mist` aborts on a
+non-rented escrow; `BasisPoints` has no public constructor (pass pure `u64`,
+BCS-identical); fixture parity must capture bytes and view answers at the same
+object version.
+
+> The design notes below predate SPEC.md. Where they disagree (e.g. "no
+> domain logic in the SDK" vs SPEC's Pattern B TypeScript mirrors with golden
+> tests), **SPEC.md governs**.
+
+---
+
 # Usufruct Protocol — SDK Design Notes
 
 > This document captures the architectural philosophy behind the SDK before its
