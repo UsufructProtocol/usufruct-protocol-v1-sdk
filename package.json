@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "codegen": "sui-ts-codegen generate",
     "dev": "tsc --watch",
     "lint": "eslint src",
     "format": "prettier --write src",
@@ -26,6 +27,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "devDependencies": {
+    "@mysten/codegen": "^0.10.6",
     "@types/node": "^25.9.3",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.61.0",

@@ -3,6 +3,7 @@ import tsparser from '@typescript-eslint/parser';
 import prettier from 'eslint-config-prettier';
 
 export default [
+  { ignores: ['src/codegen/**'] },
   {
     files: ['src/**/*.ts'],
     languageOptions: {

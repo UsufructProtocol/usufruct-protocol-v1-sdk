@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+sui-codegen.config.js
+sui-codegen.config.d.ts
+sui-codegen.config.*.map
