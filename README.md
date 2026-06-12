@@ -84,6 +84,17 @@ the coin-polymorphic collects are implemented and exercised live:
 - **Plain PTB helpers**: `renounceGovernance`, `burnUsufructCap` (they act
   on the cap object, not on a state aggregate).
 
+**Composability bracket**: `withBorrowedAsset(tx, args, use)` writes the
+borrow/return sandwich and hands the user only the middle — the borrowed
+asset handle, inside the same PTB. Whatever commands `use` appends run with
+the asset in hand (external APIs must take it by reference); the receipt is
+never exposed, so the well-formed hot-potato PTB is the only one expressible.
+`withBorrowedAssetStep` is the pure mirror: `use` models the foreign API's
+effect on the asset value (the SDK guarantees the escrow round-trip; foreign
+semantics are the caller's model). Proven live: `dummy_asset::use_asset`
+minted a Coupon inside the bracket and the modeled `uses+1` mutation matched
+the chain bit-exactly.
+
 **Demand validated live**: bid at the ascending floor (`BidPlaced`), full
 64-case parity in the third state, supersede with full refund
 (`BidSuperseded`), settlement preview at the boundary, and the handover

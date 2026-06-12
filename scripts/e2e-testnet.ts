@@ -361,40 +361,50 @@ async function main() {
     check('nextFloorPriceMist decodes', nextFloor > 0n, String(nextFloor));
   }
 
-  step('6d. borrowAsset/returnAsset (hot-potato, one PTB)');
+  step('6d. withBorrowedAsset bracket — real composability in the middle');
   {
-    const borrow = actions.borrowAsset({ usufructCapId: mainCapId });
+    // The bracket: borrow → foreign API (use_asset mutates the asset and
+    // mints a Coupon) → return, one PTB, user code only in the middle.
     const tx = new Transaction();
-    const handles = borrow.toPtb(tx, {
-      pkg: TESTNET,
-      escrowId,
-      usufructCapId: mainCapId,
-      typeArguments: TYPE_ARGS,
-    });
-    actions.returnAsset({} as never).toPtb(tx, {
-      pkg: TESTNET,
-      escrowId,
-      asset: handles[0]!,
-      receipt: handles[1]!,
-      typeArguments: TYPE_ARGS,
-    });
+    actions.withBorrowedAsset(
+      tx,
+      { pkg: TESTNET, escrowId, usufructCapId: mainCapId, typeArguments: TYPE_ARGS },
+      (asset) => {
+        const coupon = tx.moveCall({
+          target: `${DUMMY_PKG}::dummy_asset::use_asset`,
+          arguments: [asset],
+        });
+        tx.transferObjects([coupon], me);
+      },
+    );
     const res = await send(client, tx, signer);
     check(
       'AssetBorrowed + AssetReturned events',
       (res.events ?? []).some((e) => e.eventType.includes('AssetBorrowed')) &&
         (res.events ?? []).some((e) => e.eventType.includes('AssetReturned')),
     );
+    const couponMinted = res.effects!.changedObjects.some(
+      (c) =>
+        c.idOperation === 'Created' &&
+        res.objectTypes?.[c.objectId]?.includes('::dummy_asset::Coupon'),
+    );
+    check('Coupon minted by the foreign API inside the bracket', couponMinted);
 
-    // step parity: borrow.step ∘ return.step over the pre-PTB state must
-    // equal the refetched chain state. Chain clock — local skew could cross
+    // Pure-bracket parity: model the foreign effect (uses += 1) and compare
+    // with the refetched chain state. Chain clock — local skew could cross
     // the tenure boundary in the mirror before the chain does.
     const t = ms(await chainNowMs(client));
-    const b = borrow.step(state, t);
-    const composed = actions.returnAsset(b.result.receipt).step(b.state, t).state;
+    type Dummy = { id: string; uses: string };
+    const { state: predicted } = actions.withBorrowedAssetStep<Dummy, null>(
+      state,
+      t,
+      mainCapId,
+      (asset) => ({ asset: { ...asset, uses: String(BigInt(asset.uses) + 1n) }, result: null }),
+    );
     const live = await source.fetch(escrowId);
     check(
-      'borrow∘return step == live state (bit-exact)',
-      stable(composed.escrow) === stable(live.escrow),
+      'bracket step (with modeled mutation) == live state (bit-exact)',
+      stable(predicted.escrow) === stable(live.escrow),
     );
     state = live;
   }

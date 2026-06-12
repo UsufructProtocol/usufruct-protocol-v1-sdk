@@ -103,16 +103,16 @@ export function finish(): never {
 
 export const sleep = (msec: number) => new Promise((r) => setTimeout(r, msec));
 
-/** Retry on public-fullnode rate limiting (HTTP 429) with backoff. */
+/** Retry on transient public-fullnode errors (429/502/503) with backoff. */
 export async function retry429<T>(fn: () => Promise<T>, attempts = 6): Promise<T> {
   for (let i = 0; ; i++) {
     try {
       return await fn();
     } catch (e) {
       const status = (e as { status?: number }).status;
-      if (status !== 429 || i >= attempts - 1) throw e;
+      if (![429, 502, 503].includes(status ?? 0) || i >= attempts - 1) throw e;
       const backoff = 2_000 * 2 ** i;
-      console.log(`  [429] rate limited — backing off ${backoff}ms`);
+      console.log(`  [${status}] transient fullnode error — backing off ${backoff}ms`);
       await sleep(backoff);
     }
   }

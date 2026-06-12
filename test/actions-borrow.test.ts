@@ -46,6 +46,55 @@ describe('borrowAsset / returnAsset pair', () => {
     ).toThrow(/EStaleUsufructCap/);
   });
 
+  it('withBorrowedAsset brackets user commands between borrow and return', () => {
+    const tx = new Transaction();
+    const out = actions.withBorrowedAsset(
+      tx,
+      { pkg: TESTNET, escrowId, usufructCapId: TENANT_CAP, typeArguments: TYPE_ARGS },
+      (asset) => {
+        tx.moveCall({ target: '0xaaa::game::play', arguments: [asset] });
+        return 'artifact';
+      },
+    );
+    expect(out).toBe('artifact');
+    const calls = tx
+      .getData()
+      .commands.filter((c) => c.$kind === 'MoveCall')
+      .map((c) => c.MoveCall!.function);
+    expect(calls).toEqual(['borrow_asset', 'play', 'return_asset']);
+  });
+
+  it('withBorrowedAssetStep: identity when use leaves the asset untouched', () => {
+    const state = occupiedState(10_000n, 60_000n);
+    const { state: restored, result } = actions.withBorrowedAssetStep(
+      state,
+      t0,
+      TENANT_CAP,
+      (asset) => ({ asset, result: 42 }),
+    );
+    expect(result).toBe(42);
+    expect(stable(restored.escrow)).toBe(stable(state.escrow));
+  });
+
+  it('withBorrowedAssetStep: models a foreign mutation of the asset', () => {
+    const state = occupiedState(10_000n, 60_000n);
+    type Dummy = { id: string; uses: string };
+    const { state: restored } = actions.withBorrowedAssetStep<Dummy, null>(
+      state,
+      t0,
+      TENANT_CAP,
+      (asset) => ({
+        asset: { ...asset, uses: String(BigInt(asset.uses ?? '0') + 1n) },
+        result: null,
+      }),
+    );
+    const s = restored.escrow.state;
+    const custody =
+      s?.$kind === 'Renting' && s.Renting.$kind === 'Occupied' ? s.Renting.Occupied.asset : null;
+    expect((custody?.available as Dummy).uses).toBe('1');
+    expect(stable(restored.escrow)).not.toBe(stable(state.escrow));
+  });
+
   it('toPtb emits borrow then return in one PTB', () => {
     const tx = new Transaction();
     const borrowed = actions.borrowAsset({ usufructCapId: TENANT_CAP }).toPtb(tx, {

@@ -19,7 +19,7 @@ import {
   returnAsset as returnCall,
 } from '../codegen/usufruct/escrow.js';
 import type { TransitionAction } from '../primitives/action.js';
-import type { Id } from '../primitives/brand.js';
+import type { Id, Ms } from '../primitives/brand.js';
 import { id } from '../primitives/brand.js';
 import type { EscrowState } from '../primitives/state.js';
 import type { PackageIds } from '../config/network.js';
@@ -117,6 +117,20 @@ export interface ReturnPtbArgs {
   readonly typeArguments: [string, string];
 }
 
+function returnAssetToPtb(tx: Transaction, args: ReturnPtbArgs): TransactionResult {
+  return tx.add(
+    returnCall({
+      package: args.pkg.packageId,
+      arguments: [
+        tx.object(args.escrowId),
+        args.asset,
+        args.receipt as TransactionObjectArgument,
+      ],
+      typeArguments: args.typeArguments,
+    }),
+  );
+}
+
 export function returnAsset(receipt: BorrowReceipt): TransitionAction<null, ReturnPtbArgs> {
   return {
     step: (state) => {
@@ -146,17 +160,61 @@ export function returnAsset(receipt: BorrowReceipt): TransitionAction<null, Retu
       return { state: next, result: null };
     },
 
-    toPtb: (tx: Transaction, args: ReturnPtbArgs) =>
-      tx.add(
-        returnCall({
-          package: args.pkg.packageId,
-          arguments: [
-            tx.object(args.escrowId),
-            args.asset,
-            args.receipt as TransactionObjectArgument,
-          ],
-          typeArguments: args.typeArguments,
-        }),
-      ),
+    toPtb: returnAssetToPtb,
   };
+}
+
+/**
+ * The composability bracket: borrow → user commands → return, in one PTB.
+ *
+ * `use` runs while the PTB is being built — whatever commands it appends
+ * land between the borrow and the return, with the borrowed asset handle as
+ * their argument. The user never touches the receipt, so the well-formed
+ * hot-potato PTB is the only one this can produce. External APIs must take
+ * the asset by reference (`&Asset` / `&mut Asset`): consuming it by value
+ * leaves nothing to return and the chain rejects the PTB at resolution.
+ *
+ * Returns whatever `use` returns (e.g. artifact handles to transfer).
+ * Brackets nest for cross-escrow composition — one per escrow/cap pair.
+ */
+export function withBorrowedAsset<T>(
+  tx: Transaction,
+  args: BorrowPtbArgs,
+  use: (asset: TransactionObjectArgument, tx: Transaction) => T,
+): T {
+  const handles = borrowAsset({ usufructCapId: args.usufructCapId }).toPtb(tx, args);
+  const asset = handles[0]! as TransactionObjectArgument;
+  const result = use(asset, tx);
+  returnAssetToPtb(tx, {
+    pkg: args.pkg,
+    escrowId: args.escrowId,
+    asset,
+    receipt: handles[1]!,
+    typeArguments: args.typeArguments,
+  });
+  return result;
+}
+
+/**
+ * Pure mirror of the bracket for simulator/testbed use. `use` receives the
+ * decoded asset value and models the foreign API's effect on it (it takes
+ * the asset "by mutable reference": return the possibly-updated value).
+ *
+ * The SDK guarantees the *escrow* round-trip; what the foreign code does to
+ * the *asset* is the caller's model — the SDK cannot know other protocols'
+ * semantics (§8.2 discipline applies to them, not us).
+ */
+export function withBorrowedAssetStep<A, T>(
+  state: EscrowState,
+  t: Ms,
+  usufructCapId: string,
+  use: (asset: A) => { readonly asset: A; readonly result: T },
+): { state: EscrowState; result: T } {
+  const borrowed = borrowAsset({ usufructCapId }).step(state, t);
+  const used = use(borrowed.result.receipt.asset as A);
+  const { state: restored } = returnAsset({
+    ...borrowed.result.receipt,
+    asset: used.asset,
+  }).step(borrowed.state, t);
+  return { state: restored, result: used.result };
 }
