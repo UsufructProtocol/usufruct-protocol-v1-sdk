@@ -5,7 +5,10 @@
  * does, with chain-assigned identities supplied (or zeroed placeholders).
  */
 import type { TransactionObjectArgument } from '@mysten/sui/transactions';
-import { integrate as integrateCall } from '../codegen/usufruct/escrow.js';
+import {
+  integrate as integrateCall,
+  integrateIntoPortfolio as integrateIntoPortfolioCall,
+} from '../codegen/usufruct/escrow.js';
 import type { OriginAction } from '../primitives/action.js';
 import { id } from '../primitives/brand.js';
 import type { EscrowState } from '../primitives/state.js';
@@ -105,6 +108,42 @@ export function ensembleConfigToData(cfg: EnsembleConfig): EnsembleData {
             },
           },
   } as EnsembleData;
+}
+
+export interface IntegrateIntoPortfolioPtbArgs extends IntegratePtbArgs {
+  /** Existing portfolio: governance cap + earnings inbox to attach to. */
+  readonly governanceCapId: string;
+  readonly earningsInboxId: string;
+}
+
+/**
+ * `integrate_into_portfolio` — Origin variant that attaches the new escrow
+ * to an existing governance cap + earnings inbox (fleet). `step` mirrors
+ * `integrate.step` except the identities come from the portfolio.
+ */
+export function integrateIntoPortfolio(
+  params: IntegrateParams,
+): OriginAction<null, IntegrateIntoPortfolioPtbArgs> {
+  const base = integrate(params);
+  return {
+    step: base.step,
+    toPtb: (tx, args) =>
+      tx.add(
+        integrateIntoPortfolioCall({
+          package: args.pkg.packageId,
+          arguments: [
+            typeof args.asset === 'string' ? tx.object(args.asset) : args.asset,
+            ensembleToPtb(tx, args.pkg, params.ensemble),
+            retireCommitmentToPtb(tx, args.pkg, params.retireCommitment),
+            ensembleCommitmentToPtb(tx, args.pkg, params.ensembleCommitment),
+            args.pkg.feeRefId,
+            args.governanceCapId,
+            args.earningsInboxId,
+          ],
+          typeArguments: args.typeArguments,
+        }),
+      ),
+  };
 }
 
 export function integrate(params: IntegrateParams): OriginAction<null, IntegratePtbArgs> {
