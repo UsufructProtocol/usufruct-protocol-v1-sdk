@@ -8,6 +8,7 @@
 import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 import * as escrowCalls from '../codegen/usufruct/escrow.js';
 import type { Id, Mist, Ms } from '../primitives/brand.js';
 import { mist } from '../primitives/brand.js';
@@ -26,6 +27,8 @@ async function inspectU64(
   call: (tx: Transaction) => void,
 ): Promise<bigint> {
   const tx = new Transaction();
+  // Reads need no real signer; simulation still requires a sender to build.
+  tx.setSenderIfNotSet(normalizeSuiAddress('0x0'));
   call(tx);
   const result = await target.client.core.simulateTransaction({
     transaction: tx,
