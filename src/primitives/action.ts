@@ -18,25 +18,29 @@ export interface StepOpts {
   readonly rng?: Rng;
 }
 
-/** Creates an `EscrowState` (only `integrate`). */
-export interface OriginAction<R, P> {
-  readonly step: (t: Ms, opts?: StepOpts) => { state: EscrowState; result: R };
+/**
+ * The lifecycle variants are generic over the state aggregate they govern
+ * (SPEC §4.3, amended 2026-06-12). `EscrowState` is the default — the
+ * aggregate of all escrow actions. Inbox actions transition over
+ * `MessageGroups` (the decoded inbox contents). The kernel does not gain a
+ * primitive: only genericity.
+ */
+
+/** Creates a state aggregate (only `integrate` for escrows). */
+export interface OriginAction<R, P, S = EscrowState> {
+  readonly step: (t: Ms, opts?: StepOpts) => { state: S; result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }
 
-/** Mutates an `EscrowState`. */
-export interface TransitionAction<R, P> {
-  readonly step: (
-    state: EscrowState,
-    t: Ms,
-    opts?: StepOpts,
-  ) => { state: EscrowState; result: R };
+/** Mutates a state aggregate. */
+export interface TransitionAction<R, P, S = EscrowState> {
+  readonly step: (state: S, t: Ms, opts?: StepOpts) => { state: S; result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }
 
-/** Consumes an `EscrowState` — no successor state. */
-export interface TerminalAction<R, P> {
-  readonly step: (state: EscrowState, t: Ms, opts?: StepOpts) => { result: R };
+/** Consumes a state aggregate — no successor state. */
+export interface TerminalAction<R, P, S = EscrowState> {
+  readonly step: (state: S, t: Ms, opts?: StepOpts) => { result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }
 

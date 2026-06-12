@@ -134,6 +134,12 @@ interface StepOpts {
 }
 ```
 
+The variants are generic over the **state aggregate** they govern, with
+`EscrowState` as the default (amended 2026-06-12): every escrow action uses
+the default; inbox actions (`collectMessages`) are `TransitionAction`s over
+`MessageGroups`, the decoded inbox contents. This is genericity, not a new
+primitive — the kernel's shape is unchanged.
+
 The variants are not stylistic — they encode lifecycle constraints in the type
 system. `claimAsset` returns no successor state; the TypeScript compiler
 rejects any attempt to chain another action after it. `integrate` is the only
@@ -626,6 +632,7 @@ distinct packages under `sdk/packages/` once core stabilises.
 | `Uint8Array` fallback for unknown asset BCS layouts.                                | Rejected (amended 2026-06-12) | Refuted by the prototype: the asset sits mid-struct, so decoding requires the exact schema; a wrong schema misaligns silently. Replaced by required integrator schema + `uidAssetSchema` for uid-only assets + re-serialize byte-compare decode invariant (`EscrowDecodeError`). See §10. |
 | Inspect functions as the named category for Pattern A reads.                        | Adopted (2026-06-12) | IO of shape `(client, target, t) => Promise<T>` in `src/views/inspect.ts`; not a `View<T>`, not a fifth primitive. Client by parameter, mirroring time-as-parameter. See §6.2.1. |
 | Broad §5.1 collapse: `*_kind` views and cycle-params accessors fold into unions/records. | Adopted (2026-06-12) | ~68 TypeScript views cover the ~124 Move views; the unrolled API is reconstruction material for the parity oracle only. 128 live parity cases (64 × idle/occupied states) verified on testnet. |
+| Action variants generic over the state aggregate (`Action<R, P, S = EscrowState>`).  | Adopted (2026-06-12) | Inbox actions transition over `MessageGroups`, which fits none of the escrow lifecycle slots. Genericity preserves the three-variant kernel without a fifth primitive and gives inbox actions a real pure `step` (testbed-able). |
 
 ---
 
