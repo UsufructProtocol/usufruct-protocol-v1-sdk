@@ -1,0 +1,38 @@
+/**
+ * Shared pure helpers for hand-written views. Mirrors the private accessors
+ * in `escrow.move` (`read_state`, `read_core`, `read_ensemble`).
+ */
+import type { AssetSchema, EscrowData, EscrowState } from '../primitives/state.js';
+
+type Escrow = EscrowData<AssetSchema>;
+export type AssetStateData = NonNullable<Escrow['state']>;
+export type CoreData = NonNullable<Escrow['core']>;
+export type EnsembleData = CoreData['ensemble']['active'];
+export type RentingData = Extract<AssetStateData, { $kind: 'Renting' }>['Renting'];
+export type OccupiedTermsData = Extract<RentingData, { $kind: 'Occupied' }>['Occupied']['terms'];
+
+/** Mirrors `read_state`: aborts with EAssetBorrowed when the slot is empty. */
+export function assetState(state: EscrowState<AssetSchema>): AssetStateData {
+  const s = state.escrow.state;
+  if (s == null) throw new Error('EAssetBorrowed: asset state slot is empty');
+  return s;
+}
+
+/** Mirrors `read_core`. The core slot is only empty mid-transaction. */
+export function core(state: EscrowState<AssetSchema>): CoreData {
+  const c = state.escrow.core;
+  if (c == null) throw new Error('Escrow core slot is empty');
+  return c;
+}
+
+/** Mirrors `read_ensemble`. */
+export function ensemble(state: EscrowState<AssetSchema>): EnsembleData {
+  return core(state).ensemble.active;
+}
+
+/** Renting terms (`Occupied` or `Demand`), or null when waiting. */
+export function rentingTerms(s: AssetStateData) {
+  if (s.$kind !== 'Renting') return null;
+  const r = s.Renting;
+  return r.$kind === 'Occupied' ? r.Occupied.terms : r.Demand.terms;
+}
