@@ -30,6 +30,7 @@ import {
   loadSigner,
   makeClient,
   send,
+  chainNowMs,
   step,
   waitForChainTime,
 } from './lib.js';
@@ -282,8 +283,17 @@ async function main() {
       typeArguments: TYPE_ARGS_SUI,
     });
     tx.transferObjects([cap, capSui], me);
-    await send(client, tx, signer);
+    const res = await send(client, tx, signer);
+    const capIds = res.effects!.changedObjects
+      .filter((c) => c.idOperation === 'Created')
+      .map((c) => c.objectId)
+      .filter((oid) => res.objectTypes?.[oid]?.includes('::usufruct_cap::UsufructCap'));
+    mainCapId = capIds.find((oid) => res.objectTypes?.[oid] !== undefined) ?? '';
+    // Two caps were minted in this PTB; match each to its escrow afterwards.
     state = await source.fetch(escrowId);
+    const activeCap = views.activeUsufructCapId(state, ms(Date.now()));
+    mainCapId = capIds.find((c) => c === activeCap) ?? capIds[0]!;
+    suiCapId = capIds.find((c) => c !== mainCapId) ?? capIds[1]!;
     check('escrow is Occupied after rent', views.isOccupied(state, ms(Date.now())));
 
     const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
@@ -343,6 +353,127 @@ async function main() {
     check('nextFloorPriceMist decodes', nextFloor > 0n, String(nextFloor));
   }
 
+  step('6d. borrowAsset/returnAsset (hot-potato, one PTB)');
+  {
+    const borrow = actions.borrowAsset({ usufructCapId: mainCapId });
+    const tx = new Transaction();
+    const handles = borrow.toPtb(tx, {
+      pkg: TESTNET,
+      escrowId,
+      usufructCapId: mainCapId,
+      typeArguments: TYPE_ARGS,
+    });
+    actions.returnAsset({} as never).toPtb(tx, {
+      pkg: TESTNET,
+      escrowId,
+      asset: handles[0]!,
+      receipt: handles[1]!,
+      typeArguments: TYPE_ARGS,
+    });
+    const res = await send(client, tx, signer);
+    check(
+      'AssetBorrowed + AssetReturned events',
+      (res.events ?? []).some((e) => e.eventType.includes('AssetBorrowed')) &&
+        (res.events ?? []).some((e) => e.eventType.includes('AssetReturned')),
+    );
+
+    // step parity: borrow.step ∘ return.step over the pre-PTB state must
+    // equal the refetched chain state. Chain clock — local skew could cross
+    // the tenure boundary in the mirror before the chain does.
+    const t = ms(await chainNowMs(client));
+    const b = borrow.step(state, t);
+    const composed = actions.returnAsset(b.result.receipt).step(b.state, t).state;
+    const live = await source.fetch(escrowId);
+    check(
+      'borrow∘return step == live state (bit-exact)',
+      stable(composed.escrow) === stable(live.escrow),
+    );
+    state = live;
+  }
+
+  step('6e. governance actions (live, with step parity)');
+  {
+    const govArgs = { pkg: TESTNET, escrowId, governanceCapId: govCapId, typeArguments: TYPE_ARGS };
+    const newEnsembleCfg = { restPrice: mist(2_000), tenureMs: ms(Number(TENURE_MS)) };
+
+    // updateEnsemble on Occupied → scheduled (pending set)
+    const upd = actions.updateEnsemble(newEnsembleCfg);
+    const tUpd = ms(await chainNowMs(client));
+    {
+      const tx = new Transaction();
+      upd.toPtb(tx, govArgs);
+      const res = await send(client, tx, signer);
+      check(
+        'EnsembleUpdateScheduled event',
+        (res.events ?? []).some((e) => e.eventType.includes('EnsembleUpdateScheduled')),
+      );
+      const predicted = upd.step(state, tUpd);
+      check('updateEnsemble.step says scheduled', predicted.result.applied === 'scheduled');
+      const live = await source.fetch(escrowId);
+      check(
+        'updateEnsemble step == live (bit-exact)',
+        stable(predicted.state.escrow) === stable(live.escrow),
+      );
+      state = live;
+      check(
+        'pendingCycleParams reflects the new floor',
+        views.pendingCycleParams(state, tUpd)?.floorMist === 2_000n,
+      );
+    }
+
+    // commitment extensions (chained anchors)
+    {
+      const extendR = actions.extendRetireCommitment({ kind: 'deferred', floorMs: ms(60_000) });
+      const extendE = actions.extendEnsembleCommitment({ kind: 'deferred', floorMs: ms(60_000) });
+      const t = ms(await chainNowMs(client));
+      const tx = new Transaction();
+      extendR.toPtb(tx, govArgs);
+      extendE.toPtb(tx, govArgs);
+      const res = await send(client, tx, signer);
+      check(
+        'commitment extension events',
+        (res.events ?? []).some((e) => e.eventType.includes('RetireCommitmentExtended')) &&
+          (res.events ?? []).some((e) => e.eventType.includes('EnsembleCommitmentExtended')),
+      );
+      const predicted = extendE.step(extendR.step(state, t).state, t).state;
+      const live = await source.fetch(escrowId);
+      check(
+        'commitment extensions step == live (bit-exact)',
+        stable(predicted.escrow) === stable(live.escrow),
+      );
+      state = live;
+    }
+
+    // refund address update (to the same address; event is the proof)
+    {
+      const updAddr = actions.updateUsufructuaryRefundAddress({
+        usufructCapId: mainCapId,
+        newAddress: me,
+      });
+      const tx = new Transaction();
+      updAddr.toPtb(tx, {
+        pkg: TESTNET,
+        escrowId,
+        usufructCapId: mainCapId,
+        typeArguments: TYPE_ARGS,
+      });
+      const res = await send(client, tx, signer);
+      check(
+        'ActiveUsufructuaryRefundAddressUpdated event',
+        (res.events ?? []).some((e) =>
+          e.eventType.includes('ActiveUsufructuaryRefundAddressUpdated'),
+        ),
+      );
+      const predicted = updAddr.step(state, ms(await chainNowMs(client))).state;
+      const live = await source.fetch(escrowId);
+      check(
+        'refund-address step == live (bit-exact)',
+        stable(predicted.escrow) === stable(live.escrow),
+      );
+      state = live;
+    }
+  }
+
   step(`7. apply step parity (§8 invariant) — waiting ${TENURE_MS}ms tenure`);
   {
     const expiry = views.tenureExpiryMs(state, ms(Date.now()));
@@ -376,6 +507,21 @@ async function main() {
       stable(predicted.escrow) === stable(live.escrow),
     );
     state = live;
+  }
+
+  step('7b. burnStaleUsufructCap (cap went stale at tenure expiry)');
+  {
+    const burn = actions.burnStaleUsufructCap({ usufructCapId: mainCapId });
+    // step: staleness validated, state unchanged
+    const { state: after } = burn.step(state, ms(await chainNowMs(client)));
+    check('burnStale.step leaves escrow unchanged', stable(after.escrow) === stable(state.escrow));
+    const tx = new Transaction();
+    burn.toPtb(tx, { pkg: TESTNET, escrowId, usufructCapId: mainCapId, typeArguments: TYPE_ARGS });
+    const res = await send(client, tx, signer);
+    check(
+      'UsufructCapBurned event',
+      (res.events ?? []).some((e) => e.eventType.includes('UsufructCapBurned')),
+    );
   }
 
   step('7c. coin-polymorphic collect (§5.2) — two coins, one inbox, one PTB');
@@ -438,6 +584,18 @@ async function main() {
       (c) => res2.objectTypes?.[c.objectId]?.includes('DummyAsset'),
     );
     check('asset returned to signer', returned === true);
+
+    // 8b. cap.move consumers: renounce the third escrow's governance and
+    // burn the SUI-axis cap (stale since its tenure expired in step 7).
+    const tx3 = new Transaction();
+    actions.renounceGovernanceToPtb(tx3, { pkg: TESTNET, governanceCapId: second.govCapId });
+    actions.burnUsufructCapToPtb(tx3, { pkg: TESTNET, usufructCapId: suiCapId });
+    const res3 = await send(client, tx3, signer);
+    check(
+      'GovernanceCapBurned + UsufructCapBurned events',
+      (res3.events ?? []).some((e) => e.eventType.includes('GovernanceCapBurned')) &&
+        (res3.events ?? []).some((e) => e.eventType.includes('UsufructCapBurned')),
+    );
   }
 
   step('9. persist fixtures for offline golden replay');
@@ -459,6 +617,8 @@ async function main() {
 
 let fixture: Record<string, unknown> | null = null;
 let occupiedFixture: Record<string, unknown> | null = null;
+let mainCapId = '';
+let suiCapId = '';
 
 main().catch((e) => {
   console.error(e);
