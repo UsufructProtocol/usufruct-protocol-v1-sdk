@@ -17,8 +17,11 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Transaction, TransactionResult } from '@mysten/sui/transactions';
 import { normalizeStructTag } from '@mysten/sui/utils';
 import { collectEarningsMessages } from '../codegen/usufruct/earnings.js';
+import { EarningsMessage } from '../codegen/usufruct/earnings_message.js';
 import { collectFeeMessages } from '../codegen/usufruct/fees.js';
-import type { Id } from '../primitives/brand.js';
+import type { TransitionAction } from '../primitives/action.js';
+import type { Id, Mist } from '../primitives/brand.js';
+import { mist } from '../primitives/brand.js';
 import type { PackageIds } from '../config/network.js';
 
 export type InboxKind = 'earnings' | 'fees';
@@ -27,6 +30,8 @@ export interface MessageRef {
   readonly objectId: string;
   readonly version: string;
   readonly digest: string;
+  /** Decoded message balance. */
+  readonly amountMist: Mist;
 }
 
 /** Messages grouped by normalized fully-qualified coin type. */
@@ -50,13 +55,21 @@ export async function discoverInboxMessages(
   const groups = new Map<string, MessageRef[]>();
   let cursor: string | null = null;
   do {
-    const page: Awaited<ReturnType<typeof client.core.listOwnedObjects>> =
-      await client.core.listOwnedObjects({ owner: inboxId, cursor, limit: 50 });
+    const page: Awaited<
+      ReturnType<typeof client.core.listOwnedObjects<{ content: true }>>
+    > = await client.core.listOwnedObjects({
+      owner: inboxId,
+      cursor,
+      limit: 50,
+      include: { content: true },
+    });
     for (const obj of page.objects) {
       if (!obj.type.includes(frag)) continue;
       const coin = normalizeStructTag(singleTypeArg(obj.type));
+      // EarningsMessage and FeeMessage share the { id, balance } layout.
+      const amountMist = mist(EarningsMessage.parse(obj.content).balance.value);
       const refs = groups.get(coin) ?? [];
-      refs.push({ objectId: obj.objectId, version: obj.version, digest: obj.digest });
+      refs.push({ objectId: obj.objectId, version: obj.version, digest: obj.digest, amountMist });
       groups.set(coin, refs);
     }
     cursor = page.hasNextPage ? page.cursor : null;
@@ -92,18 +105,41 @@ export interface CollectParams {
   readonly groups: MessageGroups;
 }
 
-export interface CollectAction {
+export interface CollectStepResult {
+  readonly byCoin: ReadonlyArray<{
+    readonly coinType: string;
+    readonly count: number;
+    readonly amountMist: Mist;
+  }>;
+}
+
+export interface CollectAction
+  extends Omit<TransitionAction<CollectStepResult, CollectPtbArgs, MessageGroups>, 'toPtb'> {
   /**
    * Emits one collect call per discovered coin type in a single PTB and
    * returns the resulting `Coin<C>` per coin (insertion order of `groups`);
-   * the caller transfers or consumes them.
+   * the caller transfers or consumes them. (Variant deviation: the PTB
+   * interpretation yields one result per coin, hence the array.)
    */
   readonly toPtb: (tx: Transaction, args: CollectPtbArgs) => TransactionResult[];
 }
 
+/**
+ * `Transition` over the inbox aggregate (`MessageGroups`, SPEC §4.3 as
+ * amended): `step` drains the discovered groups and totals per coin —
+ * the pure mirror of what the partitioned PTB does on-chain.
+ */
 export function collectMessages(params: CollectParams): CollectAction {
   const { module, struct } = MESSAGE_TYPE[params.kind];
   return {
+    step: (groups) => {
+      const byCoin = [...groups].map(([coinType, refs]) => ({
+        coinType,
+        count: refs.length,
+        amountMist: mist(refs.reduce((a, r) => a + r.amountMist, 0n)),
+      }));
+      return { state: new Map(), result: { byCoin } };
+    },
     toPtb: (tx, args) => {
       const coins: TransactionResult[] = [];
       for (const [coinType, refs] of params.groups) {

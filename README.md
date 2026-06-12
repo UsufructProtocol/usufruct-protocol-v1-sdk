@@ -65,6 +65,32 @@ SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
    element(s) but target requires 4"). Zero errors inside `src/codegen`.
    SPEC §4.5's claim holds precisely.
 
+### Action surface — closed (2026-06-12)
+
+All 13 mutating functions of `escrow.move` plus `cap.move`'s consumers and
+the coin-polymorphic collects are implemented and exercised live:
+
+- **Real `step` + live bit-exact parity**: `integrate`, `integrateIntoPortfolio`
+  (shares `integrate.step`), `applyPendingTransitionStates` (incl. pending-
+  ensemble application), `borrowAsset`/`returnAsset` (composition proven to
+  be the identity), `extendRetireCommitment`/`extendEnsembleCommitment`
+  (chained anchors), `updateEnsemble` (immediate vs scheduled),
+  `updateUsufructuaryRefundAddress`, `burnStaleUsufructCap`,
+  `collectMessages` (Transition over the `MessageGroups` inbox aggregate —
+  SPEC §4.3 as amended).
+- **`toPtb` only (step gated by §8.2 — curve math)**: `rent` (install &
+  bid paths), `retire`, `claimAsset`, `apply[handover]` — each exercised
+  live; the unimplemented steps throw `NotImplementedStepError`.
+- **Plain PTB helpers**: `renounceGovernance`, `burnUsufructCap` (they act
+  on the cap object, not on a state aggregate).
+
+**Demand validated live**: bid at the ascending floor (`BidPlaced`), full
+64-case parity in the third state, supersede with full refund
+(`BidSuperseded`), settlement preview at the boundary, and the handover
+itself (`HandoverCompleted` → the superseding bidder occupies). Earnings
+conservation holds across the whole life: per coin, collected == sum of all
+`EarningsMessagePosted` (handover settlement + both tenure expiries).
+
 ### View surface — closed (2026-06-12)
 
 The full read surface of `escrow.move` (~124 public views) plus

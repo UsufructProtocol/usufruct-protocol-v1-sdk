@@ -34,6 +34,7 @@ import {
   makeClient,
   send,
   chainNowMs,
+  retry429,
   step,
   waitForChainTime,
 } from './lib.js';
@@ -98,11 +99,13 @@ async function runParity(
     const tx = new Transaction();
     tx.setSender(me);
     for (const add of chunk) add(tx, ctx);
-    const sim = await client.core.simulateTransaction({
-      transaction: tx,
-      checksEnabled: false,
-      include: { commandResults: true },
-    });
+    const sim = await retry429(() =>
+      client.core.simulateTransaction({
+        transaction: tx,
+        checksEnabled: false,
+        include: { commandResults: true },
+      }),
+    );
     if (sim.$kind !== 'Transaction') throw new Error(`${label}: parity sim failed`);
     for (let j = 0; j < chunk.length; j++) {
       const ret = sim.commandResults?.[j]?.returnValues?.[0];

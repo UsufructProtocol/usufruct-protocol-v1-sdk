@@ -7,10 +7,11 @@ const INBOX = '0x' + '88'.repeat(32);
 const DCOIN = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN';
 const SUI = '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI';
 
-const ref = (n: number): MessageRef => ({
+const ref = (n: number, amountMist = 900n): MessageRef => ({
   objectId: '0x' + String(n).padStart(2, '0').repeat(32),
   version: '5',
   digest: '11111111111111111111111111111111',
+  amountMist: amountMist as MessageRef['amountMist'],
 });
 
 describe('coin-polymorphic collect (§5.2)', () => {
@@ -63,6 +64,22 @@ describe('coin-polymorphic collect (§5.2)', () => {
     expect(commands.find((c) => c.$kind === 'MoveCall')!.MoveCall!.function).toBe(
       'collect_fee_messages',
     );
+  });
+
+  it('step drains the groups and totals per coin (Transition over MessageGroups)', () => {
+    const groups = new Map([
+      [DCOIN, [ref(1, 900n), ref(2, 662n)]],
+      [SUI, [ref(3, 900n)]],
+    ]);
+    const { state, result } = collectMessages({ kind: 'earnings', groups }).step(
+      groups,
+      0n as never,
+    );
+    expect(state.size).toBe(0);
+    expect(result.byCoin).toEqual([
+      { coinType: DCOIN, count: 2, amountMist: 1_562n },
+      { coinType: SUI, count: 1, amountMist: 900n },
+    ]);
   });
 
   it('skips empty groups', () => {

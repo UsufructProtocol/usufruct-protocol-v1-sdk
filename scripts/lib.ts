@@ -52,11 +52,13 @@ export async function send(
   signer: Ed25519Keypair,
 ): Promise<ExecResult> {
   tx.setSenderIfNotSet(signer.toSuiAddress());
-  const result = await client.core.signAndExecuteTransaction({
-    transaction: tx,
-    signer,
-    include: { effects: true, events: true, objectTypes: true, balanceChanges: true },
-  });
+  const result = await retry429(() =>
+    client.core.signAndExecuteTransaction({
+      transaction: tx,
+      signer,
+      include: { effects: true, events: true, objectTypes: true, balanceChanges: true },
+    }),
+  );
   if (result.$kind !== 'Transaction') {
     const failed = result.FailedTransaction;
     throw new Error(
@@ -100,6 +102,21 @@ export function finish(): never {
 }
 
 export const sleep = (msec: number) => new Promise((r) => setTimeout(r, msec));
+
+/** Retry on public-fullnode rate limiting (HTTP 429) with backoff. */
+export async function retry429<T>(fn: () => Promise<T>, attempts = 6): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status !== 429 || i >= attempts - 1) throw e;
+      const backoff = 2_000 * 2 ** i;
+      console.log(`  [429] rate limited — backing off ${backoff}ms`);
+      await sleep(backoff);
+    }
+  }
+}
 
 /**
  * The chain's own clock (`0x6`), not the local clock — local skew (observed
