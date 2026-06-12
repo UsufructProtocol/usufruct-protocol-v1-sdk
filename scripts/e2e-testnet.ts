@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '../src/actions/index.js';
+import { EarningsMessageCollected } from '../src/codegen/usufruct/earnings_message.js';
 import * as escrowCalls from '../src/codegen/usufruct/escrow.js';
 import { TESTNET } from '../src/config/network.js';
 import { id, ms, tenureCount } from '../src/primitives/brand.js';
@@ -35,7 +36,9 @@ const DUMMY_COIN_TREASURY =
   '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
 const ASSET_T = `${DUMMY_PKG}::dummy_asset::DummyAsset`;
 const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
+const SUI_T = '0x2::sui::SUI';
 const TYPE_ARGS: [string, string] = [ASSET_T, COIN_T];
+const TYPE_ARGS_SUI: [string, string] = [ASSET_T, SUI_T];
 const TENURE_MS = 30_000n;
 
 const client = makeClient();
@@ -87,6 +90,7 @@ async function integrateEscrow() {
   return {
     escrowId: id<'Escrow'>(createdId(res, '::escrow::Escrow')),
     govCapId: id<'GovernanceCap'>(createdId(res, '::governance_cap::GovernanceCap')),
+    inboxId: createdId(res, '::earnings_inbox::EarningsInbox'),
     action,
   };
 }
@@ -103,9 +107,27 @@ async function main() {
   }
 
   step('2. integrate (Origin action)');
-  const { escrowId, govCapId, action: integrateAction } = await integrateEscrow();
+  const { escrowId, govCapId, inboxId, action: integrateAction } = await integrateEscrow();
   check('escrow created', escrowId.length === 66, escrowId);
   check('governance cap created', govCapId.length === 66);
+
+  step('2b. integrate_into_portfolio — second escrow, SUI coin axis, same inbox');
+  let escrowSuiId: ReturnType<typeof id<'Escrow'>>;
+  {
+    const tx = new Transaction();
+    actions
+      .integrateIntoPortfolio({ ensemble: ensembleCfg, assetType: ASSET_T, coinType: SUI_T })
+      .toPtb(tx, {
+        pkg: TESTNET,
+        asset: mintAsset(tx),
+        typeArguments: TYPE_ARGS_SUI,
+        governanceCapId: govCapId,
+        earningsInboxId: inboxId,
+      });
+    const res = await send(client, tx, signer);
+    escrowSuiId = id<'Escrow'>(createdId(res, '::escrow::Escrow'));
+    check('portfolio escrow created (SUI axis)', escrowSuiId.length === 66, escrowSuiId);
+  }
 
   step('3. ChainSource.fetch + BCS decode of the live escrow');
   let state = await source.fetch(escrowId);
@@ -227,7 +249,7 @@ async function main() {
     check('floorPriceMist == rest price', floor === 1_000n, String(floor));
   }
 
-  step('6. rent (Transition action)');
+  step('6. rent (Transition action) — both escrows, one PTB');
   {
     const action = actions.rent({ tenures: tenureCount(1) });
     const tx = new Transaction();
@@ -237,7 +259,16 @@ async function main() {
       payment: mintCoin(tx, 1_000n),
       typeArguments: TYPE_ARGS,
     });
-    tx.transferObjects([cap], me);
+    // Second escrow pays in real SUI (split from gas) — same inbox, second
+    // coin axis: the §5.2 partition setup.
+    const [suiStake] = tx.splitCoins(tx.gas, [1_000n]);
+    const capSui = action.toPtb(tx, {
+      pkg: TESTNET,
+      escrowId: escrowSuiId,
+      payment: suiStake!,
+      typeArguments: TYPE_ARGS_SUI,
+    });
+    tx.transferObjects([cap, capSui], me);
     await send(client, tx, signer);
     state = await source.fetch(escrowId);
     check('escrow is Occupied after rent', views.isOccupied(state, ms(Date.now())));
@@ -256,6 +287,9 @@ async function main() {
     const apply = actions.applyPendingTransitionStates();
     const tx = new Transaction();
     apply.toPtb(tx, { pkg: TESTNET, escrowId, typeArguments: TYPE_ARGS });
+    // Settle the SUI-axis escrow in the same PTB so its EarningsMessage<SUI>
+    // lands in the shared inbox before the collect step.
+    apply.toPtb(tx, { pkg: TESTNET, escrowId: escrowSuiId, typeArguments: TYPE_ARGS_SUI });
     // Past the boundary the step output depends on the boundary, not on the
     // exact now — any t ≥ boundary mirrors the chain's clock evaluation.
     const t = ms(chainNow);
@@ -277,6 +311,41 @@ async function main() {
       stable(predicted.escrow) === stable(live.escrow),
     );
     state = live;
+  }
+
+  step('7c. coin-polymorphic collect (§5.2) — two coins, one inbox, one PTB');
+  {
+    const groups = await actions.discoverInboxMessages(client, inboxId, 'earnings');
+    check(
+      'inbox holds messages of exactly 2 coin types',
+      groups.size === 2,
+      [...groups.keys()].join(' | '),
+    );
+
+    const tx = new Transaction();
+    const coins = actions.collectMessages({ kind: 'earnings', groups }).toPtb(tx, {
+      pkg: TESTNET,
+      inboxId,
+    });
+    tx.transferObjects(coins, me);
+    const res = await send(client, tx, signer);
+
+    const collected = (res.events ?? [])
+      .filter((e) => e.eventType.includes('EarningsMessageCollected'))
+      .map((e) => EarningsMessageCollected.parse(e.bcs));
+    check('2 EarningsMessageCollected events', collected.length === 2);
+    check(
+      'each coin collected 900 mist (90% of 1000 principal)',
+      collected.every((c) => c.amount === '900'),
+      collected.map((c) => `${c.coin_type.split('::').pop()}:${c.amount}`).join(', '),
+    );
+    check(
+      'collected coin types are distinct',
+      new Set(collected.map((c) => c.coin_type)).size === 2,
+    );
+
+    const after = await actions.discoverInboxMessages(client, inboxId, 'earnings');
+    check('inbox drained', after.size === 0);
   }
 
   step('8. retire + claimAsset (Terminal action)');
