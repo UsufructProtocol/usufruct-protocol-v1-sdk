@@ -34,3 +34,21 @@ export const activeUsufructuaryAddr: View<string | null> = (state) => {
   const terms = rentingTerms(assetState(state));
   return terms === null ? null : terms.active.identity.address.addr;
 };
+
+/**
+ * Mirrors `asset_type_name` / `coin_type_name`. Move returns the canonical
+ * `type_name` form (full 64-hex address, no leading short form); the
+ * `EscrowState` type args are normalized the same way at decode time, minus
+ * the `0x` prefix Move omits — strip it for exact parity.
+ */
+export const assetTypeName: View<string> = (state) => moveTypeName(state.assetType);
+
+export const coinTypeName: View<string> = (state) => moveTypeName(state.coinType);
+
+function moveTypeName(typeTag: string): string {
+  // Move's type_name has no 0x prefix and pads addresses to 64 lowercase hex
+  // chars; module and struct names keep their case.
+  return typeTag.replace(/0x([0-9a-fA-F]+)/g, (_m, hex: string) =>
+    hex.toLowerCase().padStart(64, '0'),
+  );
+}

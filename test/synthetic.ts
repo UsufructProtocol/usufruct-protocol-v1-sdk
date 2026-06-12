@@ -112,6 +112,34 @@ export const descentState = (phaseStartMs: bigint) =>
     },
   });
 
+export const BIDDER = '0x' + '77'.repeat(32);
+export const BIDDER_CAP = '0x' + '99'.repeat(32);
+
+export const demandState = (
+  phaseStartMs: bigint,
+  handoverExpiryMs: bigint,
+  ceilingMs = 60_000n,
+) =>
+  syntheticState({
+    Renting: {
+      Demand: {
+        asset: openCustody,
+        terms: occupiedTerms(phaseStartMs, ceilingMs),
+        bid: {
+          pending: {
+            identity: {
+              cap_identity: { id: BIDDER_CAP },
+              address: { addr: BIDDER },
+            },
+            stake: { balance: { value: 2_000n } },
+          },
+          handover: { expiry: { ms: handoverExpiryMs }, tenures: { count: 2n } },
+        },
+        cycle: defaultCycle,
+      },
+    },
+  });
+
 export const occupiedState = (phaseStartMs: bigint, ceilingMs = 60_000n) =>
   syntheticState({
     Renting: {
