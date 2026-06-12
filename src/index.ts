@@ -5,3 +5,6 @@ export * from './primitives/action.js';
 export * from './primitives/source.js';
 export * as views from './views/index.js';
 export * as inspect from './views/inspect.js';
+export * as actions from './actions/index.js';
+export * from './config/ensemble.js';
+export * from './config/network.js';
