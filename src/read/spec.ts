@@ -13,6 +13,9 @@ import { Transaction, type TransactionResult } from '@mysten/sui/transactions';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 import * as ec from '../codegen/usufruct/escrow.js';
 
+/** Arguments a view may require beyond the fixed target. */
+export type ReadArg = 'now' | 'probe' | 'boundary' | 'nextFloor' | 'rented';
+
 /** Fixed target + the optional per-call arguments some views require. */
 export interface ReadCtx {
   readonly packageId: string;
@@ -22,6 +25,12 @@ export interface ReadCtx {
   readonly nowMs?: bigint;
   /** Cap id for the cap-verification views. */
   readonly probeCapId?: string;
+  /** Boundary timestamp for settlement views. */
+  readonly boundaryMs?: bigint;
+  /** Hypothetical total bid for `next_floor_price_mist`. */
+  readonly totalBidMist?: bigint;
+  /** Hypothetical tenure count for `next_floor_price_mist`. */
+  readonly tenures?: bigint;
 }
 
 export interface ViewSpec {
@@ -30,12 +39,17 @@ export interface ViewSpec {
   readonly calls: ReadonlyArray<(tx: Transaction, ctx: ReadCtx) => void>;
   /** Receives every returnValue of every call, flattened in order. */
   readonly decode: (rets: Uint8Array[], ctx: ReadCtx) => unknown;
+  /** Args this view needs; a snapshot includes it only if all are supplied. */
+  readonly needs?: readonly ReadArg[];
 }
 
-// ── decoders ──
+// ── decoders (u64 → bigint, matching the branded SDK types) ──
 const dBool = (b: Uint8Array) => bcs.bool().parse(b);
-const dU64 = (b: Uint8Array) => bcs.u64().parse(b);
-const dOptU64 = (b: Uint8Array) => bcs.option(bcs.u64()).parse(b);
+const dU64 = (b: Uint8Array) => BigInt(bcs.u64().parse(b));
+const dOptU64 = (b: Uint8Array) => {
+  const v = bcs.option(bcs.u64()).parse(b);
+  return v == null ? null : BigInt(v);
+};
 const dAddr = (b: Uint8Array) => bcs.Address.parse(b);
 const dOptAddr = (b: Uint8Array) => bcs.option(bcs.Address).parse(b);
 const dStr = (b: Uint8Array) => bcs.string().parse(b);
@@ -61,9 +75,18 @@ function one(
   fn: Wrapper,
   decode: (b: Uint8Array) => unknown,
   args?: (ctx: ReadCtx) => unknown[],
+  needs?: readonly ReadArg[],
 ): ViewSpec {
-  return { name, calls: [call(fn, args)], decode: (rets) => decode(rets[0]!) };
+  return {
+    name,
+    calls: [call(fn, args)],
+    decode: (rets) => decode(rets[0]!),
+    ...(needs ? { needs } : {}),
+  };
 }
+
+const NOW: readonly ReadArg[] = ['now'];
+const PROBE: readonly ReadArg[] = ['probe'];
 
 function cycleRecord(rets: Uint8Array[]) {
   const [floor, ceiling, handover, descent] = rets.map(dOptU64);
@@ -119,29 +142,29 @@ export const VIEW_SPECS: readonly ViewSpec[] = [
   one('pendingCommittedTenures', ec.pendingUsufructuaryCommittedTenures, dOptU64),
 
   // ── cap verification (probe cap id) ──
-  one('governanceCapIsValid', ec.governanceCapIsValid, dBool, withProbe),
-  one('usufructCapIsActive', ec.usufructCapIsActive, dBool, withProbe),
-  one('usufructCapIsPending', ec.usufructCapIsPending, dBool, withProbe),
-  one('usufructCapIsStale', ec.usufructCapIsStale, dBool, withProbe),
+  one('governanceCapIsValid', ec.governanceCapIsValid, dBool, withProbe, PROBE),
+  one('usufructCapIsActive', ec.usufructCapIsActive, dBool, withProbe, PROBE),
+  one('usufructCapIsPending', ec.usufructCapIsPending, dBool, withProbe, PROBE),
+  one('usufructCapIsStale', ec.usufructCapIsStale, dBool, withProbe, PROBE),
 
   // ── temporal ──
   one('phaseStartMs', ec.phaseStartMs, dOptU64),
   one('tenureExpiryMs', ec.tenureExpiryMs, dOptU64),
-  one('transitionIsReady', ec.transitionIsReady, dBool, withNow),
-  one('nextTransitionMs', ec.nextTransitionMs, dOptU64, withNow),
+  one('transitionIsReady', ec.transitionIsReady, dBool, withNow, NOW),
+  one('nextTransitionMs', ec.nextTransitionMs, dOptU64, withNow, NOW),
   one('handoverExpiryMs', ec.handoverExpiryMs, dOptU64),
-  one('activeUsufructuaryTimeRemainingMs', ec.activeUsufructuaryTimeRemainingMs, dOptU64, withNow),
-  one('handoverExpiryIfBidAt', ec.handoverExpiryIfBidAt, dOptU64, withNow),
+  one('activeUsufructuaryTimeRemainingMs', ec.activeUsufructuaryTimeRemainingMs, dOptU64, withNow, NOW),
+  one('handoverExpiryIfBidAt', ec.handoverExpiryIfBidAt, dOptU64, withNow, NOW),
   one('tenureCeilingMs', ec.tenureCeilingMs, dU64),
   one('integratedAtMs', ec.integratedAtMs, dU64),
 
   // ── commitments ──
   one('retireCommitmentUnlocksAtMs', ec.retireCommitmentUnlocksAtMs, dU64),
   one('retireCommitmentAnchorMs', ec.retireCommitmentAnchorMs, dU64),
-  one('retireCommitmentRemainingMs', ec.retireCommitmentRemainingMs, dU64, withNow),
+  one('retireCommitmentRemainingMs', ec.retireCommitmentRemainingMs, dU64, withNow, NOW),
   one('ensembleCommitmentUnlocksAtMs', ec.ensembleCommitmentUnlocksAtMs, dU64),
   one('ensembleCommitmentAnchorMs', ec.ensembleCommitmentAnchorMs, dU64),
-  one('ensembleCommitmentRemainingMs', ec.ensembleCommitmentRemainingMs, dU64, withNow),
+  one('ensembleCommitmentRemainingMs', ec.ensembleCommitmentRemainingMs, dU64, withNow, NOW),
 
   // ── credit / auction memory ──
   one('lastRentPriceMist', ec.lastRentPriceMist, dOptU64),
@@ -267,6 +290,41 @@ export const VIEW_SPECS: readonly ViewSpec[] = [
       call(ec.auctionShapeExponentialAlphaNeg),
     ],
     decode: curveShapeFromUnrolled,
+  },
+
+  // ── settlement / curve math (Pattern A; pure on-chain, no mirror) ──
+  one('floorPriceMist', ec.floorPriceMist, dU64, withNow, NOW),
+  one('accruedCreditMist', ec.accruedCreditMist, dU64, withNow, NOW),
+  one(
+    'activeStakeBalanceRemainingMist',
+    ec.activeStakeBalanceRemainingMist,
+    dOptU64,
+    withNow,
+    NOW,
+  ),
+  {
+    name: 'nextFloorPriceMist',
+    calls: [call(ec.nextFloorPriceMist, (ctx) => [ctx.escrowId, ctx.totalBidMist, ctx.tenures])],
+    decode: (rets) => dU64(rets[0]!),
+    needs: ['nextFloor'],
+  },
+  {
+    name: 'handoverSettlement',
+    calls: [call(ec.handoverSettlement, (ctx) => [ctx.escrowId, ctx.boundaryMs])],
+    decode: (rets) => ({
+      remainingMist: dU64(rets[0]!),
+      governorShareMist: dU64(rets[1]!),
+      feeMist: dU64(rets[2]!),
+    }),
+    needs: ['boundary'],
+  },
+  {
+    // Aborts on a non-rented escrow (protocol abort surfaces verbatim);
+    // `rented` is never satisfied by snapshot, so it is method-only.
+    name: 'tenureSettlement',
+    calls: [call(ec.tenureSettlement)],
+    decode: (rets) => ({ governorShareMist: dU64(rets[0]!), feeMist: dU64(rets[1]!) }),
+    needs: ['rented'],
   },
 
   // ── constants (module-level, no escrow argument, not generic) ──
