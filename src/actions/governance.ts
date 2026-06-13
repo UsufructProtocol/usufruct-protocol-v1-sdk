@@ -75,10 +75,9 @@ export function extendRetireCommitment(
   cfg: RetireCommitmentConfig,
 ): TransitionAction<null, GovernancePtbArgs> {
   return {
-    step: (state, t, opts) => {
+    step: (state, t) => {
       const settled = settle(state, t);
       assertNotRetired(settled.escrow.state);
-      void opts;
       const core = settled.escrow.core!;
       const next: State = {
         ...settled,

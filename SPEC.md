@@ -158,22 +158,21 @@ role, which determines its `Action` variant:
 
 ```
 interface OriginAction<R, P> {        // creates an EscrowState
-  step:  (t: Ms, opts?: StepOpts) => { state: EscrowState; result: R };
+  step:  (t: Ms) => { state: EscrowState; result: R };
   toPtb: (tx: Transaction, args: P) => R_ptb;
 }
 interface TransitionAction<R, P> {    // mutates an EscrowState
-  step:  (state: EscrowState, t: Ms, opts?: StepOpts) => { state: EscrowState; result: R };
+  step:  (state: EscrowState, t: Ms) => { state: EscrowState; result: R };
   toPtb: (tx: Transaction, args: P) => R_ptb;
 }
 interface TerminalAction<R, P> {      // consumes an EscrowState
-  step:  (state: EscrowState, t: Ms, opts?: StepOpts) => { result: R };
+  step:  (state: EscrowState, t: Ms) => { result: R };
   toPtb: (tx: Transaction, args: P) => R_ptb;
 }
-
-interface StepOpts {
-  rng?: Rng;   // required only when state's config triggers stochastic resolution (§8.1)
-}
 ```
+
+`step` is unconditionally deterministic in `(state, t)` — the protocol has no
+stochastic policy, so there is no `Rng` parameter (§8).
 
 The variants are generic over the **state aggregate** they govern, with
 `EscrowState` as the default (amended 2026-06-12): every escrow action uses
@@ -199,11 +198,13 @@ The 11 mutating actions, classified by variant:
 | Transition   | `withdrawEarnings`, `retire`, `extendCommitment`, `updateConfig`, `rent`, `borrowAsset`, `returnAsset`, `burnTenantCap`, `applyPendingTransitionStates` |
 | Terminal     | `claimAsset`                                                                           |
 
-`&Random`, `&Clock`, and `&mut TxContext` appear in Move signatures but are
-FFI artefacts, not semantic inputs. The SDK injects the `0x8` randomness and
-`0x6` clock singletons automatically at `toPtb` time; none of them appears in
-any `Action` constructor. Whether `step` requires an `Rng` is a property of
-the state's config, not of the action's type — see §8.1.
+`&Clock` and `&mut TxContext` appear in Move signatures but are FFI
+artefacts, not semantic inputs. The SDK injects the `0x6` clock singleton
+automatically at `toPtb` time; `TxContext` is supplied by the transaction
+runtime. Neither appears in any `Action` constructor. (Earlier protocol
+versions also threaded `&Random` for stochastic policies; that feature was
+removed — the protocol is now fully deterministic, so no `step` consumes
+randomness. See §8.)
 
 ### §4.4 — `Source` (IO)
 
@@ -522,62 +523,51 @@ there.
 This invariant does **not** bind tier 1: the wrapper *is* the bytecode's
 answer, so there is nothing to be bit-exact *with*. The invariant exists to
 keep the opt-in mirror honest, and it is enforceable precisely because tier 1
-gives every mirrored value a free, authoritative oracle (§8.2). When the
-state's configuration declares stochastic policies (`RandomInRange`), the
-mirror's `step` is parameterised by an optional `Rng` and is bit-exact under
-equivalent seeding; `toPtb` is always authoritative regardless.
+gives every mirrored value a free, authoritative oracle (§8.2).
+
+The invariant is **unconditional**: the protocol carries no stochastic
+policy. Every transition is a deterministic fixed-point integer computation
+over `(state, t)` — the credit/auction curves, the bps settlement split, the
+price escalation. There is no `&Random` consumption, no seeded `Rng`, no
+"one possible future". `Action.step` is therefore a total deterministic
+function, and `toPtb` and `step` produce identical observable effects at the
+same `(state, t)`.
 
 If the invariant holds for a given action, `Action::step` is well-defined for
-that action over every (deterministically-configured) state. The simulator,
-testbed, and agenda capabilities depend on it for the actions they touch.
+that action over every state. The simulator, testbed, and agenda capabilities
+depend on it for the actions they touch.
 
-Determinism is a property of the **state's config**, not of the **action's
-type**. The same `rent` action is deterministic over a state whose tenure
-policy is `Fixed`, and stochastic over a state whose tenure policy is
-`RandomInRange`. The SDK exposes this distinction through views over state
-(`views.tenureCeilingIsRandomInRange(state)`,
-`views.minRentPriceIsRandomInRange(state)`, …) — never through type-level
-markers on actions.
+### §8.1 — The curve math is the hard part
 
-### §8.1 — Stochastic state transitions
+The only non-trivial mirror work is reproducing the fixed-point curve and
+settlement arithmetic bit-exactly. The discipline:
 
-The Move signatures of `integrate`, `rent`, `applyPendingTransitionStates`,
-and others include `&Random`, but this is an FFI artefact: the parameter is
-passed unconditionally because Move signatures are fixed regardless of runtime
-branching. Randomness is only **consumed** when the state's
-`IntegrationConfig` declares policies whose resolution is stochastic — at
-present, `tenure_ceiling: RandomInRange { min, max }` and
-`min_rent_price: RandomInRange { min, max }`.
-
-A `TransitionAction::step` over such a state samples those resolutions:
-
-- In testbed and golden-test contexts, `StepOpts.rng` is seeded; the resulting
-  sample is reproducible and matches the Move equivalent under equivalent
-  seeding (the `*_for_testing_with_seed` helpers in Move exist for this).
-- In production simulator contexts, `StepOpts.rng` may be omitted; the SDK
-  uses a contextually-appropriate default (e.g. system RNG for "what could
-  happen" exploration). The result is one possible future, not a contractual
-  prediction.
-- `Action::toPtb` is always authoritative; randomness is resolved on-chain at
-  execution time regardless of any `step` sample preceding it.
-
-The SDK does not mark stochasticity in the type of the action. Consumers that
-need to know whether a given `(state, action)` pair will resolve randomly
-read it from views over `state`, never from types over the action.
+- The math is mirrored in `src/sim/curve.ts` from `curve_shape_policy.move`
+  and `math.move`, in `bigint`, respecting u128 widening, **truncating**
+  division, and the exact denominators (`SCALE = 1e9`, `TAYLOR_SCALE = 1e18`,
+  `BPS_DENOMINATOR = 10000`) and constant tables (`EXP_A_NORM_*`, logistic).
+- Two actions consume it: `rent` (descending floor over `auction_shape`,
+  Descent branch) and `applyPendingTransitionStates` (used-credit integral
+  over `credit_shape`, handover branch). The rest — `rent` bid/install-idle,
+  `retire`, `claimAsset` — are pure state-machine moves with no curve.
 
 ### §8.2 — Mitigation of bit-exactness drift
 
 Without a verification mechanism, "bit-exact mirror" is a promise, not a fact.
 The discipline that converts promise to fact:
 
-- **Cross-runtime golden tests.** A Move fixture emits tuples
-  `(state, t) → expected_result` covering every `View` and every non-random
-  `Action::step`. A TypeScript test consumes the fixture and asserts the
-  TypeScript implementation produces identical results.
+- **Curve golden vectors.** The protocol's own pinned test vectors
+  (`tests/policies/curve_shape_policy_tests.move`) are lifted into a
+  TypeScript golden test asserting `src/sim/curve.ts` reproduces every
+  `(shape, params, t, t_max) → height` bit-exactly. Every `CurveShape` and
+  `PriceEscalation` variant is covered.
+- **Live integration parity.** The on-chain public views (`floor_price_mist`,
+  `accrued_credit_mist`, `handover_settlement`) — already the `read` tier —
+  are evaluated over real states and asserted equal to the mirror; and
+  `apply.step` over a live handover is asserted bit-exact against the
+  refetched post-transition state.
 - **CI enforcement.** A Move source change that alters output without a
   corresponding TypeScript change breaks the golden test in CI.
-- **Curve coverage.** Every parameter combination for `CurveShape` and
-  `PriceFunction` is exercised explicitly in fixtures.
 
 If a view or action does not have a golden test, it does not ship in mirror
 (`step` / pure `View`) form; the consumer reads it through the wrapper
@@ -680,8 +670,8 @@ distinct packages under `sdk/packages/` once core stabilises.
 | Schedule-first kernel (5th primitive for pending-transitions agenda).               | Rejected    | `Schedule` is derivable from `View` + `Action`; promoting it duplicates surface without expanding expressiveness. Higher-abstraction primitives predict use cases and foreclose unanticipated ones. Agenda ergonomics live as convenience layers (§11). See §7.1. |
 | Methods on `EscrowState`.                                                           | Rejected    | Violates §3; closes off time-travel and replay; encourages hidden state.                           |
 | Implicit ambient clock (`now()` helper).                                            | Rejected    | Violates §3; closes off simulator and testbed.                                                     |
-| Type-level marker `Probabilistic<T>` on actions that consume `&Random` in Move.     | Rejected    | Leaks an FFI artefact into the SDK type system. Determinism is a property of the state's config, not of the action's type. Stochasticity is read from views over state (§8.1), not from action types. |
-| Surfacing `&Random`, `&Clock`, `&mut TxContext` as SDK-visible parameters.          | Rejected    | These are FFI artefacts of Move signatures, not semantic inputs. The SDK injects the `0x8` and `0x6` singletons at `toPtb` time; `TxContext` is supplied by the Sui transaction runtime. |
+| Modelling stochastic policies (`RandomInRange`, seeded `Rng`, `StepOpts`).          | Removed (2026-06-13) | The protocol's stochastic-policy feature was removed upstream; the runtime is now fully deterministic. The SDK drops `Rng`/`StepOpts` and the §8.1 stochastic machinery — `step` is unconditionally `(state, t)`. |
+| Surfacing `&Clock` / `&mut TxContext` as SDK-visible parameters.                    | Rejected    | FFI artefacts of Move signatures, not semantic inputs. The SDK injects the `0x6` clock singleton at `toPtb` time; `TxContext` is supplied by the Sui transaction runtime. |
 | `Uint8Array` fallback for unknown asset BCS layouts.                                | Rejected (amended 2026-06-12) | Refuted by the prototype: the asset sits mid-struct, so decoding requires the exact schema; a wrong schema misaligns silently. Replaced by required integrator schema + `uidAssetSchema` for uid-only assets + re-serialize byte-compare decode invariant (`EscrowDecodeError`). See §10. |
 | Inspect functions as the named category for Pattern A reads.                        | Superseded (2026-06-12) | Generalised: Inspect functions were the prototype of the wrapper. They became the `read` tier (§6.1) covering *all* views, not a selective category. `src/views/inspect.ts` is absorbed into `src/read/`. |
 | Broad §5.1 collapse: `*_kind` views and cycle-params accessors fold into unions/records. | Adopted (2026-06-12) | ~68 TypeScript views cover the ~124 Move views; the unrolled API is reconstruction material for the parity oracle only. 128 live parity cases (64 × idle/occupied states) verified on testnet. |

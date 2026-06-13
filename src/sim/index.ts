@@ -18,7 +18,5 @@ export type {
   OriginAction,
   TransitionAction,
   TerminalAction,
-  StepOpts,
-  Rng,
 } from '../primitives/action.js';
 export { NotImplementedStepError } from '../primitives/action.js';

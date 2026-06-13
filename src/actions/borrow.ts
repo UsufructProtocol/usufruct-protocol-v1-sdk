@@ -54,9 +54,9 @@ export function borrowAsset(params: {
   readonly usufructCapId: string;
 }): TransitionAction<BorrowResult, BorrowPtbArgs> {
   return {
-    step: (state, t, opts) => {
+    step: (state, t) => {
       // The engine settles pending transitions before borrowing.
-      const settled = applyPendingTransitionStates().step(state, t, opts).state;
+      const settled = applyPendingTransitionStates().step(state, t).state;
       const s = settled.escrow.state;
       if (s == null) throw new Error('EAssetBorrowed: asset already borrowed');
       if (s.$kind !== 'Renting') throw new Error('EStaleUsufructCap: escrow is not rented');
