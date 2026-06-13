@@ -24,7 +24,7 @@ import {
 import { TESTNET } from '../src/config/network.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
-import * as inspect from '../src/views/inspect.js';
+import { createReader, type Reader } from '../src/read/index.js';
 import * as views from '../src/views/index.js';
 import {
   check,
@@ -62,6 +62,18 @@ const me = signer.toSuiAddress();
 const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
 const source = chainSource(client, { assetSchema: dummyAssetSchema });
 
+/** A bound Reader (tier 1) over an escrow — the default read surface. */
+const readerFor = (
+  escrow: ReturnType<typeof id<'Escrow'>>,
+  typeArguments: [string, string] = TYPE_ARGS,
+): Reader =>
+  createReader(client, {
+    packageId: TESTNET.packageId,
+    escrowId: escrow,
+    typeArguments,
+    assetSchema: dummyAssetSchema,
+  });
+
 /** Key-order-insensitive deep equality (BCS parse emits `$kind` last). */
 function stableJson(value: unknown): string {
   return JSON.stringify(value, (_k, v: unknown) =>
@@ -89,8 +101,8 @@ async function runParity(
   const flatCalls: Array<(tx: Transaction, c: ParityCtx) => void> = [];
   const slices: Array<{ start: number; end: number }> = [];
   for (const pc of PARITY_CASES) {
-    slices.push({ start: flatCalls.length, end: flatCalls.length + pc.calls.length });
-    flatCalls.push(...pc.calls);
+    slices.push({ start: flatCalls.length, end: flatCalls.length + pc.spec.calls.length });
+    flatCalls.push(...pc.spec.calls);
   }
 
   const allRets: Uint8Array[] = [];
@@ -119,8 +131,8 @@ async function runParity(
   for (let k = 0; k < PARITY_CASES.length; k++) {
     const pc = PARITY_CASES[k]!;
     const rets = allRets.slice(slices[k]!.start, slices[k]!.end);
-    const onchain = pc.decode(rets, ctx);
-    const local = pc.local(escrowState, ms(ctx.nowMs), ctx);
+    const onchain = pc.spec.decode(rets, ctx);
+    const local = pc.local(escrowState, ms(ctx.nowMs!), ctx);
     const ok = parityEqual(local, onchain);
     if (!ok) {
       failures++;
@@ -266,9 +278,8 @@ async function main() {
   {
     // accrued_credit_mist aborts on a non-rented escrow (observed live) —
     // it is read after rent, in step 6.
-    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
-    const floor = await inspect.floorPriceMist(target, ms(Date.now()));
-    check('floorPriceMist == rest price', floor === 1_000n, String(floor));
+    const floor = await readerFor(escrowId).floorPriceMist(ms(Date.now()));
+    check('read.floorPriceMist == rest price', floor === 1_000n, String(floor));
   }
 
   step('6. rent (Transition action) — both escrows, one PTB');
@@ -304,9 +315,8 @@ async function main() {
     suiCapId = capIds.find((c) => c !== mainCapId) ?? capIds[1]!;
     check('escrow is Occupied after rent', views.isOccupied(state, ms(Date.now())));
 
-    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
-    const credit = await inspect.accruedCreditMist(target, ms(Date.now()));
-    check('accruedCreditMist decodes while rented', credit >= 0n, String(credit));
+    const credit = await readerFor(escrowId).accruedCreditMist(ms(Date.now()));
+    check('read.accruedCreditMist decodes while rented', credit >= 0n, String(credit));
   }
 
   step('6b. Full live parity — Occupied state');
@@ -335,29 +345,55 @@ async function main() {
     };
   }
 
+  step('6r. read tier live — Reader methods, snapshot, drift-free time-travel');
+  {
+    const rdr = readerFor(escrowId);
+    // Individual typed methods return the bytecode's own answer (drift = 0).
+    check('read.isOccupied()', (await rdr.isOccupied()) === true);
+    const hv = await rdr.handover();
+    check(
+      'read.handover() = fixed 25s',
+      hv.kind === 'fixed' && hv.floorMs === HANDOVER_MS,
+      pStable(hv),
+    );
+
+    // snapshot batches the whole nullary table (+ now/cap views) in few sims.
+    const t = ms(await chainNowMs(client));
+    const snap = await rdr.snapshot({ t, capId: mainCapId });
+    check('snapshot covers the table', Object.keys(snap).length > 50, String(Object.keys(snap).length));
+    check('snapshot.activeStakeBalanceMist', snap.activeStakeBalanceMist === 1_000n, String(snap.activeStakeBalanceMist));
+    check('snapshot.usufructCapIsActive(main)', snap.usufructCapIsActive === true);
+
+    // Drift-free time-travel: same on-chain state, two times → monotonic
+    // accrued credit, both computed by the deployed bytecode.
+    const c1 = await rdr.accruedCreditMist(t);
+    const c2 = await rdr.accruedCreditMist(ms(t + 5_000n));
+    check('accruedCreditMist grows with t (time-travel)', c2 >= c1 && c2 > 0n, `${c1} -> ${c2}`);
+  }
+
   step('6c. Settlement Inspect functions (live)');
   {
-    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
+    const rdr = readerFor(escrowId);
     // Stake 1000, linear credit: tenure settlement splits 90/10 regardless of t.
-    const ts = await inspect.tenureSettlement(target);
+    const ts = await rdr.tenureSettlement();
     check(
       'tenureSettlement = 900/100 split',
       ts.governorShareMist === 900n && ts.feeMist === 100n,
       `${ts.governorShareMist}/${ts.feeMist}`,
     );
-    const hs = await inspect.handoverSettlement(target, ms(Date.now()));
+    const hs = await rdr.handoverSettlement(ms(Date.now()));
     check(
       'handoverSettlement conserves the stake',
       hs.remainingMist + hs.governorShareMist + hs.feeMist === 1_000n,
       `${hs.remainingMist}+${hs.governorShareMist}+${hs.feeMist}`,
     );
-    const remaining = await inspect.activeStakeBalanceRemainingMist(target, ms(Date.now()));
+    const remaining = await rdr.activeStakeBalanceRemainingMist(ms(Date.now()));
     check(
       'activeStakeBalanceRemainingMist == settlement remaining',
       remaining === hs.remainingMist || (remaining ?? 0n) >= 0n,
       String(remaining),
     );
-    const nextFloor = await inspect.nextFloorPriceMist(target, mist(1_000), 1n);
+    const nextFloor = await rdr.nextFloorPriceMist(mist(1_000), tenureCount(1));
     check('nextFloorPriceMist decodes', nextFloor > 0n, String(nextFloor));
   }
 
@@ -494,9 +530,9 @@ async function main() {
 
   step('6f. live Demand — bid, third parity state, supersede, handover');
   {
-    const target = { client, packageId: TESTNET.packageId, escrowId, typeArguments: TYPE_ARGS };
+    const rdr = readerFor(escrowId);
     // Ascending floor for the bid: next price over the active stake/tenure.
-    const bidFloor = await inspect.nextFloorPriceMist(target, mist(1_000), 1n);
+    const bidFloor = await rdr.nextFloorPriceMist(mist(1_000), tenureCount(1));
     check('ascending bid floor = 1001 (fixedDelta 1)', bidFloor === 1_001n, String(bidFloor));
 
     // Place the bid: rent over an Occupied escrow → Demand.
@@ -547,7 +583,7 @@ async function main() {
 
     // Supersede: a higher bid displaces the pending one with a full refund.
     {
-      const nextFloor = await inspect.nextFloorPriceMist(target, bidFloor, 1n);
+      const nextFloor = await rdr.nextFloorPriceMist(bidFloor, tenureCount(1));
       const tx = new Transaction();
       const cap = rentAction.toPtb(tx, {
         pkg: TESTNET,
@@ -573,7 +609,7 @@ async function main() {
     // Settlement preview over the live Demand boundary.
     const expiry = views.handoverExpiryMs(state, ms(Date.now()))!;
     {
-      const hs = await inspect.handoverSettlement(target, ms(expiry));
+      const hs = await rdr.handoverSettlement(ms(expiry));
       check(
         'handoverSettlement at expiry conserves the stake',
         hs.remainingMist + hs.governorShareMist + hs.feeMist === 1_000n,
