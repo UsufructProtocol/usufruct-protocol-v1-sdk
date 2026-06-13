@@ -31,17 +31,12 @@
       "pendingStakeBalanceMist": null,
       "activeCommittedTenures": "1",
       "pendingCommittedTenures": null,
-      "governanceCapIsValid(probe)": true,
-      "usufructCapIsActive(probe)": false,
-      "usufructCapIsPending(probe)": false,
-      "usufructCapIsStale(probe)": true,
       "phaseStartMs": "1781304113613",
       "tenureExpiryMs": "1781304173613",
       "transitionIsReady": false,
       "nextTransitionMs": null,
       "handoverExpiryMs": null,
       "activeUsufructuaryTimeRemainingMs": "44783",
-      "handoverExpiryIfBidAt(now)": "1781304153830",
       "tenureCeilingMs": "60000",
       "integratedAtMs": "1781304105684",
       "retireCommitmentUnlocksAtMs": "1781304105684",
@@ -101,7 +96,12 @@
         "kind": "linear"
       },
       "protocolFeeBps": "1000",
-      "bpsDenominator": "10000"
+      "bpsDenominator": "10000",
+      "governanceCapIsValid": true,
+      "usufructCapIsActive": false,
+      "usufructCapIsPending": false,
+      "usufructCapIsStale": true,
+      "handoverExpiryIfBidAt": "1781304153830"
     }
   }
 }
