@@ -1,6 +1,41 @@
 # Usufruct Protocol — SDK
 
-## Prototype status (`prototype/vertical-slice`)
+## Two tiers (read this first)
+
+The protocol exposes 120+ pure, source-verified view functions, and its view
+block takes **zero `&Clock`** (every time-dependent view takes `now_ms: u64`).
+That makes a thin wrapper both correct and complete, so the SDK is two tiers:
+
+- **`read` — the default.** A bound `Reader` over the on-chain views via
+  `simulateTransaction`. The answer is the deployed bytecode's answer, so
+  **drift is zero by construction**; and because the views are `&Clock`-free
+  it does *time-travel reads* at any `t` you pass. This is what you want for
+  scripting, dashboards, and any one-shot read.
+
+  ```ts
+  const r = createReader(client, { packageId, escrowId, typeArguments });
+  await r.isIdle();            // boolean   (on-chain)
+  await r.handover();          // Handover  (on-chain, collapsed §5.1)
+  await r.floorPriceMist(now); // Mist      (time-parameterised)
+  const snap = await r.snapshot({ t: now });  // whole table, batched
+  ```
+
+- **`sim` — opt-in.** The functional mirror (`EscrowState` / `View` /
+  `Action.step`) for computation the wrapper cannot do: folding actions over
+  hypothetical futures, an off-chain testbed, an agenda over many escrows
+  without N round-trips. It *re-derives* the protocol's logic and so takes
+  drift risk — every shipped mirror is golden-tested against the on-chain
+  view (its oracle, §8). A mirror without coverage simply isn't shipped; you
+  fall back to `read`.
+
+- **`actions` — the write path.** `Action.toPtb` builds the PTBs.
+
+The default is `read` precisely to avoid the SDK sin of re-implementing the
+contract's read logic in the client and drifting from it. The on-chain views
+are the truth; `read` calls them; `sim` is the tested convenience for when
+you need local computation. (Full rationale: SPEC §2.1, §6, §12.)
+
+## Prototype status (`prototype/thin-wrapper-default`)
 
 A vertical slice of the SPEC.md design is implemented and validated **live
 against testnet v1.4.2** (`npm run e2e` → ALL PASS, 25 offline tests green):

@@ -38,12 +38,53 @@ at the cost of drift risk whenever the on-chain math changes.
 escrow, no dynamic fields, no oracle, no cross-object reads. This is what
 permits the design specified below.
 
+### §2.1 — Two tiers
+
+This protocol exposes 120+ public **view functions**, all pure projections,
+source-verified on-chain. Crucially, the view block of `escrow.move` takes
+**zero `&Clock`**: every time-dependent view takes `now_ms: u64` as an
+explicit argument. That single fact decides the SDK's shape.
+
+The SDK is therefore two tiers, in priority order:
+
+1. **The thin wrapper (default).** A read is a call to the protocol's own
+   view, evaluated by the deployed bytecode via `simulateTransaction`, with
+   the BCS return decoded. Drift is **zero by construction** — the answer is
+   the contract's answer. Because the views are `&Clock`-free, this tier also
+   does *time-travel reads* (evaluate any view at any `now_ms` the caller
+   supplies); it forgoes only evaluation over *hypothetical state* that does
+   not yet exist on chain. This is the surface for scripting, dashboards, and
+   any one-shot read. It is mostly the codegen substrate (§4.5) plus a
+   `simulateTransaction` runner.
+
+2. **The functional core (opt-in).** A TypeScript mirror of the protocol's
+   state and transitions — `EscrowState` / `View` / `Action.step` (§4) —
+   enabling computation the wrapper cannot: folding actions over hypothetical
+   futures (simulator, "what-if"), running the whole protocol off-chain
+   (testbed via `MemorySource`), or building an agenda without N round-trips.
+   This tier re-derives the protocol's logic and therefore *takes* drift
+   risk; the on-chain views (tier 1) are the golden oracle it is tested
+   against (§8). A mirror without golden coverage is not shipped — the
+   consumer falls back to the wrapper.
+
+The four primitives (§4) describe **tier 2**. Tier 1 needs no new primitives:
+it is generated calls plus IO. The error most SDKs make — re-implementing the
+contract's read logic in the client, then drifting from it — is avoided by
+making tier 1 the default and confining tier 2's re-derivation to the cases
+that genuinely need off-chain computation.
+
 ---
 
 ## §3 — Core design principle
 
 > **State is data, not object. Action is value, not method. Time is parameter,
 > not context.**
+
+These clauses govern the **functional core (tier 2, §2.1)** — the opt-in
+mirror. They do *not* describe the default read path: a default read is a
+call to the on-chain view (tier 1), whose answer needs no local state and no
+mirror. The principles below constrain how the mirror is built *when* a
+consumer opts into local computation.
 
 Each clause is a normative constraint:
 
@@ -298,72 +339,62 @@ collect over an inbox holding `FeeMessage<SUI>` aborted exactly here).
 
 ## §6 — Read strategy
 
-The SDK uses a hybrid read pattern, with the split determined per view by
-whether the computation is mathematical (curves, settlement bps splits) or
-structural (field access, simple arithmetic).
+> **The default read is the on-chain view. The TypeScript mirror is opt-in.**
+> (Inverts the prototype's original default; see §12.)
 
-### §6.1 — Pattern B (fetch + TypeScript mirror) — default
+### §6.1 — The thin wrapper (`read`) — default
 
-For views that are field reads, predicates, identity comparisons, or simple
-arithmetic over timestamps and stakes, the SDK fetches `EscrowState` once and
-evaluates the view as a pure TypeScript function. No `devInspect` round-trip.
+A read calls the protocol's own view via `simulateTransaction`
+(`checksEnabled: false`) and decodes the BCS return. The answer is produced
+by the deployed bytecode, so **drift is zero by construction**. The only
+residual failure mode is a *decode* bug in the SDK — caught by the same
+golden fixtures (§8.2) — not a logic divergence.
 
-This covers approximately 80% of the read surface in `escrow.move`:
-
-- State predicates (`is_idle`, `is_at_dutch_auction`, `is_active`, …).
-- Identity views (`asset_id`, `owner_cap_id`, `current_tenant_addr`, …).
-- Stake views (`current_stake`, `pending_stake`).
-- Temporal views (`phase_start_ms`, `tenure_expiry_ms`, …).
-- Cap views (`owner_cap_is_valid`, `tenant_cap_status`, …).
-- Config views (curves shape, policy shape, alphas).
-
-### §6.2 — Pattern A (`devInspect` / `simulateTransaction`) — selective
-
-For views that evaluate curves (`smoothstep`, `logistic`, `power_law`,
-`exponential`) or settlement splits with bps rounding, the SDK invokes the
-on-chain Move view via `devInspect` and decodes the BCS return value.
-
-This covers the `compute_*` and `evaluate_*` views in `escrow.move`:
-
-- `compute_floor_price`, `compute_floor_price_at_ms`.
-- `compute_used_credit`, `compute_used_credit_at_ms`.
-- `compute_next_ascending_floor`.
-- `compute_handover_settlement`, `compute_tenure_settlement`.
-- `compute_handover_expiry_at`.
-
-Pattern A is chosen here not for correctness reasons but to eliminate drift
-risk: replicating fixed-point curve math bit-exactly across runtimes is
-maintenance liability that does not pay for itself when the on-chain call is
-cheap and deterministic. (See §8 mitigation 1 for the cross-runtime golden
-test discipline that applies *if* Pattern B is later chosen for any of these.)
-
-#### §6.2.1 — Inspect functions
-
-Pattern A reads have a named category: **Inspect functions**. An Inspect
-function is IO with the shape
+The surface is a bound **`Reader`**:
 
 ```
-(client: ClientWithCoreApi, target, t: Ms) => Promise<T>
+const r = createReader(client, { packageId, escrowId, typeArguments });
+await r.isIdle();            // boolean        (on-chain)
+await r.handover();          // Handover       (on-chain, collapsed §5.1)
+await r.floorPriceMist(t);   // Mist           (time-parameterised)
+const snap = await r.snapshot({ t });  // batched: whole table in few sims
 ```
 
-living in `src/views/inspect.ts`. The discipline:
+This covers the **entire** read surface of `escrow.move` (≈124 views) plus
+`cap.move` / `fees.move`, not a subset. Two properties of the protocol make
+it both correct and complete:
 
-- An Inspect function is **not** a `View<T>` — it cannot be, because it
-  performs IO — and it is **not** a fifth primitive. It is the on-chain
-  evaluation of a view the SDK chooses not to mirror (§6.2 rationale).
-- The client enters by parameter, never ambiently — the same principle as
-  time-as-parameter (§3). Nothing downstream captures a client.
-- One Inspect function per Pattern A view; constructed from the codegen call
-  wrapper plus `simulateTransaction` BCS return-value decoding.
-- Moving a view from Pattern A to Pattern B (golden-test gated, §8.2)
-  replaces its Inspect function with a `View<T>` of the same name; the
-  Inspect form is then deleted, not kept as a parallel path.
+- **`&Clock`-free views (§2.1).** Every time-dependent view takes
+  `now_ms: u64`. The wrapper passes the caller's `t` as that argument, so it
+  evaluates any view at any time — *time-travel reads with zero drift*. It
+  cannot evaluate a view over a state that does not exist on chain; that is
+  tier 2's job.
+- **Pure, total projections.** No oracle, no dynamic-field walk — one
+  `simulateTransaction` returns every view's value; `snapshot` batches the
+  whole table into a handful of simulations.
 
-Validated in the prototype: `floorPriceMist` and `accruedCreditMist` shipped
-as Inspect functions with no pressure on the four-primitive kernel.
-(Chain-observed: `accrued_credit_mist` aborts on a non-rented escrow — an
-Inspect function surfaces the protocol's own abort, which is the intended
-behaviour, not an SDK defect.)
+The wrapper carries no domain logic: it is the codegen call wrappers (§4.5)
+plus a decode table (`src/read/spec.ts`) plus the `simulateTransaction`
+runner. Protocol aborts surface verbatim (e.g. `tenure_settlement` aborts on
+a non-rented escrow — the wrapper relays the contract's own abort, not an SDK
+error).
+
+### §6.2 — The TypeScript mirror (Pattern B) — opt-in
+
+For computation the wrapper cannot do — folding `Action.step` over
+hypothetical futures (simulator, "what-if"), running the protocol entirely
+off-chain (testbed via `MemorySource`), or building an agenda over N escrows
+without N×views round-trips — the SDK offers the functional core (§4):
+`EscrowState` decoded once, then pure `View` / `Action.step` evaluated
+locally at any `(state, t)`.
+
+This tier **re-derives** the protocol's logic and therefore takes drift risk.
+It is gated by §8.2: a mirror ships only with cross-runtime golden coverage
+against the on-chain view (its oracle). Mirrors of curve / settlement math
+that have not earned that coverage are *not* shipped — the consumer uses the
+wrapper instead. The mirror is opt-in precisely because the default
+(`read`) is already correct and complete; the mirror exists to trade a
+round-trip for local computation where that trade pays.
 
 ### §6.3 — Pattern C (indexer) — non-core
 
@@ -480,18 +511,25 @@ there.
 
 ---
 
-## §8 — Critical invariant
+## §8 — Critical invariant (binds tier 2 only)
 
-> **Every public operation of `usufruct` admits a TypeScript semantics
-> `(state: EscrowState, t: Ms, opts?: StepOpts) => state'` whose output is
-> bit-exact with the Move runtime when the state's configuration is fully
-> deterministic. When the state's configuration declares stochastic policies
-> whose resolution is triggered by the operation, the TypeScript semantics is
-> parameterised by an optional `Rng` and is bit-exact under equivalent seeding.**
+> **Every `View` / `Action.step` the SDK *ships in the opt-in mirror* (§6.2)
+> produces output bit-exact with the deployed bytecode at the same
+> `(state, t)`. The on-chain view (tier 1) is the oracle; the mirror is
+> tested against it. A mirror that cannot meet this bar is not shipped —
+> the consumer reads through the wrapper instead.**
 
-If this invariant holds, `Action::step` is well-defined for every action over
-every state. The simulator, testbed, calendar, and reactive capabilities all
-depend on it.
+This invariant does **not** bind tier 1: the wrapper *is* the bytecode's
+answer, so there is nothing to be bit-exact *with*. The invariant exists to
+keep the opt-in mirror honest, and it is enforceable precisely because tier 1
+gives every mirrored value a free, authoritative oracle (§8.2). When the
+state's configuration declares stochastic policies (`RandomInRange`), the
+mirror's `step` is parameterised by an optional `Rng` and is bit-exact under
+equivalent seeding; `toPtb` is always authoritative regardless.
+
+If the invariant holds for a given action, `Action::step` is well-defined for
+that action over every (deterministically-configured) state. The simulator,
+testbed, and agenda capabilities depend on it for the actions they touch.
 
 Determinism is a property of the **state's config**, not of the **action's
 type**. The same `rent` action is deterministic over a state whose tenure
@@ -541,8 +579,11 @@ The discipline that converts promise to fact:
 - **Curve coverage.** Every parameter combination for `CurveShape` and
   `PriceFunction` is exercised explicitly in fixtures.
 
-If a view or action does not have a golden test, it does not ship in `step`
-form; it must use Pattern A (`devInspect`) until a golden test is added.
+If a view or action does not have a golden test, it does not ship in mirror
+(`step` / pure `View`) form; the consumer reads it through the wrapper
+(`read`, §6.1) until a golden test is added. Because the wrapper is the
+default and already complete, "no golden test yet" degrades gracefully to
+"use the on-chain answer" — never to a missing capability.
 
 ---
 
@@ -553,9 +594,13 @@ form; it must use Pattern A (`devInspect`) until a golden test is added.
   invariants (collapsing enum predicates, composing PTB chains, threading
   hot-potato types) that mechanical generation cannot express. Codegen is L1
   only; L2/L3 are hand-written.
-- **Pattern A everywhere.** Doing so would forfeit the time-travel,
-  simulator, and testbed capabilities and would yoke every UI to an RPC
-  round-trip per view. The hybrid (§6) is normative.
+- **A mirror-first default.** Making the TypeScript mirror the default read
+  path (the prototype's original choice) re-implements the contract's read
+  logic in the client and re-introduces the drift this design exists to
+  avoid. The wrapper is the default; the mirror is opt-in (§6, §2.1). This
+  does *not* forfeit the simulator/testbed/agenda — those are exactly what
+  the opt-in mirror provides; it only stops paying drift risk for the common
+  one-shot read, which the wrapper answers from the bytecode directly.
 - **Encapsulating state in classes.** Forbidden by §3. Adding a method to
   `EscrowState` requires amending §3.
 - **Hiding time.** Forbidden by §3. Any function that needs time accepts it
@@ -593,21 +638,28 @@ sdk/                      # TypeScript SDK (this branch and onward)
   SPEC.md                 # this document
   package.json
   src/
-    primitives/           # the four primitives + codegen plumbing
+    read/                 # TIER 1 (default): thin wrapper over on-chain views
+      spec.ts             #   view-spec table (call + BCS decode) — single source
+      reader.ts           #   createReader → typed Reader + snapshot()
+    codegen/              # ❺ auto-generated; do not edit by hand — used by both tiers
+      types.ts / bcs.ts / calls.ts
+    actions/              # write path: Action.toPtb (+ opt-in step, tier 2)
+    config/               # DSL config builder
+    primitives/           # TIER 2 (opt-in) kernel — the four primitives
       state.ts            # ❶ EscrowState type and BCS decoding
-      view.ts             # ❷ View<T> type alias + view function exports
-      action.ts           # ❸ Action<R> type + concrete action constructors
+      view.ts             # ❷ View<T> type alias
+      action.ts           # ❸ Action<R> variants (step + toPtb)
       source.ts           # ❹ Source interface + ChainSource impl
-    codegen/              # ❺ auto-generated; do not edit by hand
-      types.ts
-      bcs.ts
-      calls.ts
-    views/                # hand-written View<T> functions, one file per banner
-    actions/              # hand-written Action constructors
-    config/               # DSL config builder (emergent capability §7)
-  fixtures/               # cross-runtime golden test fixtures
-  test/                   # TypeScript-side tests consuming fixtures
+    views/                # hand-written View<T> functions (the mirror), one file per banner
+    sim/                  # facade re-exporting the tier-2 mirror (views + state + step)
+  fixtures/               # cross-runtime golden fixtures (the mirror's oracle = tier 1)
+  test/                   # tests; parity-cases.ts imports src/read/spec.ts
 ```
+
+The package surface: `read` (default), `actions` (write), `sim` (opt-in
+mirror). The `read` spec table is the *single* source of the on-chain decode
+logic — the golden/parity tests import it as the oracle, so the wrapper and
+the test that keeps the mirror honest are the same code.
 
 Convenience layers (settler runtime, marketplace helpers, etc.) ship as
 distinct packages under `sdk/packages/` once core stabilises.
@@ -620,7 +672,8 @@ distinct packages under `sdk/packages/` once core stabilises.
 | ----------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
 | Language: TypeScript on `@mysten/sui`.                                              | Adopted     | Canonical Sui SDK ecosystem; matches integrator expectations.                                      |
 | Four primitives only; capabilities emerge.                                          | Adopted     | Closure under composition; verified by tracing §7.                                                 |
-| Pattern B default, Pattern A for curve/settlement math.                             | Adopted     | §2 analysis of Sui DeFi SDK patterns. Matches risk profile of the math involved.                   |
+| Pattern B (TypeScript mirror) default, Pattern A for curve/settlement math.         | **Superseded (2026-06-12)** | The prototype made the off-chain mirror the default read path; that re-derives the contract's read logic in the client and re-introduces drift — the very failure this design names in §2. The 128-case parity harness was the *cost* of the duplication, not a feature. Superseded by the row below. |
+| Thin wrapper over on-chain views = default read; TS mirror = opt-in.                | Adopted (2026-06-12) | The protocol's views are pure, total, source-verified, and `&Clock`-free (every time-dependent view takes `now_ms: u64`). So a `simulateTransaction` read has drift = 0 by construction *and* keeps time-travel for any caller-supplied `t`; it forgoes only hypothetical-state evaluation, which is exactly what the opt-in mirror adds. `read` (`createReader`) is the default surface; `sim` (the mirror) is opt-in for local computation. The on-chain views become the explicit golden oracle the mirror is tested against (§8), and the wrapper's decode table is the single source both consume. See §2.1, §6. |
 | Codegen for L1 (types + BCS + bare calls) only.                                     | Adopted     | Mechanical layer benefits from codegen; semantic layer does not.                                   |
 | Auto-generate the entire SDK from Move ABI.                                         | Rejected    | Loses composition invariants encoded in PTB chains (e.g. `IntegrationConfig`).                     |
 | Mirror everything in TypeScript, no `devInspect`.                                   | Rejected    | Curve / settlement math drift risk is real; selective Pattern A is the established mitigation.     |
@@ -630,7 +683,7 @@ distinct packages under `sdk/packages/` once core stabilises.
 | Type-level marker `Probabilistic<T>` on actions that consume `&Random` in Move.     | Rejected    | Leaks an FFI artefact into the SDK type system. Determinism is a property of the state's config, not of the action's type. Stochasticity is read from views over state (§8.1), not from action types. |
 | Surfacing `&Random`, `&Clock`, `&mut TxContext` as SDK-visible parameters.          | Rejected    | These are FFI artefacts of Move signatures, not semantic inputs. The SDK injects the `0x8` and `0x6` singletons at `toPtb` time; `TxContext` is supplied by the Sui transaction runtime. |
 | `Uint8Array` fallback for unknown asset BCS layouts.                                | Rejected (amended 2026-06-12) | Refuted by the prototype: the asset sits mid-struct, so decoding requires the exact schema; a wrong schema misaligns silently. Replaced by required integrator schema + `uidAssetSchema` for uid-only assets + re-serialize byte-compare decode invariant (`EscrowDecodeError`). See §10. |
-| Inspect functions as the named category for Pattern A reads.                        | Adopted (2026-06-12) | IO of shape `(client, target, t) => Promise<T>` in `src/views/inspect.ts`; not a `View<T>`, not a fifth primitive. Client by parameter, mirroring time-as-parameter. See §6.2.1. |
+| Inspect functions as the named category for Pattern A reads.                        | Superseded (2026-06-12) | Generalised: Inspect functions were the prototype of the wrapper. They became the `read` tier (§6.1) covering *all* views, not a selective category. `src/views/inspect.ts` is absorbed into `src/read/`. |
 | Broad §5.1 collapse: `*_kind` views and cycle-params accessors fold into unions/records. | Adopted (2026-06-12) | ~68 TypeScript views cover the ~124 Move views; the unrolled API is reconstruction material for the parity oracle only. 128 live parity cases (64 × idle/occupied states) verified on testnet. |
 | Action variants generic over the state aggregate (`Action<R, P, S = EscrowState>`).  | Adopted (2026-06-12) | Inbox actions transition over `MessageGroups`, which fits none of the escrow lifecycle slots. Genericity preserves the three-variant kernel without a fifth primitive and gives inbox actions a real pure `step` (testbed-able). |
 
