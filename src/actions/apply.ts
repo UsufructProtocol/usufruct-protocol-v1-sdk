@@ -4,15 +4,26 @@
  * step_handover → step_tenure_expiry → step_auction_expiry, each firing only
  * when its boundary is crossed.
  *
- * Prototype scope: deterministic configs without a pending handover (Demand
- * settlement needs curve math — Pattern A territory until golden-tested).
+ * The handover settlement is the one curve-driven transition: the resulting
+ * *state* is structural (pending seat → active, schedule rescaled by the
+ * tenure ratio), while the *economic split* (used credit, governor share,
+ * fee, departing refund, new rent price) comes from the deterministic curve
+ * math in `src/sim/curve.ts` and is reported in `result.settlement`.
  */
 import { applyPendingTransitionStates as applyCall } from '../codegen/usufruct/escrow.js';
-import type { Id } from '../primitives/brand.js';
+import type { Id, Mist } from '../primitives/brand.js';
+import { mist } from '../primitives/brand.js';
 import type { TransitionAction } from '../primitives/action.js';
-import { NotImplementedStepError } from '../primitives/action.js';
 import type { AssetSchema, EscrowState } from '../primitives/state.js';
 import type { PackageIds } from '../config/network.js';
+import { collapseCurveShape } from '../views/config.js';
+import {
+  ascendingFloor,
+  rescaledDuration,
+  splitFee,
+  stakePerTenure,
+  usedCredit,
+} from '../sim/curve.js';
 import { resolveCycleParams } from './internal.js';
 
 export interface ApplyPtbArgs {
@@ -21,10 +32,23 @@ export interface ApplyPtbArgs {
   readonly typeArguments: [string, string];
 }
 
-export type AppliedTransition = 'tenureExpiry' | 'auctionExpiry' | 'retire';
+export type AppliedTransition = 'handover' | 'tenureExpiry' | 'auctionExpiry' | 'retire';
+
+/** Economic split of a handover settlement (curve-derived). */
+export interface HandoverSettlement {
+  readonly usedMist: Mist;
+  readonly governorShareMist: Mist;
+  readonly feeMist: Mist;
+  /** Departing usufructuary's refund (unused credit). */
+  readonly refundMist: Mist;
+  /** New rent price seeding the incoming tenancy. */
+  readonly newRentPriceMist: Mist;
+}
 
 export interface ApplyResult {
   readonly transitions: readonly AppliedTransition[];
+  /** Present iff a handover fired. */
+  readonly settlement?: HandoverSettlement;
 }
 
 type State = EscrowState<AssetSchema>;
@@ -41,12 +65,75 @@ export function applyPendingTransitionStates(): TransitionAction<ApplyResult, Ap
       const transitions: AppliedTransition[] = [];
       let current: AssetStateData = s;
       let ensembleSlot = core.ensemble;
+      let settlement: HandoverSettlement | undefined;
 
-      // step_handover — out of prototype scope when firable (settlement math).
+      // step_handover (Demand → Occupied at the bid's handover expiry). The
+      // state swap is structural; the split is the credit curve at `expiry`.
       if (current.$kind === 'Renting' && current.Renting.$kind === 'Demand') {
-        const expiry = BigInt(current.Renting.Demand.bid.handover.expiry.ms);
+        const d = current.Renting.Demand;
+        const expiry = BigInt(d.bid.handover.expiry.ms);
         if (t >= expiry) {
-          throw new NotImplementedStepError('applyPendingTransitionStates[handover]');
+          transitions.push('handover');
+          const sched = d.terms.schedule;
+          const principal = BigInt(d.terms.active.stake.balance.value);
+          const committed = BigInt(sched.committed_tenures.count);
+          const incoming = BigInt(d.bid.handover.tenures.count);
+          const pendingStake = BigInt(d.bid.pending.stake.balance.value);
+
+          // capped_used_credit(active stake, phase_start, expiry, credit_shape, ceiling).
+          const used = usedCredit({
+            stakeMist: principal,
+            phaseStartMs: BigInt(sched.phase_start.ms),
+            creditShape: collapseCurveShape(core.ensemble.active.credit_shape),
+            ceilingMs: BigInt(sched.ceiling_total.ms),
+            nowMs: expiry,
+          });
+          const { governorShare, fee } = splitFee(used);
+          const esc = core.ensemble.active.price_escalation;
+          const perTenure = stakePerTenure(pendingStake, incoming);
+          const newRentPrice =
+            esc.$kind === 'FixedDelta'
+              ? ascendingFloor({ kind: 'fixedDelta', deltaMist: mist(esc.FixedDelta.delta.mist) }, perTenure)
+              : ascendingFloor(
+                  {
+                    kind: 'compoundDelta',
+                    bps: BigInt(esc.CompoundDelta.bps.bps) as never,
+                    deltaMist: mist(esc.CompoundDelta.delta.mist),
+                  },
+                  perTenure,
+                );
+          settlement = {
+            usedMist: mist(used),
+            governorShareMist: mist(governorShare),
+            feeMist: mist(fee),
+            refundMist: mist(principal - used),
+            newRentPriceMist: mist(newRentPrice),
+          };
+
+          current = {
+            $kind: 'Renting',
+            Renting: {
+              $kind: 'Occupied',
+              Occupied: {
+                asset: d.asset,
+                terms: {
+                  schedule: {
+                    phase_start: { ms: String(expiry) },
+                    ceiling_total: {
+                      ms: String(rescaledDuration(BigInt(sched.ceiling_total.ms), committed, incoming)),
+                    },
+                    handover_total: {
+                      ms: String(rescaledDuration(BigInt(sched.handover_total.ms), committed, incoming)),
+                    },
+                    committed_tenures: { count: String(incoming) },
+                  },
+                  active: d.bid.pending,
+                  retire: d.terms.retire,
+                },
+                cycle: d.cycle,
+              },
+            },
+          } as AssetStateData;
         }
       }
 
@@ -109,7 +196,10 @@ export function applyPendingTransitionStates(): TransitionAction<ApplyResult, Ap
         ...state,
         escrow: { ...state.escrow, core: { ...core, ensemble: ensembleSlot }, state: current },
       };
-      return { state: next, result: { transitions } };
+      return {
+        state: next,
+        result: settlement ? { transitions, settlement } : { transitions },
+      };
     },
 
     toPtb: (tx, args) =>

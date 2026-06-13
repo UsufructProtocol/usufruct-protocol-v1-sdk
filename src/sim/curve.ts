@@ -13,7 +13,7 @@
  *
  * Pinned against the protocol's own golden vectors in test/curve-golden.test.ts.
  */
-import type { CurveShape } from '../views/config.js';
+import type { CurveShape, PriceEscalation } from '../views/config.js';
 
 // ── constants (curve_shape_policy.move) ──
 const SCALE = 1_000_000_000n;
@@ -211,6 +211,13 @@ export function compoundDelta(price: bigint, bps: bigint, delta: bigint): bigint
   const r = scaled + delta;
   if (r > U64_MAX) throw new Error('EPriceAddOverflow');
   return r;
+}
+
+/** `ascending_floor_price` / `compute_next_price` over a per-tenure price. */
+export function ascendingFloor(escalation: PriceEscalation, priceMist: bigint): bigint {
+  return escalation.kind === 'fixedDelta'
+    ? fixedDelta(priceMist, escalation.deltaMist)
+    : compoundDelta(priceMist, escalation.bps, escalation.deltaMist);
 }
 
 // ── tenure / duration math (tenures.move) ──

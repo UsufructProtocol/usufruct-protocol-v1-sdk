@@ -2,10 +2,16 @@ import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
 import * as actions from '../src/actions/index.js';
 import { TESTNET } from '../src/config/network.js';
-import { NotImplementedStepError } from '../src/primitives/action.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import * as views from '../src/views/index.js';
-import { ESCROW_ID, GOV_CAP_ID, idleState, occupiedState } from './synthetic.js';
+import {
+  ESCROW_ID,
+  GOV_CAP_ID,
+  TENANT,
+  demandState,
+  idleState,
+  occupiedState,
+} from './synthetic.js';
 
 const TYPE_ARGS: [string, string] = ['0xa::dummy::DummyAsset', '0x2::sui::SUI'];
 const escrowId = id<'Escrow'>(ESCROW_ID);
@@ -86,6 +92,38 @@ describe('applyPendingTransitionStates (Transition)', () => {
   });
 });
 
+describe('apply.step handover (curve settlement)', () => {
+  // demandState: active stake 1000, pending 2000, phase_start 10_000,
+  // ceiling 60_000, committed 1, bid tenures 2, expiry 70_000, linear credit.
+  it('settles via the credit curve and swaps pending → active', () => {
+    const demand = demandState(10_000n, 70_000n, 60_000n);
+    const { state, result } = actions
+      .applyPendingTransitionStates()
+      .step(demand, ms(70_000));
+
+    expect(result.transitions).toContain('handover');
+    // elapsed = ceiling ⇒ credit height = SCALE ⇒ used = full principal 1000.
+    expect(result.settlement).toEqual({
+      usedMist: 1_000n,
+      governorShareMist: 900n,
+      feeMist: 100n,
+      refundMist: 0n,
+      newRentPriceMist: 1_001n, // ascending floor: 2000/2 + fixedDelta 1
+    });
+    expect(views.isOccupied(state, ms(70_000))).toBe(true);
+    expect(views.activeStakeBalanceMist(state, ms(70_000))).toBe(2_000n);
+    // schedule rescaled by tenure ratio 1 → 2.
+    expect(views.activeCeilingTotalMs(state, ms(70_000))).toBe(120_000n);
+  });
+
+  it('does not fire before the handover expiry', () => {
+    const demand = demandState(10_000n, 70_000n, 60_000n);
+    const { result } = actions.applyPendingTransitionStates().step(demand, ms(50_000));
+    expect(result.transitions).toEqual([]);
+    expect(result.settlement).toBeUndefined();
+  });
+});
+
 describe('lifecycle typing', () => {
   it('claimAsset.step returns no successor state (Terminal)', () => {
     const terminal = actions.claimAsset();
@@ -94,11 +132,34 @@ describe('lifecycle typing', () => {
     expect(use).toBeDefined();
   });
 
-  it('unimplemented steps throw NotImplementedStepError', () => {
-    expect(() => actions.rent({ tenures: tenureCount(1) }).step(idleState(), ms(0))).toThrow(
-      NotImplementedStepError,
+  it('rent.step over Idle installs (curve floor = rest price)', () => {
+    const { state, result } = actions
+      .rent({ tenures: tenureCount(1), paymentMist: mist(1_000), sender: TENANT })
+      .step(idleState(), ms(5_000));
+    expect(result.transition).toBe('install');
+    expect(result.floorMist).toBe(1_000n);
+    expect(views.isOccupied(state, ms(5_000))).toBe(true);
+    expect(views.activeStakeBalanceMist(state, ms(5_000))).toBe(1_000n);
+  });
+
+  it('rent.step rejects underpayment (EInsufficientPayment)', () => {
+    expect(() =>
+      actions
+        .rent({ tenures: tenureCount(1), paymentMist: mist(999) })
+        .step(idleState(), ms(5_000)),
+    ).toThrow(/EInsufficientPayment/);
+  });
+
+  it('retire.step over Idle retires immediately (commitment elapsed)', () => {
+    const { state } = actions.retire().step(idleState(), ms(5_000));
+    expect(views.isRetired(state, ms(5_000))).toBe(true);
+  });
+
+  it('retire.step guards the retire commitment', () => {
+    // synthetic anchor = 1_000, Immediate → unlocks at 1_000; t=500 too early.
+    expect(() => actions.retire().step(idleState(), ms(500))).toThrow(
+      /ERetireCommitmentFloorNotElapsed/,
     );
-    expect(() => actions.retire().step(idleState(), ms(0))).toThrow(NotImplementedStepError);
   });
 
   it('rent/retire/claim toPtb emit their target calls', () => {
