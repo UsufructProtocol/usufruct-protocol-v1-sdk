@@ -102,3 +102,34 @@ describe('memoryInbox — escrow ↔ inbox 90/10 conservation (offline)', () => 
     expect(earned + feed).toBe(s.usedMist); // conservation, tenure-expiry path
   });
 });
+
+describe('memoryInbox — global fee pool (one inbox, many escrows)', () => {
+  it('per-governor earnings, but one protocol fee inbox accumulates Σ fee', () => {
+    const FEE = '0x' + 'fe'.repeat(32); // the single global ProtocolFeeInbox
+    const t = ms(60_000n);
+    const escrows = [
+      { id: id<'Escrow'>('0x' + 'a1'.repeat(32)), earnings: '0x' + 'e1'.repeat(32), stake: 1_000n },
+      { id: id<'Escrow'>('0x' + 'a2'.repeat(32)), earnings: '0x' + 'e2'.repeat(32), stake: 2_000n },
+      { id: id<'Escrow'>('0x' + 'a3'.repeat(32)), earnings: '0x' + 'e3'.repeat(32), stake: 3_000n },
+    ];
+    const mem = memorySource(
+      escrows.map((e) => ({ ...occupiedState(0n, 60_000n, { stakeMist: e.stake }), objectId: e.id })),
+    );
+    const inbox = memoryInbox();
+
+    let totalFee = 0n;
+    for (const e of escrows) {
+      const s = mem.apply(e.id, actions.applyPendingTransitionStates(), t).tenureSettlement!;
+      // 90% → this escrow's OWN earnings inbox; 10% → the shared fee inbox.
+      postSettlement(inbox, { earningsId: e.earnings, feeId: FEE }, SUI, s);
+      totalFee += s.feeMist;
+      // each governor drains only its own earnings = its governorShare.
+      expect(sumMist(inbox.collect(e.earnings, t).byCoin)).toBe(s.governorShareMist);
+    }
+
+    // the single fee inbox holds the protocol-wide total: splitFee of 1000/2000/
+    // 3000 → fee 100/200/300 = 600.
+    expect(sumMist(inbox.collect(FEE, t).byCoin)).toBe(totalFee);
+    expect(totalFee).toBe(600n);
+  });
+});
