@@ -29,6 +29,7 @@ import { decodeEscrowState } from './state.js';
 import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
 import {
   chainSource,
+  channel,
   sleep,
   type ChainSourceOpts,
   type Source,
@@ -74,51 +75,6 @@ export type GrpcSource<
     opts?: SubscribeOpts,
   ) => ManySubscription<A, C>;
 };
-
-/**
- * Single-consumer push channel: an `AsyncIterable<T>` fed by `push`, ended by
- * `close`. Backpressure is the consumer's pull — values buffer between pulls.
- */
-function channel<T>(): { push: (v: T) => void; close: () => void } & AsyncIterable<T> {
-  const buffer: T[] = [];
-  let waiting: ((r: IteratorResult<T>) => void) | null = null;
-  let done = false;
-  return {
-    push(v) {
-      if (done) return;
-      if (waiting) {
-        const w = waiting;
-        waiting = null;
-        w({ value: v, done: false });
-      } else {
-        buffer.push(v);
-      }
-    },
-    close() {
-      if (done) return;
-      done = true;
-      if (waiting) {
-        const w = waiting;
-        waiting = null;
-        w({ value: undefined as never, done: true });
-      }
-    },
-    async *[Symbol.asyncIterator]() {
-      for (;;) {
-        if (buffer.length > 0) {
-          yield buffer.shift()!;
-          continue;
-        }
-        if (done) return;
-        const r = await new Promise<IteratorResult<T>>((resolve) => {
-          waiting = resolve;
-        });
-        if (r.done) return;
-        yield r.value;
-      }
-    },
-  };
-}
 
 /**
  * Every changed object in a checkpoint as `{ objectId, version }` (post-tx

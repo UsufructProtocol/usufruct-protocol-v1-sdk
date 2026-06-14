@@ -77,6 +77,52 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
+ * Single-consumer push channel: an `AsyncIterable<T>` fed by `push`, ended by
+ * `close`. Backpressure is the consumer's pull — values buffer between pulls.
+ * Shared by the push sources (`grpcSource`, `memorySource`).
+ */
+export function channel<T>(): { push: (v: T) => void; close: () => void } & AsyncIterable<T> {
+  const buffer: T[] = [];
+  let waiting: ((r: IteratorResult<T>) => void) | null = null;
+  let done = false;
+  return {
+    push(v) {
+      if (done) return;
+      if (waiting) {
+        const w = waiting;
+        waiting = null;
+        w({ value: v, done: false });
+      } else {
+        buffer.push(v);
+      }
+    },
+    close() {
+      if (done) return;
+      done = true;
+      if (waiting) {
+        const w = waiting;
+        waiting = null;
+        w({ value: undefined as never, done: true });
+      }
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        if (buffer.length > 0) {
+          yield buffer.shift()!;
+          continue;
+        }
+        if (done) return;
+        const r = await new Promise<IteratorResult<T>>((resolve) => {
+          waiting = resolve;
+        });
+        if (r.done) return;
+        yield r.value;
+      }
+    },
+  };
+}
+
+/**
  * Live-chain `Source` over any `ClientWithCoreApi` transport (gRPC or
  * JSON-RPC). `subscribe` polls and dedupes by object version (the core API
  * has no push stream — that is gRPC-only, a convenience layer). `query`
