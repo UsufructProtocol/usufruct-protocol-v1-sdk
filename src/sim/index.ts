@@ -15,6 +15,7 @@ export * from '../views/index.js';
 export * from '../primitives/state.js';
 export * from '../primitives/view.js';
 export * from '../primitives/source.js';
+export { grpcSource } from '../primitives/grpc-source.js';
 export type {
   OriginAction,
   TransitionAction,

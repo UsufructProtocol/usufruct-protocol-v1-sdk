@@ -61,7 +61,7 @@ export function isMissingObject(e: unknown): boolean {
 }
 
 /** Abortable sleep; resolves early (not rejects) when the signal fires. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
     const timer = setTimeout(() => {
