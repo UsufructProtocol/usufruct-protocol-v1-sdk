@@ -114,6 +114,26 @@ SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
    element(s) but target requires 4"). Zero errors inside `src/codegen`.
    SPEC §4.5's claim holds precisely.
 
+### Source IO — complete (2026-06-13)
+
+`chainSource(client, { assetSchema?, packageId? })` implements all three IO
+shapes over any `ClientWithCoreApi`, within what the transport-agnostic core
+API offers:
+
+- **`fetch(id)`** — the state now (`getObject` + decode).
+- **`subscribe(id, { pollIntervalMs?, signal? })`** — `AsyncIterable` that
+  polls and yields only on object-version change (the core API has no push
+  stream; that's gRPC-only). Aborts cleanly. This is "reactive single-writer
+  state" (§7) honestly: between emissions, `views` over the last state are
+  exact.
+- **`query({ byUsufructuary })`** — escrows are *shared* (not listable by
+  owner); discovery walks the caller's owned `UsufructCap`s → escrow ids →
+  `fetch`, deduped, skipping caps whose escrow was already consumed. Proven
+  live: found the rented escrow among 14 live (past 12 stale caps).
+
+Out of the kernel (follow-up): gRPC push `subscribe`, and `IndexerSource`
+(GraphQL) for discovery by governor / asset type / event history (§6.3).
+
 ### Action surface — closed (2026-06-12)
 
 All 13 mutating functions of `escrow.move` plus `cap.move`'s consumers and

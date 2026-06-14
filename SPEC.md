@@ -211,28 +211,35 @@ randomness. See §8.)
 ```
 interface Source {
   fetch:     (id: Id<Escrow>) => Promise<EscrowState>;
-  subscribe: (id: Id<Escrow>) => Observable<EscrowState>;
+  subscribe: (id: Id<Escrow>, opts?) => AsyncIterable<EscrowState>;
   query:     (predicate: Predicate) => AsyncIterable<EscrowState>;
 }
 ```
 
 The single point of impurity in the SDK. All network IO is mediated through
-`Source` implementations:
+`Source` implementations. `subscribe`/`query` are `AsyncIterable` (not an
+Observable) to avoid a reactive-library dependency. `chainSource(client)`
+works over any `ClientWithCoreApi` (gRPC or JSON-RPC), constrained by what
+that transport-agnostic core API actually offers:
 
-- `ChainSource(client)` — `getObject` for fetch; event subscription scoped
-  to `escrow_id` for subscribe; either RPC pagination or indexer for query.
-  In `@mysten/sui` v2, `client` is a `SuiGrpcClient` (recommended) or
-  `SuiJsonRpcClient`. `SuiClient` was renamed in v2; the import path
-  `@mysten/sui/client` was removed.
-- `IndexerSource(url)` — read-optimised paths for historical and aggregate
-  queries. In `@mysten/sui` v2, `SuiGraphQLClient` (`@mysten/sui/graphql`) is
-  the natural transport here: it supports flexible field selection, filtered
-  queries ("all escrows owned by address X", "events on escrow Y over N days"),
-  and cursor-based pagination without the verbosity of JSON-RPC pagination.
-  `ChainSource` does not benefit from GraphQL; `IndexerSource` is where it
-  earns its place.
-- `MemorySource()` — in-memory implementation used by testbed; alimenta
-  `EscrowState` from a local store that `Action.step` updates.
+- **`fetch`** — `core.getObject` + BCS decode.
+- **`subscribe`** — the core API has **no push stream** (streaming is
+  gRPC-only, `SuiGrpcClient.subscriptionService`). So `chainSource.subscribe`
+  **polls** `getObject` on an interval and yields only when the object
+  *version* changes (the first state immediately); it stops cleanly on an
+  `AbortSignal`. Push via gRPC is an opt-in convenience layer, not the kernel.
+- **`query`** — escrows are **shared** objects, so they cannot be listed by
+  owner. The reachable handle is the caller's *owned* `UsufructCap`, which
+  carries its escrow id. `query({ byUsufructuary })` lists those caps
+  (`core.listOwnedObjects`, paginated), maps each to its escrow, dedupes, and
+  `fetch`es — "the escrows this address rents". A cap outlives its escrow, so
+  targets that no longer exist are skipped. Broader discovery (by governor, by
+  asset/coin type, history) needs an indexer — see `IndexerSource`, §6.3.
+- `IndexerSource(url)` — **non-core** (§6.3), follow-up. `SuiGraphQLClient`
+  (`@mysten/sui/graphql`) is the transport: filtered queries by type/governor,
+  event history, cursor pagination — what the core API cannot do.
+- `MemorySource()` — in-memory implementation for the testbed; feeds
+  `EscrowState` from a local store that `Action.step` updates. (Follow-up.)
 
 The rest of the SDK does not know which `Source` it has been given. This is
 what permits the testbed (§6.5) and live SDK to share **identical** view and
