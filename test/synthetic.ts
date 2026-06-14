@@ -58,19 +58,25 @@ const openCustody = {
   available: { id: ASSET_ID },
 };
 
-export const occupiedTerms = (phaseStartMs: bigint, ceilingMs = 60_000n) => ({
+/** Multi-tenure knobs: the committed tenure count and the *total* stake. */
+export interface TermsOpts {
+  readonly committed?: bigint;
+  readonly stakeMist?: bigint;
+}
+
+export const occupiedTerms = (phaseStartMs: bigint, ceilingMs = 60_000n, opts: TermsOpts = {}) => ({
   schedule: {
     phase_start: { ms: phaseStartMs },
     ceiling_total: { ms: ceilingMs },
     handover_total: { ms: 0n },
-    committed_tenures: { count: 1n },
+    committed_tenures: { count: opts.committed ?? 1n },
   },
   active: {
     identity: {
       cap_identity: { id: TENANT_CAP },
       address: { addr: TENANT },
     },
-    stake: { balance: { value: 1_000n } },
+    stake: { balance: { value: opts.stakeMist ?? 1_000n } },
   },
   retire: { NotRetiring: true as const },
 });
@@ -115,37 +121,46 @@ export const descentState = (phaseStartMs: bigint) =>
 export const BIDDER = '0x' + '77'.repeat(32);
 export const BIDDER_CAP = '0x' + '99'.repeat(32);
 
+/** Demand knobs: active terms (committed/stake) and the incoming bid. */
+export interface DemandOpts extends TermsOpts {
+  /** Incoming bid's pending stake (total). */
+  readonly pendingMist?: bigint;
+  /** Incoming bid's committed tenure count. */
+  readonly incoming?: bigint;
+}
+
 export const demandState = (
   phaseStartMs: bigint,
   handoverExpiryMs: bigint,
   ceilingMs = 60_000n,
+  opts: DemandOpts = {},
 ) =>
   syntheticState({
     Renting: {
       Demand: {
         asset: openCustody,
-        terms: occupiedTerms(phaseStartMs, ceilingMs),
+        terms: occupiedTerms(phaseStartMs, ceilingMs, opts),
         bid: {
           pending: {
             identity: {
               cap_identity: { id: BIDDER_CAP },
               address: { addr: BIDDER },
             },
-            stake: { balance: { value: 2_000n } },
+            stake: { balance: { value: opts.pendingMist ?? 2_000n } },
           },
-          handover: { expiry: { ms: handoverExpiryMs }, tenures: { count: 2n } },
+          handover: { expiry: { ms: handoverExpiryMs }, tenures: { count: opts.incoming ?? 2n } },
         },
         cycle: defaultCycle,
       },
     },
   });
 
-export const occupiedState = (phaseStartMs: bigint, ceilingMs = 60_000n) =>
+export const occupiedState = (phaseStartMs: bigint, ceilingMs = 60_000n, opts: TermsOpts = {}) =>
   syntheticState({
     Renting: {
       Occupied: {
         asset: openCustody,
-        terms: occupiedTerms(phaseStartMs, ceilingMs),
+        terms: occupiedTerms(phaseStartMs, ceilingMs, opts),
         cycle: defaultCycle,
       },
     },

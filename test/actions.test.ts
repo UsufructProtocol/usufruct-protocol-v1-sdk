@@ -94,6 +94,25 @@ describe('applyPendingTransitionStates (Transition)', () => {
     expect(views.isIdle(next, ms(100_000))).toBe(true);
   });
 
+  it('multi-tenure: settles the FULL stake, prices the next auction per-tenure', () => {
+    // committed 2, total stake 2000 (= floor 1000 × 2). boundary at 60_000.
+    const state = occupiedState(0n, 60_000n, { committed: 2n, stakeMist: 2_000n });
+    const { state: next, result } = action.step(state, ms(60_000));
+    expect(result.transitions).toContain('tenureExpiry');
+    // The settlement is the full (total) stake split 90/10 — NOT per-tenure.
+    expect(result.tenureSettlement).toEqual({
+      usedMist: 2_000n,
+      governorShareMist: 1_800n,
+      feeMist: 200n,
+    });
+    // The Descent's starting price *is* per-tenure: 2000 / 2 = 1000.
+    const descent =
+      next.escrow.state?.$kind === 'Waiting' && next.escrow.state.Waiting.$kind === 'Descent'
+        ? next.escrow.state.Waiting.Descent
+        : null;
+    expect(BigInt(descent!.auction.last_acq_price.mist)).toBe(1_000n);
+  });
+
   it('toPtb targets escrow::apply_pending_transition_states', () => {
     const tx = new Transaction();
     action.toPtb(tx, { pkg: TESTNET, escrowId, typeArguments: TYPE_ARGS });
@@ -131,6 +150,25 @@ describe('apply.step handover (curve settlement)', () => {
     const { result } = actions.applyPendingTransitionStates().step(demand, ms(50_000));
     expect(result.transitions).toEqual([]);
     expect(result.settlement).toBeUndefined();
+  });
+
+  it('multi-tenure: credit over the full stake; new price per incoming tenure', () => {
+    // active committed 2 / stake 2000; incoming bid: 3 tenures / pending 3000.
+    const demand = demandState(10_000n, 70_000n, 60_000n, {
+      committed: 2n,
+      stakeMist: 2_000n,
+      pendingMist: 3_000n,
+      incoming: 3n,
+    });
+    const { result } = actions.applyPendingTransitionStates().step(demand, ms(70_000));
+    expect(result.transitions).toContain('handover');
+    // elapsed == ceiling ⇒ used = full active stake 2000 (total, not per-tenure).
+    expect(result.settlement!.usedMist).toBe(2_000n);
+    expect(result.settlement!.governorShareMist).toBe(1_800n);
+    expect(result.settlement!.feeMist).toBe(200n);
+    expect(result.settlement!.refundMist).toBe(0n);
+    // new price is per incoming tenure: stakePerTenure(3000, 3) = 1000, + delta 1.
+    expect(result.settlement!.newRentPriceMist).toBe(1_001n);
   });
 });
 
