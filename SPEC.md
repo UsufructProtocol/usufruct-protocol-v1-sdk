@@ -619,10 +619,13 @@ The discipline that converts promise to fact:
   `(shape, params, t, t_max) → height` bit-exactly. Every `CurveShape` and
   `PriceEscalation` variant is covered.
 - **Live integration parity.** The on-chain public views (`floor_price_mist`,
-  `accrued_credit_mist`, `handover_settlement`) — already the `read` tier —
-  are evaluated over real states and asserted equal to the mirror; and
-  `apply.step` over a live handover is asserted bit-exact against the
-  refetched post-transition state.
+  `accrued_credit_mist`, `handover_settlement`, `tenure_settlement`) — already
+  the `read` tier — are evaluated over real states and asserted equal to the
+  mirror; and `apply.step` over a live handover is asserted bit-exact against
+  the refetched post-transition state. `apply.step` settles **both**
+  credit-consuming transitions: the handover (partial, curve-derived, with a
+  refund) and the tenure expiry (full stake, no refund) — the latter triangulated
+  live `apply.step.tenureSettlement == tenure_settlement view == EarningsMessagePosted.amount`.
 - **CI enforcement.** A Move source change that alters output without a
   corresponding TypeScript change breaks the golden test in CI.
 

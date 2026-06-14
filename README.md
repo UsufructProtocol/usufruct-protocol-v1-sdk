@@ -204,9 +204,17 @@ assertion. Proven live (2026-06-14): seeded with the live inbox groups,
 `memoryInbox` reproduced the chain's partition and per-coin totals exactly
 (SUI=900, DUMMY_COIN=1636).
 
+`apply.step` settles **both** credit-consuming transitions: the handover
+(partial, curve-derived, with a refund) and the **tenure expiry** (full stake,
+no refund — `splitFee(principal)`). Both feed `postSettlement`, so the 90/10
+economy closes off-chain for every transition that mints messages. The tenure
+settlement is triangulated live: `apply.step.tenureSettlement` ==
+`read.tenureSettlement()` == the `EarningsMessagePosted` amount (governor=902,
+fee=100).
+
 Out of the kernel (follow-up): native event filtering by `escrow_id` (today
-client-side over the payload); posting to the inbox from `rent`/`integrate`
-(only handover/tenure settlement mints messages).
+client-side over the payload); multi-tenure settlement (committed_tenures > 1;
+current states are single-tenure, verified bit-exact).
 
 ### Action surface — closed (2026-06-12)
 

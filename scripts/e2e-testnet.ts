@@ -911,6 +911,10 @@ async function main() {
     // Wait on the chain's clock, not the local one (observed ~15s skew).
     const chainNow = await waitForChainTime(client, expiry!, 1_500n);
 
+    // Oracle: read the tenure settlement while the escrow is still Occupied
+    // (the view aborts on a non-rented escrow, so it must precede the apply).
+    const tsView = await readerFor(escrowId).tenureSettlement();
+
     const apply = actions.applyPendingTransitionStates();
     const tx = new Transaction();
     apply.toPtb(tx, { pkg: TESTNET, escrowId, typeArguments: TYPE_ARGS });
@@ -937,6 +941,25 @@ async function main() {
     check(
       'predicted state == live state (bit-exact)',
       stable(predicted.escrow) === stable(live.escrow),
+    );
+
+    // Triangulate the tenure settlement: apply.step == read view == event.
+    const ts = result.tenureSettlement;
+    check(
+      'apply.step tenureSettlement == read.tenureSettlement (live)',
+      ts !== undefined &&
+        ts.governorShareMist === tsView.governorShareMist &&
+        ts.feeMist === tsView.feeMist,
+      `${pStable(ts)} vs ${pStable(tsView)}`,
+    );
+    const postedDummy = (res.events ?? [])
+      .filter((e) => e.eventType.includes('EarningsMessagePosted'))
+      .map((e) => EarningsMessagePosted.parse(e.bcs))
+      .find((p) => p.coin_type.includes('dummy_coin'));
+    check(
+      'apply.step governorShare == EarningsMessagePosted amount (event)',
+      postedDummy !== undefined && BigInt(postedDummy.amount) === ts!.governorShareMist,
+      `event=${postedDummy?.amount} step=${ts?.governorShareMist}`,
     );
     state = live;
   }
