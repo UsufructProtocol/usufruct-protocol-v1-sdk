@@ -15,6 +15,8 @@ import {
   EarningsMessageCollected,
   EarningsMessagePosted,
 } from '../src/codegen/usufruct/earnings_message.js';
+import { HandoverCompleted } from '../src/codegen/usufruct/asset_state.js';
+import * as curve from '../src/sim/curve.js';
 import {
   PARITY_CASES,
   parityEqual,
@@ -395,6 +397,31 @@ async function main() {
     );
     const nextFloor = await rdr.nextFloorPriceMist(mist(1_000), tenureCount(1));
     check('nextFloorPriceMist decodes', nextFloor > 0n, String(nextFloor));
+
+    // sim.curve mirror == on-chain bytecode, over the live Occupied state:
+    // used-credit curve at two times, each vs read.accruedCreditMist.
+    const occ =
+      state.escrow.state?.$kind === 'Renting' && state.escrow.state.Renting.$kind === 'Occupied'
+        ? state.escrow.state.Renting.Occupied
+        : null;
+    if (occ) {
+      const args = {
+        stakeMist: BigInt(occ.terms.active.stake.balance.value),
+        phaseStartMs: BigInt(occ.terms.schedule.phase_start.ms),
+        creditShape: { kind: 'linear' } as const,
+        ceilingMs: BigInt(occ.terms.schedule.ceiling_total.ms),
+      };
+      for (const dt of [3_000n, 9_000n]) {
+        const t = ms(BigInt(occ.terms.schedule.phase_start.ms) + dt);
+        const mirror = curve.usedCredit({ ...args, nowMs: t });
+        const chain = await rdr.accruedCreditMist(t);
+        check(
+          `sim.curve.usedCredit == read.accruedCreditMist @ +${dt}ms`,
+          mirror === chain,
+          `${mirror} vs ${chain}`,
+        );
+      }
+    }
   }
 
   step('6d. withBorrowedAsset bracket — real composability in the middle');
@@ -617,33 +644,53 @@ async function main() {
       );
     }
 
-    // Cross the handover boundary and settle it.
+    // Cross the handover boundary and settle it. The handover is curve-driven
+    // but capped at `expiry`, so the step output is independent of the exact
+    // apply clock — predicted state and settlement must match the chain.
     await waitForChainTime(client, expiry, 1_500n);
     const apply = actions.applyPendingTransitionStates();
-    // The handover settlement is curve math — the step correctly refuses
-    // to mirror it without golden coverage (SPEC §8.2).
-    let threw = false;
-    try {
-      apply.step(state, ms(expiry + 2_000n));
-    } catch (e) {
-      threw = e instanceof Error && e.name === 'NotImplementedStepError';
-    }
-    check('apply.step on firable Demand throws NotImplementedStepError', threw);
+    const predicted = apply.step(state, ms(expiry));
+    const settlement = predicted.result.settlement!;
+
+    // §8 invariant (live): the mirror's credit-curve settlement equals the
+    // on-chain handover_settlement view (read tier) over the same state.
+    const liveSettle = await rdr.handoverSettlement(ms(expiry));
+    check(
+      'apply.step settlement == read.handoverSettlement (curve, live)',
+      settlement.refundMist === liveSettle.remainingMist &&
+        settlement.governorShareMist === liveSettle.governorShareMist &&
+        settlement.feeMist === liveSettle.feeMist,
+      `${pStable(settlement)} vs ${pStable(liveSettle)}`,
+    );
 
     const tx = new Transaction();
     apply.toPtb(tx, { pkg: TESTNET, escrowId, typeArguments: TYPE_ARGS });
     const res = await send(client, tx, signer);
     recordPosted(res);
-    check(
-      'HandoverCompleted event',
-      (res.events ?? []).some((e) => e.eventType.includes('HandoverCompleted')),
-    );
-    state = await source.fetch(escrowId);
-    check('new tenant occupies after handover', views.isOccupied(state, ms(Date.now())));
+    const hc = (res.events ?? []).find((e) => e.eventType.includes('HandoverCompleted'));
+    check('HandoverCompleted event', hc !== undefined);
+    if (hc) {
+      const ev = HandoverCompleted.parse(hc.bcs);
+      check(
+        'apply.step usedMist / newRentPrice == HandoverCompleted event',
+        settlement.usedMist === BigInt(ev.used_credit) &&
+          settlement.newRentPriceMist === BigInt(ev.new_rent_price),
+        `used ${settlement.usedMist}/${ev.used_credit}, rent ${settlement.newRentPriceMist}/${ev.new_rent_price}`,
+      );
+    }
+
+    const live = await source.fetch(escrowId);
+    check('new tenant occupies after handover', views.isOccupied(live, ms(Date.now())));
     check(
       'active cap is the superseding bidder',
-      views.activeUsufructCapId(state, ms(Date.now())) === newTenantCapId,
+      views.activeUsufructCapId(live, ms(Date.now())) === newTenantCapId,
     );
+    // §8 bit-exact: the predicted post-handover state equals the live refetch.
+    check(
+      'apply.step handover state == live (bit-exact)',
+      stable(predicted.state.escrow) === stable(live.escrow),
+    );
+    state = live;
   }
 
   step(`7. apply step parity (§8 invariant) — waiting ${TENURE_MS}ms tenure`);
