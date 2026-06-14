@@ -51,6 +51,12 @@ export interface ChainSourceOpts<A extends AssetSchema> {
   readonly packageId?: string;
 }
 
+/** Whether an error indicates the object does not exist (deleted / wrong id). */
+function isMissingObject(e: unknown): boolean {
+  const msg = String((e as { message?: unknown })?.message ?? e).toLowerCase();
+  return msg.includes('notexist') || msg.includes('not exist') || msg.includes('not found');
+}
+
 /** Abortable sleep; resolves early (not rejects) when the signal fires. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -132,7 +138,19 @@ export function chainSource<
           const escrowId = UsufructCap.parse(cap.content).escrow_identity.id;
           if (seen.has(escrowId)) continue;
           seen.add(escrowId);
-          yield await fetch(escrowId as Id<'Escrow'>);
+          // A cap outlives its escrow (it is burned separately), so a cap can
+          // point at an escrow that was already claimed/retired and deleted.
+          // Discovery yields current escrows; skip targets that no longer
+          // exist. (Other failures still surface — only a missing object is
+          // swallowed.)
+          let state: EscrowState<A, C>;
+          try {
+            state = await fetch(escrowId as Id<'Escrow'>);
+          } catch (e) {
+            if (isMissingObject(e)) continue;
+            throw e;
+          }
+          yield state;
         }
         cursor = page.hasNextPage ? page.cursor : null;
       } while (cursor);

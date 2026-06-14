@@ -103,6 +103,29 @@ export function finish(): never {
 
 export const sleep = (msec: number) => new Promise((r) => setTimeout(r, msec));
 
+/**
+ * Wrap a client so every async `core.*` call rides through `retry429` — used
+ * by the e2e against the public fullnode (the Reader/Source do their own raw
+ * reads). The kernel never bakes in retries; this is harness resilience only.
+ */
+export function rateLimited(client: ClientWithCoreApi): ClientWithCoreApi {
+  const core = client.core as unknown as Record<string, unknown>;
+  const wrappedCore = new Proxy(core, {
+    get(target, prop) {
+      const v = target[prop as string];
+      if (typeof v !== 'function') return v;
+      const fn = v as (...a: unknown[]) => unknown;
+      return (...args: unknown[]) => retry429(async () => fn.apply(target, args) as Promise<unknown>);
+    },
+  });
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === 'core') return wrappedCore;
+      return (target as unknown as Record<string, unknown>)[prop as string];
+    },
+  }) as ClientWithCoreApi;
+}
+
 /** Retry on transient public-fullnode errors (429/502/503) with backoff. */
 export async function retry429<T>(fn: () => Promise<T>, attempts = 6): Promise<T> {
   for (let i = 0; ; i++) {

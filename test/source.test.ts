@@ -126,6 +126,32 @@ describe('chainSource.query', () => {
     expect(fetched).toEqual([A, B]); // one getObject per unique escrow
   });
 
+  it('skips caps whose escrow no longer exists (consumed)', async () => {
+    const client = {
+      core: {
+        listOwnedObjects: async () => ({
+          objects: [
+            { content: capBytes('0x' + '01'.repeat(32), A) }, // alive
+            { content: capBytes('0x' + '02'.repeat(32), B) }, // deleted
+          ],
+          hasNextPage: false,
+          cursor: null,
+        }),
+        getObject: async ({ objectId }: { objectId: string }) => {
+          if (objectId === B) throw new Error('Object does not exist (notExists)');
+          return { object: obj(objectId, '1') };
+        },
+      },
+    } as unknown as ClientWithCoreApi;
+    const ids: string[] = [];
+    for await (const s of chainSource(client, { packageId: PKG }).query({
+      byUsufructuary: owner,
+    })) {
+      ids.push(s.objectId);
+    }
+    expect(ids).toEqual([A]); // B skipped, no throw
+  });
+
   it('throws without packageId', async () => {
     const client = { core: {} } as unknown as ClientWithCoreApi;
     const iter = chainSource(client).query({ byUsufructuary: owner });

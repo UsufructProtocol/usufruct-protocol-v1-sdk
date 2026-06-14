@@ -36,7 +36,9 @@ import {
   makeClient,
   send,
   chainNowMs,
+  rateLimited,
   retry429,
+  sleep,
   step,
   waitForChainTime,
 } from './lib.js';
@@ -54,7 +56,7 @@ const TYPE_ARGS_SUI: [string, string] = [ASSET_T, SUI_T];
 const TENURE_MS = 60_000n;
 const HANDOVER_MS = 25_000n;
 
-const client = makeClient();
+const client = rateLimited(makeClient());
 const signer = loadSigner();
 const me = signer.toSuiAddress();
 
@@ -62,7 +64,10 @@ const me = signer.toSuiAddress();
 // schema path (SPEC §10). Decoding with the wrong schema silently misaligns
 // every field after the asset; observed live before this schema was added.
 const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
-const source = chainSource(client, { assetSchema: dummyAssetSchema });
+const source = chainSource(client, {
+  assetSchema: dummyAssetSchema,
+  packageId: TESTNET.packageId,
+});
 
 /** A bound Reader (tier 1) over an escrow — the default read surface. */
 const readerFor = (
@@ -371,6 +376,51 @@ async function main() {
     const c1 = await rdr.accruedCreditMist(t);
     const c2 = await rdr.accruedCreditMist(ms(t + 5_000n));
     check('accruedCreditMist grows with t (time-travel)', c2 >= c1 && c2 > 0n, `${c1} -> ${c2}`);
+  }
+
+  step('6s. Source.subscribe / query (live)');
+  {
+    // query: discover the escrows this signer rents (via its UsufructCaps);
+    // skips the many stale caps from prior runs (consumed escrows).
+    const rented = new Set<string>();
+    try {
+      for await (const st of source.query({ byUsufructuary: me })) {
+        rented.add(st.objectId);
+        if (rented.has(escrowId) && rented.has(escrowSuiId)) break;
+      }
+    } catch (e) {
+      check('query iteration', false, String((e as Error).message));
+    }
+    check('query finds the rented escrow', rented.has(escrowId), `${rented.size} live escrow(s)`);
+    check('query finds the SUI-axis escrow', rented.has(escrowSuiId));
+
+    // subscribe: initial emission, then again when a mutation bumps the
+    // object version (dedupe by version).
+    const ac = new AbortController();
+    let emissions = 0;
+    const loop = (async () => {
+      for await (const _st of source.subscribe(escrowId, {
+        pollIntervalMs: 400,
+        signal: ac.signal,
+      })) {
+        emissions += 1;
+        if (emissions >= 2) {
+          ac.abort();
+          break;
+        }
+      }
+    })();
+    await sleep(1_500); // let the initial emission land
+    {
+      const tx = new Transaction();
+      actions
+        .updateUsufructuaryRefundAddress({ usufructCapId: mainCapId, newAddress: me })
+        .toPtb(tx, { pkg: TESTNET, escrowId, usufructCapId: mainCapId, typeArguments: TYPE_ARGS });
+      await send(client, tx, signer);
+    }
+    await Promise.race([loop, sleep(20_000)]);
+    ac.abort();
+    check('subscribe emitted initial + post-mutation state', emissions >= 2, `${emissions} emissions`);
   }
 
   step('6c. Settlement Inspect functions (live)');
