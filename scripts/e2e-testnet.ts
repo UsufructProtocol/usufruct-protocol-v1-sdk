@@ -15,6 +15,11 @@ import {
   EarningsMessageCollected,
   EarningsMessagePosted,
 } from '../src/codegen/usufruct/earnings_message.js';
+import {
+  FeeMessage,
+  FeeMessageCollected,
+  FeeMessagePosted,
+} from '../src/codegen/usufruct/fee_message.js';
 import { HandoverCompleted } from '../src/codegen/usufruct/asset_state.js';
 import * as curve from '../src/sim/curve.js';
 import {
@@ -1040,6 +1045,66 @@ async function main() {
     check('inbox drained', after.size === 0);
   }
 
+  step('7d. protocol-fee collect — global owned inbox, our messages (live)');
+  {
+    // The ProtocolFeeInbox is a single OWNED object (deployer); collecting
+    // requires the owner to sign (the object's ownership IS the authority — the
+    // collect fn has no cap). We collect only the fee messages this run minted
+    // (by id), so conservation is exact and we don't touch the global pool.
+    const feeInbox = views.feeInboxId(state);
+    let feeOwner: ReturnType<typeof loadSigner> | null = null;
+    try {
+      feeOwner = loadSigner(process.env['FEE_OWNER_ALIAS'] ?? 'usufruct-v1-4-2-testnet');
+    } catch {
+      feeOwner = null;
+    }
+    if (!feeOwner) {
+      console.log('  [skip] fee-inbox owner key not in keystore (set FEE_OWNER_ALIAS)');
+    } else {
+      check('fee messages were posted this run', ourFeeMsgIds.size > 0, `${ourFeeMsgIds.size}`);
+      // Build groups from OUR fee-message ids by direct getObject — no scan of
+      // the (global) inbox. Partition by coin type for the §5.2 collect.
+      const groups = new Map<
+        string,
+        { objectId: string; version: string; digest: string; amountMist: ReturnType<typeof mist> }[]
+      >();
+      for (const [msgId, coinType] of ourFeeMsgIds) {
+        const { object } = await client.core.getObject({ objectId: msgId, include: { content: true } });
+        const amountMist = mist(BigInt(FeeMessage.parse(object.content).balance.value));
+        const refs = groups.get(coinType) ?? [];
+        refs.push({ objectId: object.objectId, version: object.version, digest: object.digest, amountMist });
+        groups.set(coinType, refs);
+      }
+      const tx = new Transaction();
+      const coins = actions.collectMessages({ kind: 'fees', groups }).toPtb(tx, {
+        pkg: TESTNET,
+        inboxId: feeInbox,
+      });
+      tx.transferObjects(coins, feeOwner.toSuiAddress());
+      const res = await send(client, tx, feeOwner); // owner-signed
+      const collected = (res.events ?? [])
+        .filter((e) => e.eventType.includes('FeeMessageCollected'))
+        .map((e) => FeeMessageCollected.parse(e.bcs));
+      check(
+        'FeeMessageCollected for every posted fee message',
+        collected.length === ourFeeMsgIds.size,
+        `${collected.length}/${ourFeeMsgIds.size}`,
+      );
+      const collectedByCoin = new Map<string, bigint>();
+      for (const c of collected) {
+        const key = c.coin_type.split('::').pop()!;
+        collectedByCoin.set(key, (collectedByCoin.get(key) ?? 0n) + BigInt(c.amount));
+      }
+      for (const [coin, posted] of postedFees) {
+        check(
+          `fee collected ${coin} == posted ${coin}`,
+          collectedByCoin.get(coin) === posted,
+          `collected=${collectedByCoin.get(coin)} posted=${posted}`,
+        );
+      }
+    }
+  }
+
   step('8. retire + claimAsset (Terminal action)');
   {
     const second = await integrateEscrow();
@@ -1153,13 +1218,24 @@ let suiCapId = '';
 let demandFixture: Record<string, unknown> | null = null;
 let newTenantCapId = '';
 const postedEarnings = new Map<string, bigint>();
+const postedFees = new Map<string, bigint>();
+// Our posted fee-message ids → coin type (the global ProtocolFeeInbox also
+// holds other users' fees, so we collect only the ones this run minted).
+const ourFeeMsgIds = new Map<string, string>();
+const normAddr = (s: string) => '0x' + s.replace(/^0x/, '').toLowerCase().padStart(64, '0');
 
 function recordPosted(res: { events?: readonly { eventType: string; bcs: Uint8Array }[] | undefined }) {
   for (const e of res.events ?? []) {
-    if (!e.eventType.includes('EarningsMessagePosted')) continue;
-    const p = EarningsMessagePosted.parse(e.bcs);
-    const key = p.coin_type.split('::').pop()!;
-    postedEarnings.set(key, (postedEarnings.get(key) ?? 0n) + BigInt(p.amount));
+    if (e.eventType.includes('EarningsMessagePosted')) {
+      const p = EarningsMessagePosted.parse(e.bcs);
+      const key = p.coin_type.split('::').pop()!;
+      postedEarnings.set(key, (postedEarnings.get(key) ?? 0n) + BigInt(p.amount));
+    } else if (e.eventType.includes('FeeMessagePosted')) {
+      const p = FeeMessagePosted.parse(e.bcs);
+      const key = p.coin_type.split('::').pop()!;
+      postedFees.set(key, (postedFees.get(key) ?? 0n) + BigInt(p.amount));
+      ourFeeMsgIds.set(normAddr(p.fee_message_id), p.coin_type);
+    }
   }
 }
 

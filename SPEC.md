@@ -393,6 +393,19 @@ constructed. This is the single place the type discipline lives in the SDK, not
 the chain; observed live during the v1.4.2 adversarial audit (a DUMMY_COIN-typed
 collect over an inbox holding `FeeMessage<SUI>` aborted exactly here).
 
+**Ownership asymmetry.** The two inboxes differ in custody: the `EarningsInbox`
+is **one per governor** (created at `integrate`, owned by the governor — who
+collects their own 90%); the `ProtocolFeeInbox` is **one global object owned by
+the protocol deployer** (`init` `public_transfer`s it to the publisher; the
+`ProtocolFeeRef` is frozen), accumulating the 10% from *every* escrow of *every*
+governor. The collect fn carries no capability — **ownership of the inbox object
+is the authority** (passing it `&mut` requires the owner), and the collected
+`Coin<C>` goes to `ctx.sender()`. So fee collection must be **owner-signed**.
+Verified live (2026-06-14): owner-signed collect of the run's own `FeeMessage`s
+(selected by `fee_message_id`) — `collected == posted` per coin (DUMMY_COIN,
+SUI). The off-chain mirror of this — many escrows' 90% to per-governor earnings
+inboxes, every 10% into one global fee pool — is `memoryInbox` + `postSettlement`.
+
 ---
 
 ## §6 — Read strategy

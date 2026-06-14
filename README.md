@@ -219,6 +219,17 @@ handover's `new_rent_price`) is `stake_per_tenure`. Verified offline (a 2-tenure
 expiry: settle 2000 → 1800/200, next price 1000) and live (a 2-tenure rent:
 `splitFee(stake) == read.tenureSettlement()`).
 
+The two inboxes differ in custody: the `EarningsInbox` is **per governor**
+(owned by the governor, who collects their 90%); the `ProtocolFeeInbox` is **one
+global object owned by the protocol deployer**, pooling the 10% from every
+escrow. The collect fn has no capability — owning the inbox object *is* the
+authority — so fee collection is **owner-signed**. Both paths are now exercised
+live: governor-signed earnings collect (`7c`) and owner-signed protocol-fee
+collect (`7d`, draining only this run's own `FeeMessage`s by id —
+`collected == posted` per coin). The off-chain mirror — many escrows' 90% to
+per-governor earnings, every 10% into one fee pool — is `memoryInbox` +
+`postSettlement`.
+
 Out of the kernel (follow-up): native event filtering by `escrow_id` (today
 client-side over the payload).
 
