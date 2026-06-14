@@ -45,10 +45,25 @@ export interface HandoverSettlement {
   readonly newRentPriceMist: Mist;
 }
 
+/**
+ * Economic split of a tenure-expiry settlement. Unlike a handover (partial,
+ * curve-derived, with a refund), a tenure that runs its full committed term
+ * consumes the **entire** stake — no refund, no reprice — so `do_tenure_expiry`
+ * settles `splitFee(principal)`. Mirrors the `tenureSettlement` on-chain view.
+ */
+export interface TenureSettlement {
+  /** Consumed credit = the full active stake. */
+  readonly usedMist: Mist;
+  readonly governorShareMist: Mist;
+  readonly feeMist: Mist;
+}
+
 export interface ApplyResult {
   readonly transitions: readonly AppliedTransition[];
-  /** Present iff a handover fired. */
+  /** Present iff a handover fired (partial, curve-derived). */
   readonly settlement?: HandoverSettlement;
+  /** Present iff a tenure expiry fired (full stake, no refund). */
+  readonly tenureSettlement?: TenureSettlement;
 }
 
 type State = EscrowState<AssetSchema>;
@@ -66,6 +81,7 @@ export function applyPendingTransitionStates(): TransitionAction<ApplyResult, Ap
       let current: AssetStateData = s;
       let ensembleSlot = core.ensemble;
       let settlement: HandoverSettlement | undefined;
+      let tenureSettlement: TenureSettlement | undefined;
 
       // step_handover (Demand → Occupied at the bid's handover expiry). The
       // state swap is structural; the split is the credit curve at `expiry`.
@@ -144,16 +160,26 @@ export function applyPendingTransitionStates(): TransitionAction<ApplyResult, Ap
           BigInt(terms.schedule.phase_start.ms) + BigInt(terms.schedule.ceiling_total.ms);
         if (t >= boundary) {
           const locked = { asset: asset.available };
+          // The full committed stake is consumed and settled — no curve, no
+          // refund (cf. handover). This happens *before* the retire decision,
+          // so both the Retired and the Descent path settle. `splitFee` mirrors
+          // `do_tenure_expiry` and the `tenureSettlement` view.
+          transitions.push('tenureExpiry');
+          const principal = BigInt(terms.active.stake.balance.value);
+          const split = splitFee(principal);
+          tenureSettlement = {
+            usedMist: mist(principal),
+            governorShareMist: mist(split.governorShare),
+            feeMist: mist(split.fee),
+          };
           if (terms.retire.$kind === 'Retiring') {
-            transitions.push('tenureExpiry', 'retire');
+            transitions.push('retire');
             ensembleSlot = { ...ensembleSlot, pending: null };
             current = {
               $kind: 'Waiting',
               Waiting: { $kind: 'Retired', Retired: { asset: locked } },
             } as AssetStateData;
           } else {
-            transitions.push('tenureExpiry');
-            const principal = BigInt(terms.active.stake.balance.value);
             const count = BigInt(terms.schedule.committed_tenures.count);
             current = {
               $kind: 'Waiting',
@@ -196,10 +222,12 @@ export function applyPendingTransitionStates(): TransitionAction<ApplyResult, Ap
         ...state,
         escrow: { ...state.escrow, core: { ...core, ensemble: ensembleSlot }, state: current },
       };
-      return {
-        state: next,
-        result: settlement ? { transitions, settlement } : { transitions },
+      const result: ApplyResult = {
+        transitions,
+        ...(settlement ? { settlement } : {}),
+        ...(tenureSettlement ? { tenureSettlement } : {}),
       };
+      return { state: next, result };
     },
 
     toPtb: (tx, args) =>
