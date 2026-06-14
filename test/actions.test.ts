@@ -68,6 +68,16 @@ describe('applyPendingTransitionStates (Transition)', () => {
     const { state: next, result } = action.step(state, ms(70_000));
     // synthetic cycle has descent 30_000 → Descent until 100_000
     expect(result.transitions).toEqual(['tenureExpiry']);
+    // Full stake (1000) consumed, no refund, split 90/10 — no handover settlement.
+    expect(result.tenureSettlement).toEqual({
+      usedMist: 1_000n,
+      governorShareMist: 900n,
+      feeMist: 100n,
+    });
+    expect(result.tenureSettlement!.governorShareMist + result.tenureSettlement!.feeMist).toBe(
+      result.tenureSettlement!.usedMist,
+    );
+    expect(result.settlement).toBeUndefined();
     expect(views.isDescending(next, ms(70_000))).toBe(true);
     expect(views.phaseStartMs(next, ms(70_000))).toBe(70_000n);
 

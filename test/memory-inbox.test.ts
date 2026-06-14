@@ -8,7 +8,7 @@ import * as actions from '../src/actions/index.js';
 import { id, mist, ms } from '../src/primitives/brand.js';
 import { memoryInbox, postSettlement } from '../src/primitives/memory-inbox.js';
 import { memorySource } from '../src/primitives/memory-source.js';
-import { ESCROW_ID, demandState } from './synthetic.js';
+import { ESCROW_ID, demandState, occupiedState } from './synthetic.js';
 
 const INBOX = '0x' + 'ab'.repeat(32);
 const SUI = '0x2::sui::SUI';
@@ -79,5 +79,26 @@ describe('memoryInbox — escrow ↔ inbox 90/10 conservation (offline)', () => 
     expect(earned).toBe(s.governorShareMist); // 90% → governor
     expect(feed).toBe(s.feeMist); // 10% → protocol fee
     expect(earned + feed).toBe(s.usedMist); // nothing created or lost
+  });
+
+  it('a tenure expiry posts the full-stake 90/10; collected == used', () => {
+    const EARN = '0x' + 'e3'.repeat(32);
+    const FEE = '0x' + 'f4'.repeat(32);
+
+    // Occupied, applied past its tenure boundary → full-stake settlement.
+    const mem = memorySource([occupiedState(0n, 60_000n)]); // boundary at 60_000
+    const t = ms(60_000n);
+    const result = mem.apply(escrowId, actions.applyPendingTransitionStates(), t);
+    expect(result.tenureSettlement).toBeTruthy();
+    const s = result.tenureSettlement!;
+    expect(s.governorShareMist + s.feeMist).toBe(s.usedMist); // the split
+
+    const inbox = memoryInbox();
+    postSettlement(inbox, { earningsId: EARN, feeId: FEE }, SUI, s);
+    const earned = sumMist(inbox.collect(EARN, t).byCoin);
+    const feed = sumMist(inbox.collect(FEE, t).byCoin);
+    expect(earned).toBe(s.governorShareMist);
+    expect(feed).toBe(s.feeMist);
+    expect(earned + feed).toBe(s.usedMist); // conservation, tenure-expiry path
   });
 });
