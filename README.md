@@ -21,12 +21,26 @@ That makes a thin wrapper both correct and complete, so the SDK is two tiers:
   ```
 
 - **`sim` — opt-in.** The functional mirror (`EscrowState` / `View` /
-  `Action.step`) for computation the wrapper cannot do: folding actions over
-  hypothetical futures, an off-chain testbed, an agenda over many escrows
-  without N round-trips. It *re-derives* the protocol's logic and so takes
-  drift risk — every shipped mirror is golden-tested against the on-chain
-  view (its oracle, §8). A mirror without coverage simply isn't shipped; you
-  fall back to `read`.
+  `Action.step` / `sim.curve`) for computation the wrapper cannot do: folding
+  actions over hypothetical futures, an off-chain testbed, an agenda over many
+  escrows without N round-trips. It *re-derives* the protocol's logic and so
+  takes drift risk — every shipped mirror is golden-tested against the
+  on-chain view (its oracle, §8). **Tier 2 is complete**: every `step` is a
+  deterministic `(state, t)` function (the protocol carries no randomness),
+  and the fixed-point curve/settlement math is mirrored bit-exactly in
+  `sim.curve`.
+
+  | step | curve consumed | how proven |
+  |---|---|---|
+  | `apply` (handover) | credit curve → used-credit + bps split | golden vectors + live: settlement == `read.handoverSettlement` == event; state bit-exact |
+  | `rent` (install/Descent) | auction curve → descending floor | golden vectors + offline state assembly |
+  | `rent` (bid) | price escalation → ascending floor | golden vectors + live `nextFloorPriceMist` |
+  | `apply` (tenure/auction expiry), `retire`, `claimAsset`, `borrow`/`return`, governance | none (pure state machine) | live bit-exact vs refetch |
+
+  `sim.curve` is bit-exact-tested against the protocol's own pinned vectors
+  (`test/curve-golden.test.ts`: all 5 `CurveShape`s incl. power-law roots,
+  exponential ±, logistic; fixed/compound escalation; fee split) and
+  cross-checked live (`sim.curve.usedCredit == read.accruedCreditMist`).
 
 - **`actions` — the write path.** `Action.toPtb` builds the PTBs.
 
@@ -69,8 +83,8 @@ SUI_PRIVATE_KEY=suiprivkey… npm run e2e   # or: sui keytool export fallback
    unions; the 9-view `credit_shape_*` family collapsed into ~30 lines.
 3. **Marginal view cost — confirmed.** ~12 lines/view including docs; the
    remaining ~110 views are mechanical.
-4. **Marginal `toPtb` cost — confirmed.** 5–20 lines/action; `&Clock`/`&Random`
-   are auto-injected by the generated layer (SPEC §4.3 holds for free).
+4. **Marginal `toPtb` cost — confirmed.** 5–20 lines/action; `&Clock`
+   is auto-injected by the generated layer (SPEC §4.3 holds for free).
 5. **`step` feasibility — confirmed** for deterministic configs:
    `apply.step` predicted the post-transition on-chain state bit-exactly on
    the first try (tenure expiry → descent → idle chain). Handover settlement
