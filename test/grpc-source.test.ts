@@ -185,3 +185,133 @@ describe('grpcSource.subscribeMany', () => {
     expect(tags.sort()).toEqual([ESCROW, ESCROW_B].sort());
   });
 });
+
+/**
+ * A fake whose checkpoint stream is *fed on command* (so a test can interleave
+ * add/remove with checkpoints deterministically) and whose per-id version is
+ * settable. One stream open; stays open until aborted.
+ */
+function controllable(initial: Record<string, string>) {
+  const chain: Record<string, string> = { ...initial };
+  let streamOpens = 0;
+  let waiter: ((r: IteratorResult<unknown>) => void) | null = null;
+  const queue: unknown[] = [];
+  const feed = (cp: unknown) => {
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w({ value: cp, done: false });
+    } else queue.push(cp);
+  };
+  const client = {
+    core: {
+      getObject: async ({ objectId }: { objectId: string }) => ({
+        object: { objectId, version: chain[objectId] ?? '1', digest: 'd', type: ESCROW_TYPE, content: escrowBytes() },
+      }),
+    },
+    subscriptionService: {
+      subscribeCheckpoints: (_req: unknown, opts?: { abort?: AbortSignal }) => {
+        streamOpens += 1;
+        const signal = opts?.abort;
+        const responses = (async function* () {
+          for (;;) {
+            if (queue.length) {
+              yield queue.shift();
+              continue;
+            }
+            if (signal?.aborted) return;
+            const r = await new Promise<IteratorResult<unknown>>((resolve) => {
+              waiter = resolve;
+              signal?.addEventListener('abort', () => resolve({ value: undefined, done: true }), { once: true });
+            });
+            if (r.done) return;
+            yield r.value;
+          }
+        })();
+        return { responses };
+      },
+    },
+  } as unknown as SuiGrpcClient;
+  return {
+    client,
+    feed,
+    streamOpens: () => streamOpens,
+    setVersion: (objectId: string, v: string) => {
+      chain[objectId] = v;
+    },
+  };
+}
+
+/** Poll a predicate until true (or time out) — for awaiting async emissions. */
+async function until(pred: () => boolean, ms = 1000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > ms) throw new Error('until: timeout');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+describe('grpcSource.subscribeMany — dynamic add/remove/close', () => {
+  it('add(id) starts watching live and emits its initial state', async () => {
+    const { client, feed, setVersion, streamOpens } = controllable({ [ESCROW]: '1', [ESCROW_B]: '1' });
+    const sub = grpcSource(client).subscribeMany([id<'Escrow'>(ESCROW)]);
+    const tags: string[] = [];
+    const run = (async () => {
+      for await (const u of sub) tags.push(u.escrowId);
+    })();
+
+    await until(() => tags.length === 1);
+    expect(tags).toEqual([ESCROW]); // initial A only
+
+    await sub.add(id<'Escrow'>(ESCROW_B)); // grow the set live
+    await until(() => tags.length === 2);
+    expect(tags[1]).toBe(ESCROW_B); // B's initial state
+
+    setVersion(ESCROW_B, '2');
+    feed(ck([{ objectId: ESCROW_B, outputVersion: '2' }])); // B changes → routed
+    await until(() => tags.length === 3);
+    expect(tags[2]).toBe(ESCROW_B);
+    expect(streamOpens()).toBe(1); // never reopened
+
+    sub.close();
+    await run;
+  });
+
+  it('remove(id) stops watching — its later changes no longer emit', async () => {
+    const { client, feed, setVersion } = controllable({ [ESCROW]: '1', [ESCROW_B]: '1' });
+    const sub = grpcSource(client).subscribeMany([id<'Escrow'>(ESCROW), id<'Escrow'>(ESCROW_B)]);
+    const tags: string[] = [];
+    const run = (async () => {
+      for await (const u of sub) tags.push(u.escrowId);
+    })();
+
+    await until(() => tags.length === 2); // both initials
+
+    sub.remove(id<'Escrow'>(ESCROW));
+    setVersion(ESCROW, '2');
+    feed(ck([{ objectId: ESCROW, outputVersion: '2' }])); // A removed → ignored
+    setVersion(ESCROW_B, '2');
+    feed(ck([{ objectId: ESCROW_B, outputVersion: '2' }])); // B watched → emit
+
+    await until(() => tags.length === 3);
+    expect(tags[2]).toBe(ESCROW_B);
+    // A's post-remove checkpoint was processed before B's, so A is settled:
+    expect(tags.filter((t) => t === ESCROW)).toHaveLength(1); // only its initial
+
+    sub.close();
+    await run;
+  });
+
+  it('close() ends the iteration cleanly', async () => {
+    const { client } = controllable({ [ESCROW]: '1' });
+    const sub = grpcSource(client).subscribeMany([id<'Escrow'>(ESCROW)]);
+    const tags: string[] = [];
+    const run = (async () => {
+      for await (const u of sub) tags.push(u.escrowId);
+    })();
+    await until(() => tags.length === 1);
+    sub.close();
+    await run; // resolves — the for-await returned
+    expect(tags).toEqual([ESCROW]);
+  });
+});
