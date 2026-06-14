@@ -1,0 +1,83 @@
+/**
+ * Offline memoryInbox: coin-polymorphic partition + collect, and the escrow ↔
+ * inbox 90/10 economy closed entirely in RAM (no network) — the conservation
+ * the live e2e proves (collected == posted), here as an offline assertion.
+ */
+import { describe, expect, it } from 'vitest';
+import * as actions from '../src/actions/index.js';
+import { id, mist, ms } from '../src/primitives/brand.js';
+import { memoryInbox, postSettlement } from '../src/primitives/memory-inbox.js';
+import { memorySource } from '../src/primitives/memory-source.js';
+import { ESCROW_ID, demandState } from './synthetic.js';
+
+const INBOX = '0x' + 'ab'.repeat(32);
+const SUI = '0x2::sui::SUI';
+const DUMMY = '0x97fb7c::dummy_coin::DUMMY_COIN';
+const escrowId = id<'Escrow'>(ESCROW_ID);
+
+const sumMist = (byCoin: ReadonlyArray<{ amountMist: bigint }>) =>
+  byCoin.reduce((a, c) => a + c.amountMist, 0n);
+
+describe('memoryInbox partition + collect', () => {
+  it('fetch partitions messages by coin type (§5.2)', () => {
+    const inbox = memoryInbox();
+    inbox.post(INBOX, { coinType: SUI, amountMist: mist(100n) });
+    inbox.post(INBOX, { coinType: SUI, amountMist: mist(50n) });
+    inbox.post(INBOX, { coinType: DUMMY, amountMist: mist(200n) });
+
+    const groups = inbox.fetch(INBOX);
+    expect(groups.size).toBe(2); // two coin types
+    const suiKey = [...groups.keys()].find((k) => k.includes('sui'))!;
+    expect(groups.get(suiKey)!.length).toBe(2);
+  });
+
+  it('collect drains the inbox and totals per coin', () => {
+    const inbox = memoryInbox();
+    inbox.post(INBOX, { coinType: SUI, amountMist: mist(100n) });
+    inbox.post(INBOX, { coinType: SUI, amountMist: mist(50n) });
+    inbox.post(INBOX, { coinType: DUMMY, amountMist: mist(200n) });
+
+    const { byCoin } = inbox.collect(INBOX, ms(0n));
+    expect(byCoin).toHaveLength(2);
+    const sui = byCoin.find((c) => c.coinType.includes('sui'))!;
+    expect(sui.count).toBe(2);
+    expect(sui.amountMist).toBe(150n);
+    const dummy = byCoin.find((c) => c.coinType.includes('dummy'))!;
+    expect(dummy.amountMist).toBe(200n);
+
+    expect(inbox.has(INBOX)).toBe(false); // drained
+    expect(inbox.size).toBe(0);
+  });
+
+  it('seeds from { inboxId, groups }', () => {
+    const a = memoryInbox();
+    a.post(INBOX, { coinType: SUI, amountMist: mist(900n) });
+    const b = memoryInbox([{ inboxId: INBOX, groups: a.fetch(INBOX) }]);
+    expect(sumMist(b.collect(INBOX, ms(0n)).byCoin)).toBe(900n);
+  });
+});
+
+describe('memoryInbox — escrow ↔ inbox 90/10 conservation (offline)', () => {
+  it('a handover settlement posts 90/10; collected == used credit', () => {
+    const EARN = '0x' + 'e1'.repeat(32);
+    const FEE = '0x' + 'f2'.repeat(32);
+
+    // Demand with a handover that expires early; apply past it → settlement.
+    const mem = memorySource([demandState(0n, 1_000n)]);
+    const t = ms(50_000n);
+    const result = mem.apply(escrowId, actions.applyPendingTransitionStates(), t);
+    expect(result.settlement).toBeTruthy();
+    const s = result.settlement!;
+    expect(s.governorShareMist + s.feeMist).toBe(s.usedMist); // the split
+
+    // Bridge the split into the two inboxes (synthetic states are SUI-coined).
+    const inbox = memoryInbox();
+    postSettlement(inbox, { earningsId: EARN, feeId: FEE }, SUI, s);
+
+    const earned = sumMist(inbox.collect(EARN, t).byCoin);
+    const feed = sumMist(inbox.collect(FEE, t).byCoin);
+    expect(earned).toBe(s.governorShareMist); // 90% → governor
+    expect(feed).toBe(s.feeMist); // 10% → protocol fee
+    expect(earned + feed).toBe(s.usedMist); // nothing created or lost
+  });
+});
