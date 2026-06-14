@@ -24,13 +24,10 @@ import {
   type Source,
   type SubscribeOpts,
 } from '../primitives/source.js';
+import { ESCROW_KEYED, normEscrowId, toTypedEvent, type TypedEvent } from './events.js';
 
-export interface EventRecord {
-  readonly type: string;
-  readonly sender: string | null;
-  /** The Move struct payload, parsed by the indexer. */
-  readonly json: Record<string, unknown>;
-}
+/** @deprecated use `TypedEvent` (a superset). Kept for source compatibility. */
+export type EventRecord = TypedEvent;
 
 export interface EventsFilter {
   /** Fully-qualified event type, e.g. `${pkg}::asset_state::HandoverCompleted`. */
@@ -39,14 +36,36 @@ export interface EventsFilter {
   readonly sender?: string;
   /** Page size (default 50). */
   readonly pageSize?: number;
+  /** Bound history to events after / before these checkpoints (EventFilter). */
+  readonly afterCheckpoint?: number;
+  readonly beforeCheckpoint?: number;
+}
+
+export interface TimelineOpts {
+  /** Event names (`module::Name`) to fan out over (default: every escrow-keyed event). */
+  readonly types?: readonly string[];
+  /**
+   * Restrict to events emitted by transactions this address signed — narrows
+   * the fan-out (and avoids scanning unrelated history the indexer may have
+   * pruned). Omit for the full timeline across all actors.
+   */
+  readonly sender?: string;
+  readonly afterCheckpoint?: number;
+  readonly beforeCheckpoint?: number;
+  readonly pageSize?: number;
 }
 
 export interface IndexerSource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
 > extends Source<A, C> {
-  /** Event history (timeline / analytics). Per-escrow = filter by json.escrow_id. */
-  readonly events: (filter: EventsFilter) => AsyncIterable<EventRecord>;
+  /** Event history of one type (typed, BCS-decoded). */
+  readonly events: (filter: EventsFilter) => AsyncIterable<TypedEvent>;
+  /** An escrow's full timeline: fan out the escrow-keyed events, merge, sort by time. */
+  readonly escrowTimeline: (
+    escrowId: Id<'Escrow'>,
+    opts?: TimelineOpts,
+  ) => Promise<TypedEvent[]>;
 }
 
 export interface IndexerOpts<A extends AssetSchema> {
@@ -63,10 +82,10 @@ const OBJECTS_DOC = `query($type: String!, $after: String, $first: Int!) {
   }
 }`;
 
-const EVENTS_DOC = `query($type: String!, $sender: SuiAddress, $after: String, $first: Int!) {
-  events(first: $first, after: $after, filter: { type: $type, sender: $sender }) {
+const EVENTS_DOC = `query($type: String!, $sender: SuiAddress, $after: String, $first: Int!, $afterCp: UInt53, $beforeCp: UInt53) {
+  events(first: $first, after: $after, filter: { type: $type, sender: $sender, afterCheckpoint: $afterCp, beforeCheckpoint: $beforeCp }) {
     pageInfo { hasNextPage endCursor }
-    nodes { sender { address } contents { json } }
+    nodes { sender { address } timestamp contents { json } }
   }
 }`;
 
@@ -76,10 +95,15 @@ type ObjectsResult = {
     nodes: { address: string }[];
   };
 };
+type EventNode = {
+  sender: { address: string } | null;
+  timestamp: string | null;
+  contents: { json: Record<string, unknown> };
+};
 type EventsResult = {
   events: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    nodes: { sender: { address: string } | null; contents: { json: Record<string, unknown> } }[];
+    nodes: EventNode[];
   };
 };
 
@@ -152,6 +176,39 @@ export function indexerSource<
     } while (after);
   }
 
+  /** Page one event type (typed, BCS-decoded). The single GraphQL events call. */
+  async function* pageEvents(
+    fullType: string,
+    p: {
+      sender?: string;
+      afterCheckpoint?: number;
+      beforeCheckpoint?: number;
+      pageSize?: number;
+    },
+  ): AsyncIterable<TypedEvent> {
+    let after: string | null = null;
+    const pageFirst = p.pageSize ?? first;
+    do {
+      const { events }: EventsResult = await run(EVENTS_DOC, {
+        type: fullType,
+        sender: p.sender ?? null,
+        after,
+        first: pageFirst,
+        afterCp: p.afterCheckpoint ?? null,
+        beforeCp: p.beforeCheckpoint ?? null,
+      });
+      for (const n of events.nodes) {
+        yield toTypedEvent({
+          type: fullType,
+          sender: n.sender?.address ?? null,
+          timestamp: n.timestamp,
+          json: n.contents.json,
+        });
+      }
+      after = events.pageInfo.hasNextPage ? events.pageInfo.endCursor : null;
+    } while (after);
+  }
+
   return {
     fetch: base.fetch,
     subscribe: (id: Id<'Escrow'>, subOpts?: SubscribeOpts) => base.subscribe(id, subOpts),
@@ -163,21 +220,51 @@ export function indexerSource<
       return byType(); // { all: true }
     },
 
-    events: async function* (filter) {
-      let after: string | null = null;
-      const pageFirst = filter.pageSize ?? first;
-      do {
-        const { events }: EventsResult = await run(EVENTS_DOC, {
-          type: filter.type,
-          sender: filter.sender ?? null,
-          after,
-          first: pageFirst,
-        });
-        for (const n of events.nodes) {
-          yield { type: filter.type, sender: n.sender?.address ?? null, json: n.contents.json };
+    events: (filter) =>
+      pageEvents(filter.type, {
+        ...(filter.sender !== undefined ? { sender: filter.sender } : {}),
+        ...(filter.afterCheckpoint !== undefined ? { afterCheckpoint: filter.afterCheckpoint } : {}),
+        ...(filter.beforeCheckpoint !== undefined
+          ? { beforeCheckpoint: filter.beforeCheckpoint }
+          : {}),
+        ...(filter.pageSize !== undefined ? { pageSize: filter.pageSize } : {}),
+      }),
+
+    async escrowTimeline(escrowId, timelineOpts) {
+      const want = normEscrowId(escrowId);
+      const names = timelineOpts?.types ?? ESCROW_KEYED;
+      const per = {
+        ...(timelineOpts?.sender !== undefined ? { sender: timelineOpts.sender } : {}),
+        ...(timelineOpts?.afterCheckpoint !== undefined
+          ? { afterCheckpoint: timelineOpts.afterCheckpoint }
+          : {}),
+        ...(timelineOpts?.beforeCheckpoint !== undefined
+          ? { beforeCheckpoint: timelineOpts.beforeCheckpoint }
+          : {}),
+        ...(timelineOpts?.pageSize !== undefined ? { pageSize: timelineOpts.pageSize } : {}),
+      };
+      // Fan out the escrow-keyed event types and filter by escrow_id client-side
+      // (the GraphQL filter can't match a payload field). Bound the concurrency
+      // so we don't burst the indexer — a public endpoint drops parallel queries
+      // under load. Errors propagate (the caller retries); decode is best-effort.
+      const oneType = async (n: string): Promise<TypedEvent[]> => {
+        const out: TypedEvent[] = [];
+        for await (const e of pageEvents(`${opts.packageId}::${n}`, per)) {
+          if (e.escrowId === want) out.push(e);
         }
-        after = events.pageInfo.hasNextPage ? events.pageInfo.endCursor : null;
-      } while (after);
+        return out;
+      };
+      const CONCURRENCY = 5;
+      const lists: TypedEvent[][] = [];
+      for (let i = 0; i < names.length; i += CONCURRENCY) {
+        lists.push(...(await Promise.all(names.slice(i, i + CONCURRENCY).map(oneType))));
+      }
+      // Merge and order by emission time (ISO string sorts chronologically);
+      // ties broken by event name for determinism.
+      return lists.flat().sort((a, b) => {
+        const t = (a.timestamp ?? '').localeCompare(b.timestamp ?? '');
+        return t !== 0 ? t : a.name.localeCompare(b.name);
+      });
     },
   };
 }

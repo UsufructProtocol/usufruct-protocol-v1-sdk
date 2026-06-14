@@ -4,4 +4,12 @@ export type {
   IndexerOpts,
   EventRecord,
   EventsFilter,
+  TimelineOpts,
 } from './source.js';
+export {
+  ESCROW_KEYED,
+  escrowIdOf,
+  eventKey,
+  normEscrowId,
+  type TypedEvent,
+} from './events.js';
