@@ -212,9 +212,15 @@ settlement is triangulated live: `apply.step.tenureSettlement` ==
 `read.tenureSettlement()` == the `EarningsMessagePosted` amount (governor=902,
 fee=100).
 
+**Multi-tenure** (`committed_tenures > 1`) honours the protocol's split: the
+settlement is `splitFee(`*full* stake`)` — the stake is the total across all
+committed tenures — while the *price* (the next auction's `last_acq_price`, a
+handover's `new_rent_price`) is `stake_per_tenure`. Verified offline (a 2-tenure
+expiry: settle 2000 → 1800/200, next price 1000) and live (a 2-tenure rent:
+`splitFee(stake) == read.tenureSettlement()`).
+
 Out of the kernel (follow-up): native event filtering by `escrow_id` (today
-client-side over the payload); multi-tenure settlement (committed_tenures > 1;
-current states are single-tenure, verified bit-exact).
+client-side over the payload).
 
 ### Action surface — closed (2026-06-12)
 

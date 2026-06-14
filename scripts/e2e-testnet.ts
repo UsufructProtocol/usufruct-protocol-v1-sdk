@@ -178,9 +178,9 @@ const ensembleCfg = {
   handover: { kind: 'fixed', floorMs: HANDOVER_MS },
 } as Parameters<typeof actions.integrate>[0]['ensemble'];
 
-async function integrateEscrow() {
+async function integrateEscrow(ensemble: typeof ensembleCfg = ensembleCfg) {
   const action = actions.integrate({
-    ensemble: ensembleCfg,
+    ensemble,
     assetType: ASSET_T,
     coinType: COIN_T,
   });
@@ -1076,6 +1076,49 @@ async function main() {
       'GovernanceCapBurned + UsufructCapBurned events',
       (res3.events ?? []).some((e) => e.eventType.includes('GovernanceCapBurned')) &&
         (res3.events ?? []).some((e) => e.eventType.includes('UsufructCapBurned')),
+    );
+  }
+
+  step('8d. multi-tenure settlement (committed_tenures = 2, live)');
+  {
+    // Self-contained: a fresh escrow rented for TWO tenures. The view projects
+    // the settlement over a rented escrow, so no tenure wait is needed. Proves
+    // the stake-total / price-per-tenure distinction live.
+    const floor = ensembleCfg.restPrice; // 1000 per tenure
+    // Multi-tenure requires the Multi tenure-extend policy (default is Single,
+    // which aborts EMultiCycleNotAllowed on a >1 tenure rent).
+    const mt = await integrateEscrow({ ...ensembleCfg, multiTenure: true });
+    const tx = new Transaction();
+    const cap = actions.rent({ tenures: tenureCount(2) }).toPtb(tx, {
+      pkg: TESTNET,
+      escrowId: mt.escrowId,
+      payment: mintCoin(tx, floor * 2n),
+      typeArguments: TYPE_ARGS,
+    });
+    tx.transferObjects([cap], me);
+    await send(client, tx, signer);
+
+    const mtState = await source.fetch(mt.escrowId);
+    const occ =
+      mtState.escrow.state?.$kind === 'Renting' && mtState.escrow.state.Renting.$kind === 'Occupied'
+        ? mtState.escrow.state.Renting.Occupied
+        : null;
+    const stake = BigInt(occ!.terms.active.stake.balance.value);
+    const committed = BigInt(occ!.terms.schedule.committed_tenures.count);
+    check(
+      'rent(2) stored the FULL stake (floor × 2), committed = 2',
+      stake === floor * 2n && committed === 2n,
+      `stake=${stake} committed=${committed}`,
+    );
+
+    // splitFee(full stake) is exactly what apply.step's tenure branch computes;
+    // triangulate the primitive against the live tenure_settlement view.
+    const mirror = curve.splitFee(stake);
+    const view = await readerFor(mt.escrowId).tenureSettlement();
+    check(
+      'splitFee(stake) == read.tenureSettlement (multi-tenure, live)',
+      mirror.governorShare === view.governorShareMist && mirror.fee === view.feeMist,
+      `mirror ${mirror.governorShare}/${mirror.fee} vs view ${view.governorShareMist}/${view.feeMist}`,
     );
   }
 

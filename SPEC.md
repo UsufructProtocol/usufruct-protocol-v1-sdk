@@ -626,6 +626,12 @@ The discipline that converts promise to fact:
   credit-consuming transitions: the handover (partial, curve-derived, with a
   refund) and the tenure expiry (full stake, no refund) — the latter triangulated
   live `apply.step.tenureSettlement == tenure_settlement view == EarningsMessagePosted.amount`.
+  **Multi-tenure** (`committed_tenures > 1`) keeps the protocol's split: the
+  settlement is `splitFee(`*full* stake`)` (the stake is the total across all
+  committed tenures) while the *price* — the next auction's `last_acq_price`, and
+  a handover's `new_rent_price` — is `stake_per_tenure` (per-tenure). Verified
+  offline (a 2-tenure expiry settles 2000 → 1800/200, per-tenure price 1000) and
+  live (a 2-tenure rent: `splitFee(stake) == tenure_settlement view`).
 - **CI enforcement.** A Move source change that alters output without a
   corresponding TypeScript change breaks the golden test in CI.
 
