@@ -269,8 +269,18 @@ that transport-agnostic core API actually offers:
   `events({type, sender?})` yields parsed event payloads for history /
   analytics (per-escrow timeline = filter by `escrow_id`). The indexer lags
   the fullnode — reads reflect the index; poll if you need read-after-write.
-- `MemorySource()` — in-memory implementation for the testbed; feeds
-  `EscrowState` from a local store that `Action.step` updates. (Follow-up.)
+- `memorySource(seed?)` — **implemented**. In-memory `Source` for the testbed:
+  a `Map`-backed store of `EscrowState` that `Action.step` advances, no network.
+  Same contract — `fetch` reads the store; `subscribe` is event-driven (initial
+  state, then on every `set`, deduped by an internal revision, abortable);
+  `query` answers what `EscrowState` alone can — `all`, `byAssetType`,
+  `byUsufructuary` (via `activeUsufructuaryAddr`) — and throws on `byGovernor`
+  (the governor address is not in the escrow; same honest limit as
+  `chainSource`). A testbed control surface — `set`/`delete`/`has`/`size` and
+  `apply`/`applyOrigin`/`applyTerminal` — feeds a step's successor back in, with
+  the clock as an explicit `t: Ms` (§3). Proven live: seeding a chain-fetched
+  state and running a view through it gives the same answer as over
+  `chainSource` (the §7 substitution property).
 
 The rest of the SDK does not know which `Source` it has been given. This is
 what permits the testbed (§6.5) and live SDK to share **identical** view and

@@ -29,6 +29,7 @@ import { indexerSource } from '../src/indexer/index.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
 import { grpcSource } from '../src/primitives/grpc-source.js';
+import { memorySource } from '../src/primitives/memory-source.js';
 import { createReader, type Reader } from '../src/read/index.js';
 import * as views from '../src/views/index.js';
 import {
@@ -559,6 +560,28 @@ async function main() {
     await Promise.race([loop, sleep(25_000)]);
     sub.close();
     check('subscribeMany routed the mutation to its escrow tag', postMutationTagged);
+  }
+
+  step('6v. MemorySource — §7 substitution (off-chain, pure compute)');
+  {
+    // Seed the off-chain testbed with the *live* state, then read it back and
+    // run a view through it — the same view code, a different Source, the same
+    // answer. No network: this is the substitution property, not a new fetch.
+    const live = await source.fetch(escrowId); // current live Occupied state
+    const mem = memorySource([live]);
+    const memState = await mem.fetch(escrowId);
+    check('memorySource.fetch round-trips the live state', stable(memState) === stable(live));
+
+    const all: string[] = [];
+    for await (const s of mem.query({ all: true })) all.push(s.objectId);
+    check('memorySource.query({all}) finds the seeded escrow', all.includes(escrowId), `${all.length} in store`);
+
+    const t = ms(await chainNowMs(client));
+    check(
+      'same view, both Sources, same answer (chain vs memory)',
+      views.isOccupied(live, t) === views.isOccupied(memState, t),
+      `occupied=${views.isOccupied(memState, t)}`,
+    );
   }
 
   step('6c. Settlement Inspect functions (live)');

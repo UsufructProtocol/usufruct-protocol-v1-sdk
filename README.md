@@ -179,8 +179,22 @@ state and starts watching; `remove(id)` stops; `close()` (or `opts.signal`) ends
 the iteration. Proven live (2026-06-14): opened on one escrow, `add`ed a second
 in flight and received its initial, then routed a mutation to its tag.
 
+`memorySource(seed?)` is the fourth `Source` — the **off-chain testbed**, no
+network. A `Map`-backed store of `EscrowState` that `Action.step` advances:
+because the rest of the SDK doesn't know which `Source` it holds, the *same*
+views and actions that run live run here — the whole lifecycle
+(integrate → rent → apply → retire → claim) in RAM, instant, gas-free, with the
+clock as an explicit `t: Ms` so time can be jumped. `fetch` reads the store;
+`subscribe` is event-driven (initial, then on every `set`, deduped, abortable);
+`query` answers `all` / `byAssetType` / `byUsufructuary` and throws on
+`byGovernor` (not in the escrow state). The testbed surface — `set` / `delete` /
+`has` / `size` and `apply` / `applyOrigin` / `applyTerminal` — feeds a step's
+successor back in. Proven live (2026-06-14): seeded with a chain-fetched state,
+a view through `memorySource` matched the answer over `chainSource` — the
+substitution property, no gas.
+
 Out of the kernel (follow-up): native event filtering by `escrow_id` (today
-client-side over the payload).
+client-side over the payload); inbox actions (`MessageGroups`) in the store.
 
 ### Action surface — closed (2026-06-12)
 
