@@ -248,7 +248,11 @@ that transport-agnostic core API actually offers:
   version; a dropped stream re-opens with bounded backoff (resumable without
   gaps — replays are absorbed by the dedupe). Latency ≈ a checkpoint vs a poll
   interval, and zero traffic while the escrow is idle. Proven live on testnet:
-  push landed 1.5 s after a mutating tx was sent.
+  push landed 1.5 s after a mutating tx was sent. Because every stream is the
+  *same* firehose, an extra `subscribeMany(ids)` opens it **once** and
+  demultiplexes by id — N escrows watched over one subscription, emitting
+  `{ escrowId, state }` tagged updates (initial state per id, then per-id
+  version-deduped deltas). Proven live: two escrows watched over one stream.
 - `indexerSource(graphqlClient, { packageId })` — **non-core** (§6.3),
   implemented. `SuiGraphQLClient` (`@mysten/sui/graphql`) is the transport. It
   is `Source`-conformant: `fetch`/`subscribe`/`query({byUsufructuary})`

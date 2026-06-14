@@ -57,7 +57,10 @@ const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
 const SUI_T = '0x2::sui::SUI';
 const TYPE_ARGS: [string, string] = [ASSET_T, COIN_T];
 const TYPE_ARGS_SUI: [string, string] = [ASSET_T, SUI_T];
-const TENURE_MS = 60_000n;
+// Tenure must outlast every Occupied-state step before the §7 expiry wait
+// (live parity, indexer retries, three subscribe variants). 90s gives margin;
+// the cap goes stale (EStaleUsufructCap) the moment it elapses.
+const TENURE_MS = 90_000n;
 const HANDOVER_MS = 25_000n;
 
 const client = rateLimited(makeClient());
@@ -509,6 +512,47 @@ async function main() {
       const latency = pushAt - sentAt;
       check('grpc push latency under a poll interval', latency < 8_000, `${latency}ms send→push`);
     }
+  }
+
+  step('6u. grpcSource.subscribeMany — one firehose, two escrows (live)');
+  {
+    // Watch both live escrows over a single subscribeCheckpoints stream; each
+    // emission is tagged by id. Prove demux of the two initials, then route a
+    // mutation on `escrowId` to its tag.
+    const norm = (s: unknown) => String(s).replace(/^0x/, '').toLowerCase();
+    const grpc = makeGrpcClient();
+    const many = grpcSource(grpc, { assetSchema: dummyAssetSchema, packageId: TESTNET.packageId });
+    const ac = new AbortController();
+    const initialTags = new Set<string>();
+    let postMutationTagged = false;
+    let mutationSent = false;
+    const loop = (async () => {
+      for await (const u of many.subscribeMany([escrowId, escrowSuiId], { signal: ac.signal })) {
+        if (!mutationSent) initialTags.add(norm(u.escrowId));
+        else if (norm(u.escrowId) === norm(escrowId)) {
+          postMutationTagged = true;
+          ac.abort();
+          break;
+        }
+      }
+    })();
+    await sleep(1_800); // let both initial states + the stream open land
+    check(
+      'subscribeMany emitted both initial escrows (demux)',
+      initialTags.has(norm(escrowId)) && initialTags.has(norm(escrowSuiId)),
+      `${initialTags.size} tagged`,
+    );
+    mutationSent = true;
+    {
+      const tx = new Transaction();
+      actions
+        .updateUsufructuaryRefundAddress({ usufructCapId: mainCapId, newAddress: me })
+        .toPtb(tx, { pkg: TESTNET, escrowId, usufructCapId: mainCapId, typeArguments: TYPE_ARGS });
+      await send(client, tx, signer);
+    }
+    await Promise.race([loop, sleep(25_000)]);
+    ac.abort();
+    check('subscribeMany routed the mutation to its escrow tag', postMutationTagged);
   }
 
   step('6c. Settlement Inspect functions (live)');

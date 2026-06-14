@@ -168,8 +168,16 @@ checkpoint instead of a poll interval, and zero traffic while the escrow is idle
 Proven live on testnet (2026-06-13): the push landed **1.5 s** after a mutating
 tx was sent — well inside a poll interval.
 
-Out of the kernel (follow-up): `subscribeMany` (one firehose, many escrows);
-native event filtering by `escrow_id` (today client-side over the payload).
+Since every stream is the same firehose, `subscribeMany(ids)` opens it **once**
+and demultiplexes by id — N escrows over one subscription, emitting
+`{ escrowId, state }` tagged updates (each escrow's initial state, then per-id
+version-deduped deltas; one checkpoint touching several of them emits several
+times). Proven live (2026-06-14): two escrows watched over a single stream, the
+mutation routed to its tag.
+
+Out of the kernel (follow-up): adding/removing ids on a live `subscribeMany`
+(the set is fixed at open); native event filtering by `escrow_id` (today
+client-side over the payload).
 
 ### Action surface — closed (2026-06-12)
 
