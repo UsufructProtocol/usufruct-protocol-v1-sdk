@@ -172,11 +172,14 @@ Since every stream is the same firehose, `subscribeMany(ids)` opens it **once**
 and demultiplexes by id — N escrows over one subscription, emitting
 `{ escrowId, state }` tagged updates (each escrow's initial state, then per-id
 version-deduped deltas; one checkpoint touching several of them emits several
-times). Proven live (2026-06-14): two escrows watched over a single stream, the
-mutation routed to its tag.
+times). The watched set is **live-editable**: `subscribeMany` returns a handle
+(an `AsyncIterable` plus `add` / `remove` / `close`) — grow or shrink it in
+flight without reopening the firehose. `add(id)` emits the new escrow's initial
+state and starts watching; `remove(id)` stops; `close()` (or `opts.signal`) ends
+the iteration. Proven live (2026-06-14): opened on one escrow, `add`ed a second
+in flight and received its initial, then routed a mutation to its tag.
 
-Out of the kernel (follow-up): adding/removing ids on a live `subscribeMany`
-(the set is fixed at open); native event filtering by `escrow_id` (today
+Out of the kernel (follow-up): native event filtering by `escrow_id` (today
 client-side over the payload).
 
 ### Action surface — closed (2026-06-12)

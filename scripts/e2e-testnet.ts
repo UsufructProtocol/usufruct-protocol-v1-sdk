@@ -514,34 +514,40 @@ async function main() {
     }
   }
 
-  step('6u. grpcSource.subscribeMany — one firehose, two escrows (live)');
+  step('6u. grpcSource.subscribeMany — dynamic add over one firehose (live)');
   {
-    // Watch both live escrows over a single subscribeCheckpoints stream; each
-    // emission is tagged by id. Prove demux of the two initials, then route a
-    // mutation on `escrowId` to its tag.
+    // Open watching only `escrowId`, then `add(escrowSuiId)` in flight (no
+    // reopen) and receive its initial state; finally mutate `escrowId` and see
+    // the change routed to its tag. One firehose throughout.
     const norm = (s: unknown) => String(s).replace(/^0x/, '').toLowerCase();
     const grpc = makeGrpcClient();
     const many = grpcSource(grpc, { assetSchema: dummyAssetSchema, packageId: TESTNET.packageId });
-    const ac = new AbortController();
-    const initialTags = new Set<string>();
+    const tags: string[] = [];
     let postMutationTagged = false;
     let mutationSent = false;
+    const sub = many.subscribeMany([escrowId]);
     const loop = (async () => {
-      for await (const u of many.subscribeMany([escrowId, escrowSuiId], { signal: ac.signal })) {
-        if (!mutationSent) initialTags.add(norm(u.escrowId));
-        else if (norm(u.escrowId) === norm(escrowId)) {
+      for await (const u of sub) {
+        tags.push(norm(u.escrowId));
+        if (mutationSent && norm(u.escrowId) === norm(escrowId)) {
           postMutationTagged = true;
-          ac.abort();
+          sub.close();
           break;
         }
       }
     })();
-    await sleep(1_800); // let both initial states + the stream open land
+
+    await sleep(2_000); // initial of escrowId + stream open
+    check('subscribeMany emitted the opening escrow', tags.includes(norm(escrowId)), `${tags.length} tagged`);
+
+    await sub.add(escrowSuiId); // grow the set live — its initial should arrive
+    await sleep(1_500);
     check(
-      'subscribeMany emitted both initial escrows (demux)',
-      initialTags.has(norm(escrowId)) && initialTags.has(norm(escrowSuiId)),
-      `${initialTags.size} tagged`,
+      'add(id) delivered the new escrow initial state (live, no reopen)',
+      tags.includes(norm(escrowSuiId)),
+      `${tags.length} tagged`,
     );
+
     mutationSent = true;
     {
       const tx = new Transaction();
@@ -551,7 +557,7 @@ async function main() {
       await send(client, tx, signer);
     }
     await Promise.race([loop, sleep(25_000)]);
-    ac.abort();
+    sub.close();
     check('subscribeMany routed the mutation to its escrow tag', postMutationTagged);
   }
 

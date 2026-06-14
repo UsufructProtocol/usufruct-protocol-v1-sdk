@@ -252,7 +252,12 @@ that transport-agnostic core API actually offers:
   *same* firehose, an extra `subscribeMany(ids)` opens it **once** and
   demultiplexes by id — N escrows watched over one subscription, emitting
   `{ escrowId, state }` tagged updates (initial state per id, then per-id
-  version-deduped deltas). Proven live: two escrows watched over one stream.
+  version-deduped deltas). The set is **live-editable**: `subscribeMany` returns
+  a handle (an `AsyncIterable` plus `add`/`remove`/`close`) so a consumer can
+  grow or shrink the watched set in flight without reopening the firehose —
+  `add(id)` emits the new escrow's initial state and starts watching, `remove(id)`
+  stops, `close()` ends. Proven live: opened on one escrow, `add`ed a second in
+  flight and received its initial, then routed a mutation to its tag.
 - `indexerSource(graphqlClient, { packageId })` — **non-core** (§6.3),
   implemented. `SuiGraphQLClient` (`@mysten/sui/graphql`) is the transport. It
   is `Source`-conformant: `fetch`/`subscribe`/`query({byUsufructuary})`
