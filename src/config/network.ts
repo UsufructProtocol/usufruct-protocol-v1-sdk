@@ -19,3 +19,6 @@ export const TESTNET: PackageIds = {
 /** System singletons (FFI artefacts — injected by the codegen layer). */
 export const CLOCK_ID = '0x6';
 export const RANDOM_ID = '0x8';
+
+/** Testnet GraphQL endpoint (for `indexerSource`). */
+export const GRAPHQL_TESTNET = 'https://graphql.testnet.sui.io/graphql';
