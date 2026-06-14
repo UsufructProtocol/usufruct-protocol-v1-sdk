@@ -19,6 +19,8 @@ export { grpcSource } from '../primitives/grpc-source.js';
 export type { GrpcSource, EscrowUpdate, ManySubscription } from '../primitives/grpc-source.js';
 export { memorySource } from '../primitives/memory-source.js';
 export type { MemorySource } from '../primitives/memory-source.js';
+export { memoryInbox, postSettlement } from '../primitives/memory-inbox.js';
+export type { MemoryInbox } from '../primitives/memory-inbox.js';
 export type {
   OriginAction,
   TransitionAction,

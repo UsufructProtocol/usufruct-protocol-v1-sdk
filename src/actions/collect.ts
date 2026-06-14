@@ -9,9 +9,10 @@
  * type, and `toPtb` emits one collect call per coin, never mixing tickets.
  *
  * Discovery is IO (Source-adjacent); `toPtb` is pure over the discovered
- * groups. Note for SPEC: inbox actions do not operate on an `EscrowState`,
- * so they fit none of the three §4.3 lifecycle variants — observation
- * recorded, classification deferred.
+ * groups. Inbox actions do not operate on an `EscrowState` but on a second
+ * aggregate — `MessageGroups` — so they are a `Transition` over that aggregate
+ * (`Action<R, P, S = EscrowState>` generalized, §4.3). The off-chain mirror of
+ * that aggregate is `memoryInbox`.
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Transaction, TransactionResult } from '@mysten/sui/transactions';
