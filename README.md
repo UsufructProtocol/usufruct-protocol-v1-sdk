@@ -131,8 +131,31 @@ API offers:
   `fetch`, deduped, skipping caps whose escrow was already consumed. Proven
   live: found the rented escrow among 14 live (past 12 stale caps).
 
-Out of the kernel (follow-up): gRPC push `subscribe`, and `IndexerSource`
-(GraphQL) for discovery by governor / asset type / event history (§6.3).
+`indexerSource(graphqlClient, { packageId, assetSchema? })` is the *non-core*
+companion (`@mysten/sui/graphql`): same `Source` contract, but reaches the
+discovery the core API can't. It delegates `fetch` / `subscribe` /
+`query({ byUsufructuary })` to an internal `chainSource` over the same client,
+and adds, via raw GraphQL:
+
+- **`query({ all })` / `query({ byAssetType })`** — `objects(filter:{ type })`
+  paginated over the module-qualified `Escrow` prefix → ids → `fetch`. `all`
+  yields every shared escrow; `byAssetType` keeps those whose decoded asset
+  type matches.
+- **`query({ byGovernor })`** — `events(filter:{ type: AssetIntegrated,
+  sender })` paginated; the governor signs `integrate`, so `sender == governor`.
+  Maps each payload's `escrow_id` → dedupe → `fetch`, skipping consumed escrows.
+- **`events({ type, sender?, pageSize? })`** — paginated `AsyncIterable` of
+  `{ type, sender, json }` event payloads — the history/analytics timeline; a
+  single escrow's timeline is `events(...)` filtered by `json.escrow_id`.
+
+Caveat — **indexer lag**: GraphQL trails the fullnode, so a just-written escrow
+may not appear instantly. `query` / `events` reflect the index; the e2e polls
+with bounded retry until it shows up. Proven live on testnet (2026-06-13):
+`byGovernor` found the freshly-rented escrow, `byAssetType` yielded a typed
+escrow, and `events(AssetIntegrated)` carried our `escrow_id`.
+
+Out of the kernel (follow-up): gRPC push `subscribe`; native event filtering by
+`escrow_id` (today client-side over the payload).
 
 ### Action surface — closed (2026-06-12)
 

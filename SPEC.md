@@ -235,9 +235,17 @@ that transport-agnostic core API actually offers:
   `fetch`es — "the escrows this address rents". A cap outlives its escrow, so
   targets that no longer exist are skipped. Broader discovery (by governor, by
   asset/coin type, history) needs an indexer — see `IndexerSource`, §6.3.
-- `IndexerSource(url)` — **non-core** (§6.3), follow-up. `SuiGraphQLClient`
-  (`@mysten/sui/graphql`) is the transport: filtered queries by type/governor,
-  event history, cursor pagination — what the core API cannot do.
+- `indexerSource(graphqlClient, { packageId })` — **non-core** (§6.3),
+  implemented. `SuiGraphQLClient` (`@mysten/sui/graphql`) is the transport. It
+  is `Source`-conformant: `fetch`/`subscribe`/`query({byUsufructuary})`
+  delegate to a `chainSource` over the GraphQL client's `.core`; the
+  indexer-only predicates use raw GraphQL — `query({byGovernor})` via
+  `AssetIntegrated` events filtered by `sender` (= governor), and
+  `query({byAssetType})` / `query({all})` via `objects(filter:{type})`,
+  paginated and deduped, skipping consumed escrows. An extra
+  `events({type, sender?})` yields parsed event payloads for history /
+  analytics (per-escrow timeline = filter by `escrow_id`). The indexer lags
+  the fullnode — reads reflect the index; poll if you need read-after-write.
 - `MemorySource()` — in-memory implementation for the testbed; feeds
   `EscrowState` from a local store that `Action.step` updates. (Follow-up.)
 

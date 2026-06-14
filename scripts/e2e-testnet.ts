@@ -23,7 +23,9 @@ import {
   stable as pStable,
   type ParityCtx,
 } from '../test/parity-cases.js';
-import { TESTNET } from '../src/config/network.js';
+import { SuiGraphQLClient } from '@mysten/sui/graphql';
+import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
+import { indexerSource } from '../src/indexer/index.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
 import { createReader, type Reader } from '../src/read/index.js';
@@ -350,6 +352,52 @@ async function main() {
       contentBase64: Buffer.from(rawObject.content!).toString('base64'),
       parity: { nowMs: String(now), probeCapId: govCapId, results },
     };
+  }
+
+  step('6i. IndexerSource (GraphQL, live)');
+  {
+    const norm = (s: unknown) => String(s).replace(/^0x/, '').toLowerCase();
+    const gql = new SuiGraphQLClient({ url: GRAPHQL_TESTNET, network: 'testnet' });
+    const idx = indexerSource(gql, {
+      packageId: TESTNET.packageId,
+      assetSchema: dummyAssetSchema,
+    });
+
+    // byGovernor (events filtered by sender = me → only our integrations).
+    // Retry to absorb indexer lag behind the fullnode.
+    let govFound = false;
+    for (let attempt = 0; attempt < 10 && !govFound; attempt++) {
+      const ids = new Set<string>();
+      for await (const s of idx.query({ byGovernor: me })) {
+        ids.add(norm(s.objectId));
+        if (ids.has(norm(escrowId))) break;
+      }
+      govFound = ids.has(norm(escrowId));
+      if (!govFound) await sleep(3_000);
+    }
+    check('indexer query({byGovernor: me}) finds the rented escrow', govFound);
+
+    // events(AssetIntegrated, sender = me) include our escrow id (now indexed).
+    let evFound = false;
+    for await (const e of idx.events({
+      type: `${TESTNET.packageId}::asset_state::AssetIntegrated`,
+      sender: me,
+    })) {
+      if (norm(e.json.escrow_id) === norm(escrowId)) {
+        evFound = true;
+        break;
+      }
+    }
+    check('indexer events(AssetIntegrated) include our escrow', evFound);
+
+    // byAssetType smoke: the first yielded escrow is a DummyAsset (the filter
+    // guarantees it). Bounded — breaks on the first match.
+    let typed = false;
+    for await (const s of idx.query({ byAssetType: ASSET_T })) {
+      typed = norm(s.assetType).includes('dummyasset');
+      break;
+    }
+    check('indexer query({byAssetType}) yields a typed escrow', typed);
   }
 
   step('6r. read tier live — Reader methods, snapshot, drift-free time-travel');
