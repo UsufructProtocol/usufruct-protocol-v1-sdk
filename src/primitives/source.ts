@@ -16,14 +16,17 @@ import { decodeEscrowState } from './state.js';
 
 /**
  * Discovery predicate for `query`. Escrows are *shared* objects, so they
- * cannot be listed by owner; the reachable handle is the caller's owned
- * `UsufructCap`, which carries its escrow id. Hence "the escrows this
- * address rents". (Discovery by governor / asset type / history needs an
- * indexer — out of the kernel; see SPEC §6.3.)
+ * cannot be listed by owner; the reachable handle over the core API is the
+ * caller's owned `UsufructCap` (`byUsufructuary` — "the escrows this address
+ * rents"). The other variants need an indexer (`indexerSource`, GraphQL):
+ * `byGovernor` (who integrated), `byAssetType` (escrows of a Move type),
+ * `all` (every escrow of the package). SPEC §6.3.
  */
-export interface Predicate {
-  readonly byUsufructuary: string;
-}
+export type Predicate =
+  | { readonly byUsufructuary: string }
+  | { readonly byGovernor: string }
+  | { readonly byAssetType: string }
+  | { readonly all: true };
 
 export interface SubscribeOpts {
   /** Poll cadence in ms (default 1000). */
@@ -52,7 +55,7 @@ export interface ChainSourceOpts<A extends AssetSchema> {
 }
 
 /** Whether an error indicates the object does not exist (deleted / wrong id). */
-function isMissingObject(e: unknown): boolean {
+export function isMissingObject(e: unknown): boolean {
   const msg = String((e as { message?: unknown })?.message ?? e).toLowerCase();
   return msg.includes('notexist') || msg.includes('not exist') || msg.includes('not found');
 }
@@ -119,6 +122,12 @@ export function chainSource<
     },
 
     query: async function* (predicate) {
+      if (!('byUsufructuary' in predicate)) {
+        throw new Error(
+          'chainSource.query supports only { byUsufructuary } (escrows are shared); ' +
+            'use indexerSource for byGovernor / byAssetType / all (GraphQL, SPEC §6.3)',
+        );
+      }
       if (opts?.packageId == null) {
         throw new Error('chainSource.query requires opts.packageId (UsufructCap type filter)');
       }
