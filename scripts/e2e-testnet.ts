@@ -30,6 +30,7 @@ import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
 import { grpcSource } from '../src/primitives/grpc-source.js';
 import { memorySource } from '../src/primitives/memory-source.js';
+import { memoryInbox } from '../src/primitives/memory-inbox.js';
 import { createReader, type Reader } from '../src/read/index.js';
 import * as views from '../src/views/index.js';
 import {
@@ -963,6 +964,23 @@ async function main() {
       groups.size === 2,
       [...groups.keys()].join(' | '),
     );
+
+    // memoryInbox parity (pure compute, no extra network): seed the off-chain
+    // inbox with the live groups and assert it reproduces the chain's partition
+    // and per-coin totals — the §5.2 mirror.
+    {
+      const mem = memoryInbox([{ inboxId, groups }]);
+      const live = new Map(
+        [...groups].map(([coin, refs]) => [coin, refs.reduce((a, r) => a + r.amountMist, 0n)]),
+      );
+      const byCoin = mem.collect(inboxId, ms(0n)).byCoin;
+      check('memoryInbox mirrors live partition (coin types)', byCoin.length === groups.size);
+      check(
+        'memoryInbox per-coin totals == live groups',
+        byCoin.every((c) => live.get(c.coinType) === c.amountMist),
+        byCoin.map((c) => `${c.coinType.split('::').pop()}=${c.amountMist}`).join(' | '),
+      );
+    }
 
     const tx = new Transaction();
     const coins = actions.collectMessages({ kind: 'earnings', groups }).toPtb(tx, {

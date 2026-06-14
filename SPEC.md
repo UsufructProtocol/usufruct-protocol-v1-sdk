@@ -281,6 +281,15 @@ that transport-agnostic core API actually offers:
   the clock as an explicit `t: Ms` (§3). Proven live: seeding a chain-fetched
   state and running a view through it gives the same answer as over
   `chainSource` (the §7 substitution property).
+- `memoryInbox(seed?)` — **implemented**. The off-chain mirror of the *second*
+  aggregate: the inbox, keyed by inbox object id, holding coin-polymorphic
+  `MessageGroups`. `post` adds a message, `fetch` partitions by coin type (the
+  `discoverInboxMessages` mirror, §5.2), `collect` drains via the canonical
+  `collectMessages().step` fold. `postSettlement` bridges escrow → inbox (90% of
+  a handover/tenure settlement → earnings, 10% → protocol fee), closing the
+  economy in RAM — `memorySource` stays unaware of inboxes. Proven live: seeded
+  with the live `discoverInboxMessages` groups, it reproduces the chain's
+  partition and per-coin totals exactly (§5.2).
 
 The rest of the SDK does not know which `Source` it has been given. This is
 what permits the testbed (§6.5) and live SDK to share **identical** view and

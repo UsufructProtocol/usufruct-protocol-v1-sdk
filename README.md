@@ -193,8 +193,20 @@ successor back in. Proven live (2026-06-14): seeded with a chain-fetched state,
 a view through `memorySource` matched the answer over `chainSource` — the
 substitution property, no gas.
 
+`memoryInbox(seed?)` is the off-chain mirror of the **second aggregate** — the
+earnings / fee mailbox, keyed by inbox object id, holding coin-polymorphic
+`MessageGroups`. `post` adds a message, `fetch` partitions by coin type (the
+`discoverInboxMessages` mirror), `collect` drains via the same fold the chain
+runs. `postSettlement` bridges escrow → inbox (90% of a handover/tenure
+settlement → earnings, 10% → protocol fee), closing the 90/10 economy in RAM —
+the `collected == posted` conservation the live e2e proves becomes an offline
+assertion. Proven live (2026-06-14): seeded with the live inbox groups,
+`memoryInbox` reproduced the chain's partition and per-coin totals exactly
+(SUI=900, DUMMY_COIN=1636).
+
 Out of the kernel (follow-up): native event filtering by `escrow_id` (today
-client-side over the payload); inbox actions (`MessageGroups`) in the store.
+client-side over the payload); posting to the inbox from `rent`/`integrate`
+(only handover/tenure settlement mints messages).
 
 ### Action surface — closed (2026-06-12)
 
