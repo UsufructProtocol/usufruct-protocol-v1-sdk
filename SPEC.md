@@ -227,7 +227,8 @@ that transport-agnostic core API actually offers:
   gRPC-only, `SuiGrpcClient.subscriptionService`). So `chainSource.subscribe`
   **polls** `getObject` on an interval and yields only when the object
   *version* changes (the first state immediately); it stops cleanly on an
-  `AbortSignal`. Push via gRPC is an opt-in convenience layer, not the kernel.
+  `AbortSignal`. Push via gRPC is an opt-in transport layer (`grpcSource`),
+  not the kernel.
 - **`query`** — escrows are **shared** objects, so they cannot be listed by
   owner. The reachable handle is the caller's *owned* `UsufructCap`, which
   carries its escrow id. `query({ byUsufructuary })` lists those caps
@@ -235,6 +236,19 @@ that transport-agnostic core API actually offers:
   `fetch`es — "the escrows this address rents". A cap outlives its escrow, so
   targets that no longer exist are skipped. Broader discovery (by governor, by
   asset/coin type, history) needs an indexer — see `IndexerSource`, §6.3.
+- `grpcSource(grpcClient, { packageId, assetSchema? })` — **gRPC-only**,
+  implemented. Same `Source` contract, but `subscribe` is **server push**
+  instead of poll. `fetch`/`query` delegate to an internal `chainSource` over
+  the same client; only `subscribe` differs. It opens
+  `subscriptionService.subscribeCheckpoints` — a *firehose* (no per-object or
+  per-event filter; `readMask` rooted at the `Checkpoint` selects only each
+  changed object's id + post-tx version), scans every checkpoint's transaction
+  effects for the escrow, and on a real version change does one `getObject` +
+  decode (effects carry id+version, not contents). Dedupe is by post-tx
+  version; a dropped stream re-opens with bounded backoff (resumable without
+  gaps — replays are absorbed by the dedupe). Latency ≈ a checkpoint vs a poll
+  interval, and zero traffic while the escrow is idle. Proven live on testnet:
+  push landed 1.5 s after a mutating tx was sent.
 - `indexerSource(graphqlClient, { packageId })` — **non-core** (§6.3),
   implemented. `SuiGraphQLClient` (`@mysten/sui/graphql`) is the transport. It
   is `Source`-conformant: `fetch`/`subscribe`/`query({byUsufructuary})`

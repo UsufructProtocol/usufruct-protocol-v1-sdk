@@ -28,6 +28,7 @@ import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
 import { indexerSource } from '../src/indexer/index.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { chainSource } from '../src/primitives/source.js';
+import { grpcSource } from '../src/primitives/grpc-source.js';
 import { createReader, type Reader } from '../src/read/index.js';
 import * as views from '../src/views/index.js';
 import {
@@ -36,6 +37,7 @@ import {
   finish,
   loadSigner,
   makeClient,
+  makeGrpcClient,
   send,
   chainNowMs,
   rateLimited,
@@ -469,6 +471,44 @@ async function main() {
     await Promise.race([loop, sleep(20_000)]);
     ac.abort();
     check('subscribe emitted initial + post-mutation state', emissions >= 2, `${emissions} emissions`);
+  }
+
+  step('6t. grpcSource.subscribe — server push (live)');
+  {
+    // Push instead of poll: subscribeCheckpoints firehose → scan effects for
+    // our escrow → re-fetch on change. Latency should be a checkpoint, not a
+    // poll interval. gRPC client is separate (subscriptionService is gRPC-only).
+    const grpc = makeGrpcClient();
+    const push = grpcSource(grpc, { assetSchema: dummyAssetSchema, packageId: TESTNET.packageId });
+    const ac = new AbortController();
+    let emissions = 0;
+    let pushAt = 0;
+    const loop = (async () => {
+      for await (const _st of push.subscribe(escrowId, { signal: ac.signal })) {
+        emissions += 1;
+        if (emissions >= 2) {
+          pushAt = Date.now();
+          ac.abort();
+          break;
+        }
+      }
+    })();
+    await sleep(2_000); // let the initial state + stream open land
+    const sentAt = Date.now();
+    {
+      const tx = new Transaction();
+      actions
+        .updateUsufructuaryRefundAddress({ usufructCapId: mainCapId, newAddress: me })
+        .toPtb(tx, { pkg: TESTNET, escrowId, usufructCapId: mainCapId, typeArguments: TYPE_ARGS });
+      await send(client, tx, signer);
+    }
+    await Promise.race([loop, sleep(25_000)]);
+    ac.abort();
+    check('grpc push emitted initial + post-mutation state', emissions >= 2, `${emissions} emissions`);
+    if (emissions >= 2) {
+      const latency = pushAt - sentAt;
+      check('grpc push latency under a poll interval', latency < 8_000, `${latency}ms send→push`);
+    }
   }
 
   step('6c. Settlement Inspect functions (live)');

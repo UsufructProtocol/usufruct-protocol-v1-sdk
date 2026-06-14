@@ -19,6 +19,11 @@ export function makeClient(): ClientWithCoreApi {
   return new SuiJsonRpcClient({ network: 'testnet', url: RPC_URL });
 }
 
+/** A gRPC client — required for `grpcSource` push (subscriptionService). */
+export function makeGrpcClient(): SuiGrpcClient {
+  return new SuiGrpcClient({ network: 'testnet', baseUrl: RPC_URL });
+}
+
 /**
  * Signer: `SUI_PRIVATE_KEY` (bech32 `suiprivkey…`) or exported from the
  * local Sui CLI keystore via `sui keytool export` for the given alias.

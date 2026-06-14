@@ -88,12 +88,14 @@ export function grpcSource<
     return { state, version: object.version };
   };
 
-  // FieldMask over the response — we only need each changed object's id and
-  // post-tx version. (Paths are the chain's say; confirmed live before pinning.)
+  // FieldMask — paths are rooted at the Checkpoint message (confirmed live:
+  // a response-rooted "checkpoint.*" prefix yields empty transactions, and
+  // *no* mask yields only the bare checkpoint summary). We request just each
+  // changed object's id and post-tx version.
   const readMask = {
     paths: [
-      'checkpoint.transactions.effects.changed_objects.object_id',
-      'checkpoint.transactions.effects.changed_objects.output_version',
+      'transactions.effects.changed_objects.object_id',
+      'transactions.effects.changed_objects.output_version',
     ],
   };
 

@@ -125,7 +125,7 @@ API offers:
   polls and yields only on object-version change (the core API has no push
   stream; that's gRPC-only). Aborts cleanly. This is "reactive single-writer
   state" (§7) honestly: between emissions, `views` over the last state are
-  exact.
+  exact. For push instead of poll, see `grpcSource` below.
 - **`query({ byUsufructuary })`** — escrows are *shared* (not listable by
   owner); discovery walks the caller's owned `UsufructCap`s → escrow ids →
   `fetch`, deduped, skipping caps whose escrow was already consumed. Proven
@@ -154,8 +154,22 @@ with bounded retry until it shows up. Proven live on testnet (2026-06-13):
 `byGovernor` found the freshly-rented escrow, `byAssetType` yielded a typed
 escrow, and `events(AssetIntegrated)` carried our `escrow_id`.
 
-Out of the kernel (follow-up): gRPC push `subscribe`; native event filtering by
-`escrow_id` (today client-side over the payload).
+`grpcSource(grpcClient, { packageId, assetSchema? })` is the *gRPC-only*
+companion (`@mysten/sui/grpc`): same `Source` contract, but `subscribe` is
+**server push** instead of poll. `fetch` / `query` delegate to an internal
+`chainSource`; only `subscribe` differs. It opens
+`subscriptionService.subscribeCheckpoints` — a firehose of every executed
+checkpoint (no per-object filter; a `Checkpoint`-rooted `readMask` selects just
+each changed object's id + post-tx version) — scans each checkpoint's tx effects
+for the escrow, and on a real version change does one `getObject` + decode
+(effects carry id+version, not contents). Dedupe by post-tx version; a dropped
+stream re-opens with bounded backoff (resumable without gaps). Latency ≈ a
+checkpoint instead of a poll interval, and zero traffic while the escrow is idle.
+Proven live on testnet (2026-06-13): the push landed **1.5 s** after a mutating
+tx was sent — well inside a poll interval.
+
+Out of the kernel (follow-up): `subscribeMany` (one firehose, many escrows);
+native event filtering by `escrow_id` (today client-side over the payload).
 
 ### Action surface — closed (2026-06-12)
 
