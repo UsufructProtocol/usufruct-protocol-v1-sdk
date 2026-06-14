@@ -17,6 +17,8 @@ export * from '../primitives/view.js';
 export * from '../primitives/source.js';
 export { grpcSource } from '../primitives/grpc-source.js';
 export type { GrpcSource, EscrowUpdate, ManySubscription } from '../primitives/grpc-source.js';
+export { memorySource } from '../primitives/memory-source.js';
+export type { MemorySource } from '../primitives/memory-source.js';
 export type {
   OriginAction,
   TransitionAction,
