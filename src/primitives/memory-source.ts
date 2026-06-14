@@ -34,8 +34,13 @@ export interface MemorySource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
 > extends Source<A, C> {
-  /** Insert or replace an escrow's state (notifies subscribers). */
-  set(state: EscrowState<A, C>): void;
+  /**
+   * Insert or replace an escrow's state (notifies subscribers). `governor`
+   * tags it so `query({ byGovernor })` can find it — the governor address is
+   * not part of `EscrowState` (it lives on the owned `GovernanceCap`), so it
+   * must be supplied here.
+   */
+  set(state: EscrowState<A, C>, opts?: { governor?: string }): void;
   /** Drop an escrow from the store. */
   delete(escrowId: Id<'Escrow'>): void;
   has(escrowId: Id<'Escrow'>): boolean;
@@ -57,9 +62,11 @@ export interface MemorySource<
 export function memorySource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
->(seed?: Iterable<EscrowState<A, C>>): MemorySource<A, C> {
-  // normId → { the state, a monotonic revision for subscribe dedupe }.
-  const store = new Map<string, { state: EscrowState<A, C>; rev: number }>();
+>(
+  seed?: Iterable<EscrowState<A, C> | { state: EscrowState<A, C>; governor?: string }>,
+): MemorySource<A, C> {
+  // normId → { the state, a monotonic revision for subscribe dedupe, governor tag }.
+  const store = new Map<string, { state: EscrowState<A, C>; rev: number; governor?: string }>();
   // normId → listeners woken on every change to that escrow.
   const listeners = new Map<string, Set<() => void>>();
   let revSeq = 0;
@@ -71,13 +78,20 @@ export function memorySource<
     if (ls) for (const l of [...ls]) l();
   };
 
-  const set = (state: EscrowState<A, C>): void => {
+  const set = (state: EscrowState<A, C>, opts?: { governor?: string }): void => {
     const n = normId(state.objectId);
-    store.set(n, { state, rev: ++revSeq });
+    store.set(n, {
+      state,
+      rev: ++revSeq,
+      ...(opts?.governor !== undefined ? { governor: opts.governor } : {}),
+    });
     notify(n);
   };
 
-  for (const s of seed ?? []) set(s);
+  for (const s of seed ?? []) {
+    if ('objectId' in s) set(s);
+    else set(s.state, s.governor !== undefined ? { governor: s.governor } : undefined);
+  }
 
   const self: MemorySource<A, C> = {
     set,
@@ -130,8 +144,14 @@ export function memorySource<
     },
 
     async *query(predicate: Predicate) {
-      for (const { state } of store.values()) {
-        if (matches(state, predicate)) yield state;
+      for (const entry of store.values()) {
+        if ('byGovernor' in predicate) {
+          if (entry.governor != null && normId(entry.governor) === normId(predicate.byGovernor)) {
+            yield entry.state;
+          }
+          continue;
+        }
+        if (matches(entry.state, predicate)) yield entry.state;
       }
     },
 
@@ -161,7 +181,11 @@ export function memorySource<
   return self;
 }
 
-/** Whether a stored state satisfies a discovery predicate. */
+/**
+ * Whether a stored state satisfies a state-derivable predicate. `byGovernor`
+ * is handled by `query` against the seed-time tag (the governor isn't in
+ * `EscrowState`), so it never reaches here.
+ */
 function matches(state: EscrowState<AssetSchema, string>, predicate: Predicate): boolean {
   if ('all' in predicate) return true;
   if ('byAssetType' in predicate) return normType(state.assetType) === normType(predicate.byAssetType);
@@ -169,13 +193,7 @@ function matches(state: EscrowState<AssetSchema, string>, predicate: Predicate):
     const addr = activeUsufructuaryAddr(state, 0n as Ms);
     return addr != null && normId(addr) === normId(predicate.byUsufructuary);
   }
-  // byGovernor: the governor address is not in EscrowState (only the
-  // GovernanceCap id is) — same limit chainSource has over the core API.
-  throw new Error(
-    'memorySource.query does not support { byGovernor } — the governor address ' +
-      'is not part of EscrowState (it lives on the owned GovernanceCap). Use ' +
-      'all / byAssetType / byUsufructuary, or tag governors externally.',
-  );
+  return false; // byGovernor handled in query()
 }
 
 /** Compare Move type tags ignoring `0x`/short-form address differences. */

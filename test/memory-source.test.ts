@@ -102,8 +102,19 @@ describe('memorySource query', () => {
     expect(ids).toEqual([C_ID]); // only the occupied escrow has an active tenant
   });
 
-  it('byGovernor throws — not derivable from EscrowState', async () => {
-    await expect(collect(mem.query({ byGovernor: '0x9' }))).rejects.toThrow(/byGovernor/);
+  it('byGovernor filters by the seed-time governor tag', async () => {
+    const GOV1 = '0x' + 'd4'.repeat(32);
+    const GOV2 = '0x' + 'd5'.repeat(32);
+    const tagged = memorySource([
+      { state: idleState(), governor: GOV1 }, // escrowId
+      { state: { ...idleState(), objectId: B_ID }, governor: GOV2 },
+      { state: { ...idleState(), objectId: C_ID }, governor: GOV1 },
+    ]);
+    const ids = (await collect(tagged.query({ byGovernor: GOV1 }))).map((s) => s.objectId);
+    expect(ids.sort()).toEqual([escrowId, C_ID].sort()); // GOV2's B excluded
+    // An untagged store yields nothing for byGovernor (no false matches).
+    const untagged = memorySource([idleState()]);
+    expect(await collect(untagged.query({ byGovernor: GOV1 }))).toEqual([]);
   });
 });
 
