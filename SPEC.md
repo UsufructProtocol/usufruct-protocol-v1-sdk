@@ -270,13 +270,16 @@ that transport-agnostic core API actually offers:
   escrowId, data }`); `escrowTimeline(escrowId)` fans out the ~25 escrow-keyed
   event types (bounded concurrency), filters by `escrow_id` client-side (the
   GraphQL `EventFilter` matches only type/module/sender/checkpoint — *not* a
-  payload field), and merges into one time-ordered history — the star schema's
-  `escrow_id` PK as an API. The payload is the indexer's ABI-correct
-  `contents.json`: the codegen event structs do **not** BCS-decode the deployed
-  v1.4.2 bytes (codegen field order skews from the deployed layout, silently
-  mis-reading `escrow_id` — caught live, not by the round-trip golden). The
-  indexer lags the fullnode — reads reflect the index; poll if you need
-  read-after-write.
+  payload field — and `MoveEventField` was dropped in `@mysten/sui` v2, so there
+  is *no* server-side payload filter at all), and merges into one time-ordered
+  history — the star schema's `escrow_id` PK as an API. The payload is
+  **BCS-decoded from the node's `contents.bcs`** (the MoveValue's pure struct
+  bytes) with the codegen structs — bit-exact, cross-checked live against the
+  indexer's `json`. (The node's `eventBcs` is *not* the struct BCS — it is
+  wrapped in a type-tag envelope whose first 32 bytes are the package id;
+  decoding it mis-reads `escrow_id`. `contents.bcs` is the right field, caught
+  live.) The indexer lags the fullnode — reads reflect the index; poll if you
+  need read-after-write.
 - `memorySource(seed?)` — **implemented**. In-memory `Source` for the testbed:
   a `Map`-backed store of `EscrowState` that `Action.step` advances, no network.
   Same contract — `fetch` reads the store; `subscribe` is event-driven (initial

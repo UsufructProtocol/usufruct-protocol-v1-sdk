@@ -1141,12 +1141,14 @@ async function main() {
       'timeline is ordered by emission time',
       timeline.every((e, i) => i === 0 || (timeline[i - 1]!.timestamp ?? '') <= (e.timestamp ?? '')),
     );
-    // Typed payload (indexer-decoded, ABI-correct):
+    // Typed payload: BCS-decoded from contents.bcs (codegen) — cross-check it
+    // matches the indexer's ABI-decoded json (proves the contents.bcs decode).
     const handover = timeline.find((e) => e.name === 'HandoverCompleted');
     check(
-      'timeline event carries a typed payload',
-      handover?.data?.governor_share !== undefined,
-      String(handover?.data?.governor_share),
+      'timeline event BCS-decoded payload == indexer json (live)',
+      handover?.data?.governor_share !== undefined &&
+        handover.data.governor_share === handover.json.governor_share,
+      `${handover?.data?.governor_share} == ${handover?.json?.governor_share}`,
     );
   }
 
@@ -1230,6 +1232,88 @@ async function main() {
       mirror.governorShare === view.governorShareMist && mirror.fee === view.feeMist,
       `mirror ${mirror.governorShare}/${mirror.fee} vs view ${view.governorShareMist}/${view.feeMist}`,
     );
+  }
+
+  step('8e. Descent parity — non-linear floor + multi-tenure last_acq (live)');
+  {
+    // A fresh escrow with a smoothstep auction shape + a descent window, rented
+    // for 2 tenures with a 2x overpayment (so stake/count > floor → a real
+    // descent spread). Short tenure keeps the expiry wait brief.
+    const floor = ensembleCfg.restPrice; // 1000
+    const descentCfg = {
+      ...ensembleCfg,
+      tenureMs: ms(12_000),
+      multiTenure: true,
+      handover: { kind: 'off' },
+      descent: { kind: 'fixed', ceilingMs: ms(120_000) },
+      auctionShape: { kind: 'smoothstep' },
+    } as typeof ensembleCfg;
+    const d = await integrateEscrow(descentCfg);
+    const pay = floor * 2n * 2n; // floor × count × 2 → stake/count = 2×floor
+    {
+      const tx = new Transaction();
+      const cap = actions.rent({ tenures: tenureCount(2) }).toPtb(tx, {
+        pkg: TESTNET,
+        escrowId: d.escrowId,
+        payment: mintCoin(tx, pay),
+        typeArguments: TYPE_ARGS,
+      });
+      tx.transferObjects([cap], me);
+      await send(client, tx, signer);
+    }
+
+    const occ = await source.fetch(d.escrowId);
+    const expiry = views.tenureExpiryMs(occ, ms(await chainNowMs(client)))!;
+    const chainNow = await waitForChainTime(client, expiry, 1_500n);
+    const applyAct = actions.applyPendingTransitionStates();
+    const { state: predicted } = applyAct.step(occ, ms(chainNow));
+    {
+      const tx = new Transaction();
+      applyAct.toPtb(tx, { pkg: TESTNET, escrowId: d.escrowId, typeArguments: TYPE_ARGS });
+      await send(client, tx, signer);
+    }
+    const desc = await source.fetch(d.escrowId);
+    const dd =
+      desc.escrow.state?.$kind === 'Waiting' && desc.escrow.state.Waiting.$kind === 'Descent'
+        ? desc.escrow.state.Waiting.Descent
+        : null;
+    const pd =
+      predicted.escrow.state?.$kind === 'Waiting' && predicted.escrow.state.Waiting.$kind === 'Descent'
+        ? predicted.escrow.state.Waiting.Descent
+        : null;
+
+    // #5: multi-tenure last_acq is per-tenure (stake / count), live == apply.step.
+    const liveLastAcq = BigInt(dd!.auction.last_acq_price.mist);
+    check(
+      'multi-tenure last_acq == stake/count (per-tenure), live == apply.step',
+      liveLastAcq === pay / 2n && BigInt(pd!.auction.last_acq_price.mist) === liveLastAcq,
+      `${liveLastAcq} (stake ${pay} / 2)`,
+    );
+
+    // #4: descending floor (smoothstep) bit-exact at several t — time-travel
+    // reads (the views take now_ms), so no waiting into the descent window.
+    const lastAcq = liveLastAcq;
+    const phaseStart = BigInt(dd!.auction.phase_start.ms);
+    const floorMist = BigInt(dd!.cycle.floor.mist);
+    const descentMs = BigInt(dd!.cycle.descent.ms);
+    const shape = views.auctionShape(desc, ms(chainNow));
+    let allMatch = true;
+    const samples: string[] = [];
+    for (const dt of [10_000n, 40_000n, 80_000n]) {
+      const t = phaseStart + dt;
+      const sim = curve.descendingFloor({
+        lastAcqMist: lastAcq,
+        phaseStartMs: phaseStart,
+        floorMist,
+        descentMs,
+        auctionShape: shape,
+        nowMs: t,
+      });
+      const live = await readerFor(d.escrowId).floorPriceMist(ms(t));
+      if (live !== sim) allMatch = false;
+      samples.push(`+${dt / 1000n}s:${live}==${sim}`);
+    }
+    check('descending floor (smoothstep) bit-exact, read == sim.curve', allMatch, samples.join(' '));
   }
 
   step('9. persist fixtures for offline golden replay');

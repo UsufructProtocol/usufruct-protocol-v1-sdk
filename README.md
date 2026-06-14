@@ -150,10 +150,11 @@ and adds, via raw GraphQL:
 - **`escrowTimeline(escrowId, opts?)`** — the star schema's `escrow_id` PK as an
   API: fans out the ~25 escrow-keyed event types (bounded concurrency), filters
   by `escrow_id`, and merges into one time-ordered history. GraphQL can't filter
-  a payload field, so the filtering is client-side. The payload is the indexer's
-  ABI-correct `contents.json` (the codegen event structs don't BCS-decode the
-  deployed bytes — field-order skew, caught live). Proven live (2026-06-14): a
-  29-event timeline for one escrow, ordered, every event keyed to it.
+  a payload field, so the filtering is client-side. Payloads are **BCS-decoded
+  from `contents.bcs`** with the codegen structs (bit-exact; cross-checked live
+  against the indexer json — note `eventBcs` is a type-tag-wrapped envelope, so
+  `contents.bcs` is the field to decode). Proven live (2026-06-14): a 29-event
+  timeline for one escrow, ordered, every event keyed to it.
 
 Caveat — **indexer lag**: GraphQL trails the fullnode, so a just-written escrow
 may not appear instantly. `query` / `events` reflect the index; the e2e polls
@@ -237,9 +238,9 @@ collect (`7d`, draining only this run's own `FeeMessage`s by id —
 per-governor earnings, every 10% into one fee pool — is `memoryInbox` +
 `postSettlement`.
 
-Out of the kernel (follow-up): *server-side* `escrow_id` event filtering —
-GraphQL can't (the fan-out + client-side filter ships now); the legacy JSON-RPC
-`MoveEventField` could, if v2 keeps it.
+Out of the kernel: *server-side* `escrow_id` event filtering is **not possible**
+in `@mysten/sui` v2 (no `MoveEventField` in GraphQL or JSON-RPC) — the client-side
+fan-out is the answer, not a TODO. Remaining follow-up: CI.
 
 ### Action surface — closed (2026-06-12)
 
