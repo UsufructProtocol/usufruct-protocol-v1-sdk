@@ -1105,6 +1105,51 @@ async function main() {
     }
   }
 
+  step('7e. escrowTimeline — typed per-escrow event history (live)');
+  {
+    const norm = (s: unknown) => String(s).replace(/^0x/, '').toLowerCase();
+    const gql = new SuiGraphQLClient({ url: GRAPHQL_TESTNET, network: 'testnet' });
+    const idx = indexerSource(gql, { packageId: TESTNET.packageId, assetSchema: dummyAssetSchema });
+
+    // Our escrow has lived a full life: integrate → rent → bid/supersede →
+    // handover → tenure expiry. The timeline fans the escrow-keyed events and
+    // filters by escrow_id (GraphQL can't). Retry to absorb indexer lag.
+    // Our escrow's events were all emitted by txs we signed, so scope the
+    // fan-out to `me` (correct here, and avoids the public indexer choking on
+    // unrelated pruned history).
+    let timeline: Awaited<ReturnType<typeof idx.escrowTimeline>> = [];
+    for (let attempt = 0; attempt < 10; attempt++) {
+      timeline = await idx.escrowTimeline(escrowId, { sender: me });
+      const names = new Set(timeline.map((e) => e.name));
+      if (names.has('HandoverCompleted') && names.has('TenureExpired')) break;
+      await sleep(3_000);
+    }
+    const names = timeline.map((e) => e.name);
+    check(
+      'escrowTimeline includes Handover + Tenure + Rent (typed)',
+      names.includes('HandoverCompleted') &&
+        names.includes('TenureExpired') &&
+        names.includes('RentStarted'),
+      names.join(','),
+    );
+    check(
+      'every timeline event is keyed to our escrow_id',
+      timeline.length > 0 && timeline.every((e) => norm(e.escrowId) === norm(escrowId)),
+      `${timeline.length} events`,
+    );
+    check(
+      'timeline is ordered by emission time',
+      timeline.every((e, i) => i === 0 || (timeline[i - 1]!.timestamp ?? '') <= (e.timestamp ?? '')),
+    );
+    // Typed payload (indexer-decoded, ABI-correct):
+    const handover = timeline.find((e) => e.name === 'HandoverCompleted');
+    check(
+      'timeline event carries a typed payload',
+      handover?.data?.governor_share !== undefined,
+      String(handover?.data?.governor_share),
+    );
+  }
+
   step('8. retire + claimAsset (Terminal action)');
   {
     const second = await integrateEscrow();

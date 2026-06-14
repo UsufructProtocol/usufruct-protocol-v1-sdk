@@ -145,8 +145,15 @@ and adds, via raw GraphQL:
   sender })` paginated; the governor signs `integrate`, so `sender == governor`.
   Maps each payload's `escrow_id` → dedupe → `fetch`, skipping consumed escrows.
 - **`events({ type, sender?, pageSize? })`** — paginated `AsyncIterable` of
-  `{ type, sender, json }` event payloads — the history/analytics timeline; a
-  single escrow's timeline is `events(...)` filtered by `json.escrow_id`.
+  **typed** events (`TypedEvent { type, module, name, sender, timestamp,
+  escrowId, data }`).
+- **`escrowTimeline(escrowId, opts?)`** — the star schema's `escrow_id` PK as an
+  API: fans out the ~25 escrow-keyed event types (bounded concurrency), filters
+  by `escrow_id`, and merges into one time-ordered history. GraphQL can't filter
+  a payload field, so the filtering is client-side. The payload is the indexer's
+  ABI-correct `contents.json` (the codegen event structs don't BCS-decode the
+  deployed bytes — field-order skew, caught live). Proven live (2026-06-14): a
+  29-event timeline for one escrow, ordered, every event keyed to it.
 
 Caveat — **indexer lag**: GraphQL trails the fullnode, so a just-written escrow
 may not appear instantly. `query` / `events` reflect the index; the e2e polls
@@ -230,8 +237,9 @@ collect (`7d`, draining only this run's own `FeeMessage`s by id —
 per-governor earnings, every 10% into one fee pool — is `memoryInbox` +
 `postSettlement`.
 
-Out of the kernel (follow-up): native event filtering by `escrow_id` (today
-client-side over the payload).
+Out of the kernel (follow-up): *server-side* `escrow_id` event filtering —
+GraphQL can't (the fan-out + client-side filter ships now); the legacy JSON-RPC
+`MoveEventField` could, if v2 keeps it.
 
 ### Action surface — closed (2026-06-12)
 

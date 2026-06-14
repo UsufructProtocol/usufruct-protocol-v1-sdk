@@ -265,10 +265,18 @@ that transport-agnostic core API actually offers:
   indexer-only predicates use raw GraphQL — `query({byGovernor})` via
   `AssetIntegrated` events filtered by `sender` (= governor), and
   `query({byAssetType})` / `query({all})` via `objects(filter:{type})`,
-  paginated and deduped, skipping consumed escrows. An extra
-  `events({type, sender?})` yields parsed event payloads for history /
-  analytics (per-escrow timeline = filter by `escrow_id`). The indexer lags
-  the fullnode — reads reflect the index; poll if you need read-after-write.
+  paginated and deduped, skipping consumed escrows. `events({type, sender?})`
+  yields **typed** events (`TypedEvent { type, module, name, sender, timestamp,
+  escrowId, data }`); `escrowTimeline(escrowId)` fans out the ~25 escrow-keyed
+  event types (bounded concurrency), filters by `escrow_id` client-side (the
+  GraphQL `EventFilter` matches only type/module/sender/checkpoint — *not* a
+  payload field), and merges into one time-ordered history — the star schema's
+  `escrow_id` PK as an API. The payload is the indexer's ABI-correct
+  `contents.json`: the codegen event structs do **not** BCS-decode the deployed
+  v1.4.2 bytes (codegen field order skews from the deployed layout, silently
+  mis-reading `escrow_id` — caught live, not by the round-trip golden). The
+  indexer lags the fullnode — reads reflect the index; poll if you need
+  read-after-write.
 - `memorySource(seed?)` — **implemented**. In-memory `Source` for the testbed:
   a `Map`-backed store of `EscrowState` that `Action.step` advances, no network.
   Same contract — `fetch` reads the store; `subscribe` is event-driven (initial
