@@ -49,6 +49,21 @@ export interface EscrowUpdate<
   readonly state: EscrowState<A, C>;
 }
 
+/**
+ * A live multiplexed subscription: iterate it for `{ escrowId, state }` updates,
+ * and grow/shrink the watched set in flight without reopening the firehose.
+ * `add` emits the new escrow's initial state; `remove` stops watching (no
+ * emission); `close` ends the iteration cleanly. `opts.signal` also closes it.
+ */
+export interface ManySubscription<
+  A extends AssetSchema = typeof uidAssetSchema,
+  C extends string = string,
+> extends AsyncIterable<EscrowUpdate<A, C>> {
+  add(escrowId: Id<'Escrow'>): Promise<void>;
+  remove(escrowId: Id<'Escrow'>): void;
+  close(): void;
+}
+
 /** `grpcSource` is a `Source` plus the gRPC-only multiplexed `subscribeMany`. */
 export type GrpcSource<
   A extends AssetSchema = typeof uidAssetSchema,
@@ -57,8 +72,53 @@ export type GrpcSource<
   readonly subscribeMany: (
     escrowIds: readonly Id<'Escrow'>[],
     opts?: SubscribeOpts,
-  ) => AsyncIterable<EscrowUpdate<A, C>>;
+  ) => ManySubscription<A, C>;
 };
+
+/**
+ * Single-consumer push channel: an `AsyncIterable<T>` fed by `push`, ended by
+ * `close`. Backpressure is the consumer's pull — values buffer between pulls.
+ */
+function channel<T>(): { push: (v: T) => void; close: () => void } & AsyncIterable<T> {
+  const buffer: T[] = [];
+  let waiting: ((r: IteratorResult<T>) => void) | null = null;
+  let done = false;
+  return {
+    push(v) {
+      if (done) return;
+      if (waiting) {
+        const w = waiting;
+        waiting = null;
+        w({ value: v, done: false });
+      } else {
+        buffer.push(v);
+      }
+    },
+    close() {
+      if (done) return;
+      done = true;
+      if (waiting) {
+        const w = waiting;
+        waiting = null;
+        w({ value: undefined as never, done: true });
+      }
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        if (buffer.length > 0) {
+          yield buffer.shift()!;
+          continue;
+        }
+        if (done) return;
+        const r = await new Promise<IteratorResult<T>>((resolve) => {
+          waiting = resolve;
+        });
+        if (r.done) return;
+        yield r.value;
+      }
+    },
+  };
+}
 
 /**
  * Every changed object in a checkpoint as `{ objectId, version }` (post-tx
@@ -175,37 +235,66 @@ export function grpcSource<
       }
     },
 
-    subscribeMany: async function* (escrowIds, subOpts) {
+    subscribeMany(escrowIds, subOpts): ManySubscription<A, C> {
       const signal = subOpts?.signal;
+      const watched = new Map<string, Id<'Escrow'>>(); // normId → branded id
       const seen = new Map<string, string>(); // normId → last post-tx version
-      const idByNorm = new Map<string, Id<'Escrow'>>();
-      for (const escrowId of escrowIds) idByNorm.set(normId(escrowId), escrowId);
+      const out = channel<EscrowUpdate<A, C>>();
+      const ac = new AbortController(); // stops the firehose on close
 
-      // Initial state for each escrow (in parallel), then push deltas.
-      const initial = await Promise.all(
-        escrowIds.map(async (escrowId) => ({ escrowId, ...(await fetchVersioned(escrowId)) })),
-      );
-      for (const { escrowId, state, version } of initial) {
-        seen.set(normId(escrowId), version);
-        yield { escrowId, state };
-      }
+      const add = async (escrowId: Id<'Escrow'>): Promise<void> => {
+        const n = normId(escrowId);
+        if (watched.has(n)) return; // already watching
+        watched.set(n, escrowId);
+        const { state, version } = await fetchVersioned(escrowId);
+        if (!watched.has(n)) return; // removed during the fetch
+        seen.set(n, version);
+        out.push({ escrowId, state });
+      };
 
-      for await (const checkpoint of firehose(signal)) {
-        if (signal?.aborted) break;
-        // Collect the distinct escrows this checkpoint changed to a new version.
-        const hits = new Set<string>();
-        for (const { objectId, version } of scanChanged(checkpoint)) {
-          const n = normId(objectId);
-          if (seen.has(n) && version !== seen.get(n)) hits.add(n);
+      const remove = (escrowId: Id<'Escrow'>): void => {
+        const n = normId(escrowId);
+        watched.delete(n);
+        seen.delete(n);
+      };
+
+      const close = (): void => {
+        signal?.removeEventListener('abort', close);
+        ac.abort();
+        out.close();
+      };
+      signal?.addEventListener('abort', close, { once: true });
+
+      // Background: seed the initial ids (initials emit first), then demux the
+      // shared firehose. The firehose gates on `seen`, so an id whose initial
+      // fetch is still in flight is not double-emitted — its own fetch wins.
+      void (async () => {
+        await Promise.all(escrowIds.map(add));
+        for await (const checkpoint of firehose(ac.signal)) {
+          if (ac.signal.aborted) break;
+          const hits = new Set<string>();
+          for (const { objectId, version } of scanChanged(checkpoint)) {
+            const n = normId(objectId);
+            if (seen.has(n) && version !== seen.get(n)) hits.add(n);
+          }
+          for (const n of hits) {
+            const escrowId = watched.get(n);
+            if (!escrowId) continue; // removed since the scan
+            const next = await fetchVersioned(escrowId);
+            if (next.version === seen.get(n)) continue;
+            seen.set(n, next.version);
+            out.push({ escrowId, state: next.state });
+          }
         }
-        for (const n of hits) {
-          const escrowId = idByNorm.get(n)!;
-          const next = await fetchVersioned(escrowId);
-          if (next.version === seen.get(n)) continue;
-          seen.set(n, next.version);
-          yield { escrowId, state: next.state };
-        }
-      }
+        out.close();
+      })();
+
+      return {
+        add,
+        remove,
+        close,
+        [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](),
+      };
     },
   };
 }
