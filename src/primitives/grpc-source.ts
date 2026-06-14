@@ -17,6 +17,10 @@
  * decodable contents ("Type information is not provided by the effects
  * structure"), so decoding stays in one place — a single `getObject` per real
  * change, never per checkpoint.
+ *
+ * Because every stream is the *same* firehose, `subscribeMany` opens it once
+ * and demultiplexes by id — N escrows watched over one subscription instead of
+ * N identical streams.
  */
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
@@ -31,49 +35,67 @@ import {
   type SubscribeOpts,
 } from './source.js';
 
-/** `0x`-insensitive id equality (effects ids vs branded escrow id). */
-function sameId(a: string, b: string): boolean {
-  const norm = (s: string) => s.replace(/^0x/, '').toLowerCase().replace(/^0+/, '');
-  return norm(a) === norm(b);
+/** Canonical form of an object id (effects ids vs branded escrow ids). */
+function normId(s: string): string {
+  return s.replace(/^0x/, '').toLowerCase().replace(/^0+/, '');
 }
 
+/** A tagged push emission — which escrow changed, and its new state. */
+export interface EscrowUpdate<
+  A extends AssetSchema = typeof uidAssetSchema,
+  C extends string = string,
+> {
+  readonly escrowId: Id<'Escrow'>;
+  readonly state: EscrowState<A, C>;
+}
+
+/** `grpcSource` is a `Source` plus the gRPC-only multiplexed `subscribeMany`. */
+export type GrpcSource<
+  A extends AssetSchema = typeof uidAssetSchema,
+  C extends string = string,
+> = Source<A, C> & {
+  readonly subscribeMany: (
+    escrowIds: readonly Id<'Escrow'>[],
+    opts?: SubscribeOpts,
+  ) => AsyncIterable<EscrowUpdate<A, C>>;
+};
+
 /**
- * The post-tx version of `escrowId` if this checkpoint changed it, else
- * undefined. Defensive: the stream's `readMask` selects a minimal shape, but
- * we optional-chain through it so a wider/narrower mask still works.
+ * Every changed object in a checkpoint as `{ objectId, version }` (post-tx
+ * version). Defensive: the stream's `readMask` selects a minimal shape, but we
+ * optional-chain through it so a wider/narrower mask still works.
  */
-function changedVersion(checkpoint: unknown, escrowId: string): string | undefined {
+function* scanChanged(checkpoint: unknown): Generator<{ objectId: string; version: string }> {
   const txs = (checkpoint as { transactions?: unknown[] })?.transactions ?? [];
   for (const tx of txs) {
     const changed =
       (tx as { effects?: { changedObjects?: unknown[] } })?.effects?.changedObjects ?? [];
     for (const obj of changed) {
       const o = obj as { objectId?: string; outputVersion?: bigint | string };
-      if (o.objectId != null && sameId(o.objectId, escrowId)) {
-        return o.outputVersion != null ? String(o.outputVersion) : '';
+      if (o.objectId != null) {
+        yield { objectId: o.objectId, version: o.outputVersion != null ? String(o.outputVersion) : '' };
       }
     }
   }
-  return undefined;
 }
 
 /** Reconnect backoff schedule (ms): the stream is resumable without gaps. */
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 5000] as const;
 
 /**
- * Live-chain `Source` over gRPC whose `subscribe` is server-push. `fetch`,
- * `query`, and decode are delegated to an internal `chainSource` over the same
- * client — only `subscribe` differs.
+ * Live-chain `Source` over gRPC whose `subscribe` is server-push, plus
+ * `subscribeMany` for watching many escrows over one stream. `fetch`, `query`,
+ * and decode are delegated to an internal `chainSource` over the same client.
  */
 export function grpcSource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
->(client: SuiGrpcClient, opts?: ChainSourceOpts<A>): Source<A, C> {
+>(client: SuiGrpcClient, opts?: ChainSourceOpts<A>): GrpcSource<A, C> {
   const core = client as unknown as ClientWithCoreApi;
   const base = chainSource<A, C>(core, opts);
 
-  // Like `chainSource.fetch`, but keeps the object version — `subscribe`
-  // dedupes on it (the decoded `EscrowState` carries no version).
+  // Like `chainSource.fetch`, but keeps the object version — subscriptions
+  // dedupe on it (the decoded `EscrowState` carries no version).
   const fetchVersioned = async (
     escrowId: Id<'Escrow'>,
   ): Promise<{ state: EscrowState<A, C>; version: string }> => {
@@ -99,44 +121,89 @@ export function grpcSource<
     ],
   };
 
+  // The shared firehose: yields each checkpoint, re-opening with bounded
+  // backoff if the stream drops (resumable without gaps — the per-id version
+  // dedupe downstream absorbs any checkpoint replayed on reconnect). Stops
+  // cleanly on abort.
+  async function* firehose(signal?: AbortSignal): AsyncGenerator<unknown> {
+    let attempt = 0;
+    while (!signal?.aborted) {
+      const call = client.subscriptionService.subscribeCheckpoints(
+        { readMask },
+        signal ? { abort: signal } : {},
+      );
+      try {
+        for await (const res of call.responses) {
+          if (signal?.aborted) return;
+          yield res.checkpoint;
+        }
+        attempt = 0; // a clean completion: re-open from the latest checkpoint
+      } catch {
+        if (signal?.aborted) return; // abort surfaces as a stream error — expected
+        const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+        attempt += 1;
+        await sleep(wait, signal);
+      }
+    }
+  }
+
   return {
     fetch: base.fetch,
     query: base.query,
 
     subscribe: async function* (escrowId: Id<'Escrow'>, subOpts?: SubscribeOpts) {
       const signal = subOpts?.signal;
+      const target = normId(escrowId);
 
       // Initial state once (parity with the poll source), then push deltas.
       const first = await fetchVersioned(escrowId);
       let lastVersion = first.version;
       yield first.state;
 
-      let attempt = 0;
-      while (!signal?.aborted) {
-        const call = client.subscriptionService.subscribeCheckpoints(
-          { readMask },
-          signal ? { abort: signal } : {},
-        );
-        try {
-          for await (const res of call.responses) {
-            if (signal?.aborted) break;
-            const version = changedVersion(res.checkpoint, escrowId);
-            if (version === undefined) continue; // checkpoint didn't touch us
-            if (version === lastVersion) continue; // dedupe by post-tx version
-            // Effects carry id+version, not contents — re-fetch to decode.
-            const next = await fetchVersioned(escrowId);
-            if (next.version === lastVersion) continue;
-            lastVersion = next.version;
-            yield next.state;
-          }
-          attempt = 0; // a clean completion: re-open from the latest checkpoint
-        } catch {
-          if (signal?.aborted) break; // abort surfaces as a stream error — expected
-          // The stream is resumable without gaps; back off and re-open. The
-          // version dedupe above absorbs any checkpoint replayed on reconnect.
-          const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
-          attempt += 1;
-          await sleep(wait, signal);
+      for await (const checkpoint of firehose(signal)) {
+        if (signal?.aborted) break;
+        let touched = false;
+        for (const { objectId, version } of scanChanged(checkpoint)) {
+          if (normId(objectId) === target && version !== lastVersion) touched = true;
+        }
+        if (!touched) continue; // checkpoint didn't change us (new version)
+        // Effects carry id+version, not contents — re-fetch to decode.
+        const next = await fetchVersioned(escrowId);
+        if (next.version === lastVersion) continue;
+        lastVersion = next.version;
+        yield next.state;
+      }
+    },
+
+    subscribeMany: async function* (escrowIds, subOpts) {
+      const signal = subOpts?.signal;
+      const seen = new Map<string, string>(); // normId → last post-tx version
+      const idByNorm = new Map<string, Id<'Escrow'>>();
+      for (const escrowId of escrowIds) idByNorm.set(normId(escrowId), escrowId);
+
+      // Initial state for each escrow (in parallel), then push deltas.
+      const initial = await Promise.all(
+        escrowIds.map(async (escrowId) => ({ escrowId, ...(await fetchVersioned(escrowId)) })),
+      );
+      for (const { escrowId, state, version } of initial) {
+        seen.set(normId(escrowId), version);
+        yield { escrowId, state };
+      }
+
+      for await (const checkpoint of firehose(signal)) {
+        if (signal?.aborted) break;
+        // Collect the distinct escrows this checkpoint changed to a new version.
+        const hits = new Set<string>();
+        for (const { objectId, version } of scanChanged(checkpoint)) {
+          const n = normId(objectId);
+          if (seen.has(n) && version !== seen.get(n)) hits.add(n);
+        }
+        for (const n of hits) {
+          const escrowId = idByNorm.get(n)!;
+          const next = await fetchVersioned(escrowId);
+          if (next.version === seen.get(n)) continue;
+          seen.set(n, next.version);
+          yield { escrowId, state: next.state };
         }
       }
     },
