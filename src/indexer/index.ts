@@ -8,6 +8,7 @@ export type {
 } from './source.js';
 export {
   ESCROW_KEYED,
+  decodeEvent,
   escrowIdOf,
   eventKey,
   normEscrowId,

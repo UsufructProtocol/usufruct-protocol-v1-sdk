@@ -1,18 +1,27 @@
 /**
+/**
  * Event typing for the indexer (SPEC §6.3). The protocol emits ~30 events;
  * ~25 carry `escrow_id` — the de-facto primary key of the star schema. The
  * GraphQL `EventFilter` cannot filter by a payload field, so per-escrow history
  * is assembled client-side; this module supplies the typing for that.
  *
- * The payload is the indexer's **`contents.json`**, decoded against the
- * deployed package's ABI. (We do *not* BCS-decode `eventBcs` with the codegen
- * structs: the codegen is generated from a local Move source whose event field
- * order skews from the deployed v1.4.2 layout, so a codegen `.parse` of the
- * on-chain bytes silently mis-reads `escrow_id` — confirmed live. The indexer's
- * json is the ABI-correct source.)
+ * The payload is BCS-decoded from the GraphQL `contents.bcs` (the MoveValue's
+ * *pure* struct bytes) with the codegen structs — bit-exact, the same decode
+ * the transaction-level path uses. (Note: the node's `eventBcs` is *not* the
+ * struct BCS — it is wrapped in a type-tag envelope whose first 32 bytes are the
+ * package id, so decoding it mis-reads `escrow_id`; `contents.bcs` is the right
+ * field. Confirmed live.) The indexer's `json` is kept as a fallback for events
+ * we don't model or whose bytes don't fit the codegen layout.
  */
+import { fromBase64 } from '@mysten/sui/utils';
+import * as assetState from '../codegen/usufruct/asset_state.js';
+import * as earningsMessage from '../codegen/usufruct/earnings_message.js';
+import * as feeMessage from '../codegen/usufruct/fee_message.js';
+import * as governanceCap from '../codegen/usufruct/governance_cap.js';
+import * as usufructCap from '../codegen/usufruct/usufruct_cap.js';
+import * as policyEnsemble from '../codegen/usufruct/policy_ensemble.js';
 
-/** A typed event: the indexer-parsed payload plus metadata. */
+/** A typed event: the BCS-decoded payload plus metadata. */
 export interface TypedEvent<T = Record<string, unknown>> {
   /** Fully-qualified `pkg::module::Name`. */
   readonly type: string;
@@ -23,10 +32,63 @@ export interface TypedEvent<T = Record<string, unknown>> {
   readonly timestamp: string | null;
   /** The escrow this event belongs to, if its payload carries one. */
   readonly escrowId: string | null;
-  /** The decoded payload (indexer json). */
+  /** Decoded payload — codegen-typed via `contents.bcs`, else the indexer json. */
   readonly data: T;
-  /** The raw indexer payload (same content as `data`; kept for compatibility). */
+  /** The raw indexer json payload (always present; fallback for unknown types). */
   readonly json: Record<string, unknown>;
+}
+
+interface EventDecoder {
+  parse(bytes: Uint8Array): unknown;
+}
+
+/** `module::Name` → its codegen BCS struct. Every emitted protocol event. */
+const REGISTRY: Readonly<Record<string, EventDecoder>> = {
+  'asset_state::RentStarted': assetState.RentStarted,
+  'asset_state::AuctionExpired': assetState.AuctionExpired,
+  'asset_state::CycleParamsResolved': assetState.CycleParamsResolved,
+  'asset_state::AssetRetired': assetState.AssetRetired,
+  'asset_state::RetireCommitmentExtended': assetState.RetireCommitmentExtended,
+  'asset_state::EnsembleCommitmentExtended': assetState.EnsembleCommitmentExtended,
+  'asset_state::AssetIntegrated': assetState.AssetIntegrated,
+  'asset_state::AssetClaimed': assetState.AssetClaimed,
+  'asset_state::BidPlaced': assetState.BidPlaced,
+  'asset_state::BidSuperseded': assetState.BidSuperseded,
+  'asset_state::HandoverCompleted': assetState.HandoverCompleted,
+  'asset_state::TenureExpired': assetState.TenureExpired,
+  'asset_state::RetireFlagSet': assetState.RetireFlagSet,
+  'asset_state::AssetBorrowed': assetState.AssetBorrowed,
+  'asset_state::AssetReturned': assetState.AssetReturned,
+  'asset_state::ActiveUsufructuaryRefundAddressUpdated':
+    assetState.ActiveUsufructuaryRefundAddressUpdated,
+  'asset_state::PendingUsufructuaryRefundAddressUpdated':
+    assetState.PendingUsufructuaryRefundAddressUpdated,
+  'earnings_message::EarningsMessagePosted': earningsMessage.EarningsMessagePosted,
+  'earnings_message::EarningsMessageCollected': earningsMessage.EarningsMessageCollected,
+  'fee_message::FeeMessagePosted': feeMessage.FeeMessagePosted,
+  'fee_message::FeeMessageCollected': feeMessage.FeeMessageCollected,
+  'governance_cap::GovernanceCapMinted': governanceCap.GovernanceCapMinted,
+  'governance_cap::GovernanceCapBurned': governanceCap.GovernanceCapBurned,
+  'usufruct_cap::UsufructCapMinted': usufructCap.UsufructCapMinted,
+  'usufruct_cap::UsufructCapBurned': usufructCap.UsufructCapBurned,
+  'policy_ensemble::PolicyEnsembleRegistered': policyEnsemble.PolicyEnsembleRegistered,
+  'policy_ensemble::EnsembleUpdated': policyEnsemble.EnsembleUpdated,
+  'policy_ensemble::EnsembleUpdateScheduled': policyEnsemble.EnsembleUpdateScheduled,
+};
+
+/**
+ * BCS-decode an event's `contents.bcs` via the registry. `null` if the type is
+ * unknown *or* the bytes don't fit the codegen layout (deeply nested policy
+ * structs may not round-trip) — the json fallback covers those.
+ */
+export function decodeEvent(type: string, contentsBcs: string): Record<string, unknown> | null {
+  const dec = REGISTRY[eventKey(type)];
+  if (!dec) return null;
+  try {
+    return dec.parse(fromBase64(contentsBcs)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -84,17 +146,19 @@ export function toTypedEvent(node: {
   type: string;
   sender: string | null;
   timestamp: string | null;
+  bcs: string | null;
   json: Record<string, unknown>;
 }): TypedEvent {
   const key = eventKey(node.type);
+  const decoded = node.bcs ? decodeEvent(node.type, node.bcs) : null;
   return {
     type: node.type,
     module: key.split('::')[0]!,
     name: key.split('::')[1] ?? key,
     sender: node.sender,
     timestamp: node.timestamp,
-    escrowId: escrowIdOf(node.json),
-    data: node.json,
+    escrowId: escrowIdOf(decoded) ?? escrowIdOf(node.json),
+    data: decoded ?? node.json,
     json: node.json,
   };
 }

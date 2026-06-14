@@ -85,7 +85,7 @@ const OBJECTS_DOC = `query($type: String!, $after: String, $first: Int!) {
 const EVENTS_DOC = `query($type: String!, $sender: SuiAddress, $after: String, $first: Int!, $afterCp: UInt53, $beforeCp: UInt53) {
   events(first: $first, after: $after, filter: { type: $type, sender: $sender, afterCheckpoint: $afterCp, beforeCheckpoint: $beforeCp }) {
     pageInfo { hasNextPage endCursor }
-    nodes { sender { address } timestamp contents { json } }
+    nodes { sender { address } timestamp contents { bcs json } }
   }
 }`;
 
@@ -98,7 +98,7 @@ type ObjectsResult = {
 type EventNode = {
   sender: { address: string } | null;
   timestamp: string | null;
-  contents: { json: Record<string, unknown> };
+  contents: { bcs: string | null; json: Record<string, unknown> };
 };
 type EventsResult = {
   events: {
@@ -202,6 +202,7 @@ export function indexerSource<
           type: fullType,
           sender: n.sender?.address ?? null,
           timestamp: n.timestamp,
+          bcs: n.contents.bcs,
           json: n.contents.json,
         });
       }
