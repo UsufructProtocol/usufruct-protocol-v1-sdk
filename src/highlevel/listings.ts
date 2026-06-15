@@ -39,6 +39,20 @@ export function normType(v: string): string {
   }
 }
 
+/**
+ * One `UsufructCap` an escrow ever minted, from a `UsufructCapMinted` event — the
+ * escrow's roster of renters/bidders (active, pending, or long-burned). The cap
+ * stores its escrow on-chain (unlike the GovernanceCap), but the reverse — every
+ * cap an escrow minted — lives only in this event.
+ */
+export interface UsufructCapRecord {
+  readonly usufructCapId: string;
+  readonly escrowId: string;
+  readonly usufructuary: string;
+  /** When it was minted (event emission time), or `null`. */
+  readonly mintedAt: Date | null;
+}
+
 /** Build an `EscrowListing` from one decoded `AssetIntegrated` event payload. */
 export function createListing(
   ctx: HandleCtx,
@@ -76,6 +90,7 @@ export async function discoverIntegrated(
     earningsInboxId?: string;
     feeInboxId?: string;
     ownedCaps?: ReadonlySet<string>;
+    escrowIds?: ReadonlySet<string>;
   },
 ): Promise<EscrowListing[]> {
   if (ctx.indexer == null) {
@@ -94,6 +109,7 @@ export async function discoverIntegrated(
     if (filter.feeInboxId && s(j['fee_inbox_id']) !== filter.feeInboxId) continue;
     if (filter.ownedCaps && !filter.ownedCaps.has(cap)) continue;
     const id = s(j['escrow_id']);
+    if (filter.escrowIds && !filter.escrowIds.has(id)) continue;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(createListing(ctx, { json: j, timestamp: ev.timestamp }));

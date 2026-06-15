@@ -17,7 +17,8 @@ import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
-import { NotConnected, mapAbort } from './errors.js';
+import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType, execute } from './send.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
@@ -90,6 +91,15 @@ export interface Escrow {
    * Rarely called by hand; the next interaction (e.g. a rent) applies them anyway.
    */
   applyPendingTransitionStates(): Promise<{ digest: string }>;
+
+  /**
+   * The roster of every `UsufructCap` this escrow has minted (active, pending, or
+   * long-burned) — object-centric, the escrow answering for itself, from
+   * `UsufructCapMinted` events. (The reverse, cap→escrow, is on-chain: a
+   * `UsufructCap` stores its `escrow_identity`, so `usufructCap.escrow()` needs no
+   * events.) Decode-free records. Needs `graphql`.
+   */
+  usufructCaps(): Promise<UsufructCapRecord[]>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -207,6 +217,28 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     });
   }
 
+  async function usufructCaps(): Promise<UsufructCapRecord[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('usufructCaps requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const type = `${packageId}::usufruct_cap::UsufructCapMinted`;
+    const out: UsufructCapRecord[] = [];
+    const seen = new Set<string>();
+    for await (const ev of ctx.indexer.events({ type })) {
+      if (ev.escrowId !== idStr) continue;
+      const capId = String(ev.json['usufruct_cap_id']);
+      if (seen.has(capId)) continue;
+      seen.add(capId);
+      out.push({
+        usufructCapId: capId,
+        escrowId: idStr,
+        usufructuary: String(ev.json['usufructuary_address']),
+        mintedAt: ev.timestamp ? new Date(ev.timestamp) : null,
+      });
+    }
+    return out;
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -233,6 +265,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     earningsInbox,
     rent,
     applyPendingTransitionStates: applyPending,
+    usufructCaps,
     reader,
   };
 }

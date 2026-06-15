@@ -136,6 +136,13 @@ export interface Usufruct {
    */
   escrowsGovernedBy(holder: string): Promise<EscrowListing[]>;
   /**
+   * The escrows `holder` **rents** right now — object-centric, by possession. The
+   * `UsufructCap` *stores* its escrow on-chain (`escrow_identity`), so this reads
+   * `holder`'s owned caps directly (no events for the cap→escrow link) and enriches
+   * to `EscrowListing`s from the event log. Needs `graphql`.
+   */
+  escrowsRentedBy(holder: string): Promise<EscrowListing[]>;
+  /**
    * The escrows a specific `GovernanceCap` governs — its **portfolio**, keyed on
    * the cap object itself (the purest object-centric query: the cap *is* the
    * governor). `escrowsGovernedBy(addr)` is the union of this over `addr`'s owned
@@ -272,6 +279,28 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     },
     async escrowsGovernedByCap(governanceCapId) {
       return discoverIntegrated(ctx(), { governanceCapId });
+    },
+    async escrowsRentedBy(holder) {
+      // The UsufructCap stores its escrow on-chain — read the caps `holder` owns
+      // and decode each one's escrow id (no events needed for the cap→escrow link).
+      const escrowIds = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const page: Awaited<ReturnType<typeof client.core.listOwnedObjects>> =
+          await client.core.listOwnedObjects({
+            owner: holder,
+            type: `${packageId}::usufruct_cap::UsufructCap`,
+            cursor,
+            limit: 50,
+            include: { content: true },
+          });
+        for (const o of page.objects) {
+          if (o.content) escrowIds.add(UsufructCapBcs.parse(o.content).escrow_identity.id);
+        }
+        cursor = page.hasNextPage ? page.cursor : null;
+      } while (cursor);
+      if (escrowIds.size === 0) return [];
+      return discoverIntegrated(ctx(), { escrowIds });
     },
     async escrowsByAssetType(assetType) {
       return discoverIntegrated(ctx(), { assetType: normalizeStructTag(assetType) });

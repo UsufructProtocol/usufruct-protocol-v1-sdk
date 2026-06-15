@@ -160,6 +160,25 @@ paying into that inbox; on the `ProtocolFeeInbox` (the deployment singleton) it'
 every escrow of the protocol. Same pattern every time — the object holds an id in
 the event log, so the object answers for itself.
 
+The `UsufructCap` is the one **asymmetric** case, and it's instructive. Unlike the
+`GovernanceCap` (`{ id }`), the cap *stores* its escrow on-chain:
+
+```move
+public struct UsufructCap has key, store { id: UID, escrow_identity: EscrowIdentity }
+```
+
+(It must — `borrow` proves the cap belongs to the escrow.) So cap→escrow needs no
+events: `usufructCap.escrow()` reads it off the object, and `u.escrowsRentedBy(addr)`
+just decodes `addr`'s owned caps. The reverse — every cap an escrow ever minted —
+is *not* on the cap or the escrow; it lives in `UsufructCapMinted` events, so the
+escrow answers from there: `escrow.usufructCaps()` (the roster of renters and
+bidders, active / pending / long-burned).
+
+The rule, stated once: **a relationship is queryable from whichever object stores
+the link** — on-chain when an object holds the id (the cap's escrow), in the event
+log otherwise (everything keyed by `AssetIntegrated` / `UsufructCapMinted`). The
+high-level just puts the question on the object that can answer it.
+
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
 transferred away (the secondary-market flow). Governance left with the object.
