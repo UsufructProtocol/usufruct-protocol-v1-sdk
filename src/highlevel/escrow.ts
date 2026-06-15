@@ -14,7 +14,7 @@ import { id as toId, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import type { Source } from '../primitives/source.js';
 import { rent as rentAction } from '../actions/rent.js';
-import type { UsufructCap } from './cap.js';
+import { createCap, type UsufructCap } from './cap.js';
 import { type Payment, resolvePayment } from './coins.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
@@ -102,8 +102,14 @@ export async function createEscrow(
   const role = await resolveRole(client, packageId, owner, activeCapId, govCapId);
 
   const coin = coinInfo(state.coinType);
+  const typeArguments: [string, string] = [state.assetType, state.coinType];
   const cap: UsufructCap | null = role.capId
-    ? { id: role.capId, escrowId: idStr, receipt: null }
+    ? createCap(client, packageId, source, signer, {
+        capId: role.capId,
+        escrowId: idStr,
+        typeArguments,
+        receipt: null,
+      })
     : null;
 
   async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
@@ -122,7 +128,7 @@ export async function createEscrow(
       pkg: { packageId },
       escrowId,
       payment,
-      typeArguments: [state.assetType, state.coinType],
+      typeArguments,
     });
     tx.transferObjects([minted], owner);
 
@@ -131,15 +137,16 @@ export async function createEscrow(
     if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
 
     const expiry = await reader.tenureExpiryMs();
-    return {
-      id: capId,
+    return createCap(client, packageId, source, signer, {
+      capId,
       escrowId: idStr,
+      typeArguments,
       receipt: {
         paid: price(paidMist, coin),
         expiresAt: new Date(Number(expiry ?? 0n)),
         digest: res.digest,
       },
-    };
+    });
   }
 
   return {

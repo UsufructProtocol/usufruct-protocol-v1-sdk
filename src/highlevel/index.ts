@@ -16,7 +16,7 @@ export { SUI, price, coinTag, coinInfo } from './value.js';
 export type { Price, CoinInfo, CoinTag } from './value.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
-export type { UsufructCap, RentReceipt } from './cap.js';
+export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
 export type { CoinSource, Payment } from './coins.js';
 
 export {
