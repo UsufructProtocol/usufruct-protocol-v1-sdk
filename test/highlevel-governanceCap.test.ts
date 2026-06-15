@@ -6,7 +6,6 @@ import { createGovernanceCap } from '../src/highlevel/governanceCap.js';
 import { createInbox } from '../src/highlevel/inbox.js';
 import type { Market } from '../src/highlevel/market.js';
 import { SUI } from '../src/highlevel/value.js';
-import type { Source } from '../src/primitives/source.js';
 
 const hex = (b: string) => '0x' + b.repeat(32);
 const CAP = hex('11');
@@ -18,7 +17,6 @@ const readOnlyCtx: HandleCtx = {
   client: {} as ClientWithCoreApi,
   packageId: hex('aa'),
   feeRefId: hex('bb'),
-  source: {} as unknown as Source,
   signer: null,
 };
 

@@ -16,7 +16,7 @@ import { integrate as integrateAction } from '../actions/integrate.js';
 import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
 import { indexerSource, type IndexerSource } from '../indexer/index.js';
-import { id as toId } from '../primitives/brand.js';
+import { fetchTypeArgs } from './typeargs.js';
 import { chainSource, type Source } from '../primitives/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
@@ -141,7 +141,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     client,
     packageId,
     feeRefId,
-    source,
     signer,
     ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
@@ -196,11 +195,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       const c = ctx();
       const { object } = await client.core.getObject({ objectId: idStr, include: { content: true } });
       const escrowId = UsufructCapBcs.parse(object.content!).escrow_identity.id;
-      const state = await c.source.fetch(toId<'Escrow'>(escrowId));
       return createCap(c, {
         capId: idStr,
         escrowId,
-        typeArguments: [state.assetType, state.coinType],
+        typeArguments: await fetchTypeArgs(client, escrowId),
         receipt: null,
       });
     },

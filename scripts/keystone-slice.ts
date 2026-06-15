@@ -9,7 +9,6 @@
  * we already use (`loadSigner()`). Dummy asset/coin are free-mint. Spends only
  * a little gas. Run: `npm run keystone`.
  */
-import { bcs } from '@mysten/sui/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '../src/actions/index.js';
@@ -35,7 +34,6 @@ const DUMMY_COIN_TREASURY =
 const ASSET_T = `${DUMMY_PKG}::dummy_asset::DummyAsset`;
 const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
 const TYPE_ARGS: [string, string] = [ASSET_T, COIN_T];
-const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
 
 // The escrow's coin, as a Layer 2 tag (so `u.fromBalance(DUMMY)` / `u.coin(...)`).
 const DUMMY = coinTag({ type: COIN_T, decimals: 9, symbol: 'DUMMY_COIN' });
@@ -91,7 +89,7 @@ async function main() {
   check('escrow A integrated', escrowA.length === 66, escrowA);
 
   step('2. NEW API — Bob reads it (state + role in one fetch)');
-  const u = usufruct({ client, signer: bob, assetSchema: dummyAssetSchema });
+  const u = usufruct({ client, signer: bob });
   const sword = await u.escrow(escrowA);
   check('status idle', sword.status === 'idle', sword.status);
   check('isAvailable', sword.isAvailable === true);

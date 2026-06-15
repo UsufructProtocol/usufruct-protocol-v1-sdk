@@ -22,6 +22,7 @@ import { createdIdByType, execute } from './send.js';
 import { coinInfo, price, type Price } from './value.js';
 import { resolveWhen } from './clock.js';
 import { resolveRole } from './role.js';
+import { fetchTypeArgs } from './typeargs.js';
 import type { When } from './usufruct.js';
 
 export type EscrowStatus = 'idle' | 'descent' | 'occupied' | 'demand' | 'retired';
@@ -91,16 +92,17 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
-  const { client, packageId, source, signer, assetSchema } = ctx;
+  const { client, packageId, signer, assetSchema } = ctx;
   const owner = signer?.toSuiAddress() ?? null;
   const escrowId = toId<'Escrow'>(idStr);
 
-  const [state, t] = await Promise.all([source.fetch(escrowId), resolveWhen(client, at)]);
+  // Type args come from the object's type string — no decode, no asset schema.
+  const [[assetType, coinType], t] = await Promise.all([fetchTypeArgs(client, escrowId), resolveWhen(client, at)]);
 
   const reader = createReader(client, {
     packageId,
     escrowId,
-    typeArguments: [state.assetType, state.coinType],
+    typeArguments: [assetType, coinType],
     ...(assetSchema ? { assetSchema } : {}),
   });
 
@@ -121,8 +123,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
   ]);
 
-  const coin = coinInfo(state.coinType);
-  const typeArguments: [string, string] = [state.assetType, state.coinType];
+  const coin = coinInfo(coinType);
+  const typeArguments: [string, string] = [assetType, coinType];
   async function applyPending(): Promise<{ digest: string }> {
     if (signer == null) throw new NotConnected('applyPendingTransitionStates requires a signer (it submits a tx)');
     const tx = new Transaction();
@@ -152,7 +154,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     const tx = new Transaction();
     const { arg: payment, paidMist } = await resolvePayment(tx, client, owner, args.payment, {
       minimumMist,
-      coinType: state.coinType,
+      coinType: coinType,
     });
     const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
       pkg: { packageId },
@@ -181,8 +183,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   return {
     id: idStr,
-    assetType: state.assetType,
-    coinType: state.coinType,
+    assetType: assetType,
+    coinType: coinType,
     status,
     isAvailable: status === 'idle' || status === 'descent',
     floorPrice: price(floorMist, coin),

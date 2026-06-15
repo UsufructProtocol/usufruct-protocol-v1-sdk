@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import { createCap } from '../src/highlevel/cap.js';
 import type { HandleCtx } from '../src/highlevel/ctx.js';
 import { NotConnected } from '../src/highlevel/errors.js';
-import type { Source } from '../src/primitives/source.js';
 
 const hex = (b: string) => '0x' + b.repeat(32);
 const PKG = hex('33');
@@ -17,7 +16,6 @@ const ARGS = {
 const ctx: HandleCtx = {
   client: {} as ClientWithCoreApi,
   packageId: PKG,
-  source: {} as unknown as Source,
   signer: null,
 };
 

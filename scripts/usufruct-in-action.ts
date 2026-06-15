@@ -12,7 +12,6 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { bcs } from '@mysten/sui/bcs';
 import { coinTag, usufruct } from '../src/index.js';
 import { createdId, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
@@ -21,7 +20,6 @@ const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb1831
 const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
 const DUMMY_COIN_TREASURY =
   '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
-const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
 const DUMMY = coinTag({ type: `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`, decimals: 9, symbol: 'DUMMY' });
 
 const client = rateLimited(makeClient());
@@ -48,7 +46,7 @@ async function main() {
   const swordId = await setup(); // the raw asset object id, before it's wrapped into an escrow
 
   // ════════════ ① INTEGRATE — Alice lists her asset as a rental market ════════════
-  const alice = usufruct({ network: 'testnet', client, signer: ALICE, assetSchema: dummyAssetSchema });
+  const alice = usufruct({ network: 'testnet', client, signer: ALICE });
 
   const { escrow, governanceCap, earningsInbox } = await alice.integrate({
     asset: swordId,
@@ -73,7 +71,7 @@ async function main() {
   console.log(`   floor ${escrow.floorPrice} · governanceCap ${governanceCap.capId} · earningsInbox ${earningsInbox.inboxId}\n`);
 
   // ════════════ ② RENT — Bob acquires the right of use ════════════
-  const bob = usufruct({ network: 'testnet', client, signer: BOB, assetSchema: dummyAssetSchema });
+  const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
   const sword = await bob.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
   const cap = await sword.rent({ tenures: 1, payment: bob.fromBalance(DUMMY) });

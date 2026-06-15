@@ -8,7 +8,6 @@
  * Funder = loadSigner(); an ephemeral Bob (funded from the funder) rents so the
  * inbox earns. Dummy asset/coin are free-mint. Run: `npm run governor`.
  */
-import { bcs } from '@mysten/sui/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '../src/actions/index.js';
@@ -33,7 +32,6 @@ const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc
 const DUMMY_COIN_TREASURY =
   '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
 const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
-const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
 const DUMMY = coinTag({ type: COIN_T, decimals: 9, symbol: 'DUMMY_COIN' });
 
 const client = rateLimited(makeClient());
@@ -59,7 +57,7 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 5): Pro
   }
 }
 
-const u = usufruct({ client, signer: funder, assetSchema: dummyAssetSchema, graphql: GRAPHQL_TESTNET });
+const u = usufruct({ client, signer: funder, graphql: GRAPHQL_TESTNET });
 
 /** Mint a DummyAsset to the funder; return its object id. */
 async function mintAsset(): Promise<string> {
@@ -136,7 +134,7 @@ async function main() {
     );
     await send(client, tx, funder);
   }
-  const ub = usufruct({ client, signer: bob, assetSchema: dummyAssetSchema });
+  const ub = usufruct({ client, signer: bob });
   const sword = await withRetry('Bob reads escrow', () => ub.escrow(e.escrow.id));
   const cap = await sword.rent({ tenures: 1, payment: ub.fromBalance(DUMMY) });
   const expiry = BigInt(cap.receipt!.expiresAt.getTime());
@@ -164,7 +162,7 @@ async function main() {
   // the funder (current holder) hands governance to Carol — the cap is a bearer object
   await t.governanceCap.transfer(carol.toSuiAddress());
   // Carol, now holding the cap, governs (she never called integrate):
-  const uc = usufruct({ client, signer: carol, assetSchema: dummyAssetSchema });
+  const uc = usufruct({ client, signer: carol });
   await uc.governanceCap(t.governanceCap.capId).update(t.escrow.id, market({ restPrice: DUMMY(0.03) }));
   const rpC = await withRetry('readback after Carol governs', () => u.escrow(t.escrow.id).then((x) => x.reader.restPrice()));
   check('the NEW holder (Carol) governs — update applied', rpC.kind === 'fixed' && rpC.priceMist === 30_000_000n, j(rpC));

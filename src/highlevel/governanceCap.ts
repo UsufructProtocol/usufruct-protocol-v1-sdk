@@ -22,6 +22,7 @@ import { retire as retireAction } from '../actions/retire.js';
 import { type Id, id as toId } from '../primitives/brand.js';
 import { createReader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
+import { fetchTypeArgs } from './typeargs.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
@@ -57,7 +58,7 @@ interface RefInfo {
 
 /** Build a `GovernanceCap` handle. Authority = the signer currently holding it. */
 export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCap {
-  const { client, packageId, feeRefId, source, signer, assetSchema } = ctx;
+  const { client, packageId, feeRefId, signer, assetSchema } = ctx;
   const pkg = { packageId, feeRefId };
   const govId = toId<'GovernanceCap'>(capId);
 
@@ -72,8 +73,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     if (typeof ref !== 'string') {
       return { escrowId: toId<'Escrow'>(ref.id), typeArguments: [ref.assetType, ref.coinType] };
     }
-    const state = await source.fetch(toId<'Escrow'>(ref));
-    return { escrowId: toId<'Escrow'>(ref), typeArguments: [state.assetType, state.coinType] };
+    return { escrowId: toId<'Escrow'>(ref), typeArguments: await fetchTypeArgs(client, ref) };
   }
 
   /** Resolve the escrow, build one PTB command, sign+send. */
