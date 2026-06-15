@@ -15,10 +15,18 @@ describe('highlevel/value — Price', () => {
     expect(price(900_000_000n).format()).toBe('0.90 SUI');
   });
 
-  it('keeps full precision in .mist regardless of 2-decimal display', () => {
+  it('renders full precision (trailing zeros trimmed, min 2 places); .mist is exact', () => {
     const p = price(1_234_567_891n);
     expect(p.mist).toBe(1_234_567_891n);
-    expect(p.format()).toBe('1.23 SUI');
+    expect(p.format()).toBe('1.234567891 SUI');
+    // a sub-cent amount is no longer hidden behind 2 decimals
+    expect(price(15_000_000n).format()).toBe('0.015 SUI'); // 0.015, not 0.01
+  });
+
+  it('plus adds same-coin amounts; scale multiplies (rounded)', () => {
+    expect(price(10_000_000n).plus(price(5_000_000n)).mist).toBe(15_000_000n);
+    expect(price(10_000_000n).scale(1.5).mist).toBe(15_000_000n);
+    expect(price(10_000_000n).scale(2).format()).toBe('0.02 SUI');
   });
 });
 

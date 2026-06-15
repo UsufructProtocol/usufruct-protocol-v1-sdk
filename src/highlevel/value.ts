@@ -28,6 +28,10 @@ export interface Price {
   readonly coin: CoinInfo;
   /** Whole-coin units as a number — for display/logs only (may lose precision). */
   toSui(): number;
+  /** Same coin, `mist` added — e.g. `floor.plus(coin(0.005))` (a fixed tip over floor). */
+  plus(other: Price): Price;
+  /** Scale the amount by a factor (rounded) — e.g. `floor.scale(1.5)` is 50% over floor. */
+  scale(factor: number): Price;
   /** Human string, e.g. `'0.50 SUI'`. */
   format(): string;
   /** Same as {@link format} — so template literals render it. */
@@ -51,8 +55,10 @@ function render(value: bigint, coin: CoinInfo): string {
   const base = 10n ** BigInt(coin.decimals);
   const whole = value / base;
   const frac = value % base;
-  // Two-decimal display; `.mist` keeps full precision.
-  const fracStr = (Number(frac) / Number(base)).toFixed(2).slice(2);
+  // Full precision, trailing zeros trimmed, min 2 places — so 0.015 ≠ 0.01.
+  // (`.mist` is always the exact source of truth.)
+  let fracStr = frac.toString().padStart(coin.decimals, '0').replace(/0+$/, '');
+  if (fracStr.length < 2) fracStr = fracStr.padEnd(2, '0');
   return `${whole}.${fracStr} ${coin.symbol}`;
 }
 
@@ -63,6 +69,8 @@ export function price(value: Mist | bigint, coin: CoinInfo = SUI_INFO): Price {
     mist: v,
     coin,
     toSui: () => Number(v) / Number(coin.decimals === 9 ? MIST_PER_SUI : 10n ** BigInt(coin.decimals)),
+    plus: (other) => price(v + other.mist, coin),
+    scale: (factor) => price(BigInt(Math.round(Number(v) * factor)), coin),
     format: () => render(v, coin),
     toString: () => render(v, coin),
   };
