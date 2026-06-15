@@ -19,7 +19,8 @@ import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
-import { coinInfo, price, type Price } from './value.js';
+import { price, type Price } from './value.js';
+import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { resolveRole } from './role.js';
 import { fetchTypeArgs } from './typeargs.js';
@@ -139,7 +140,9 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
   ]);
 
-  const coin = coinInfo(coinType);
+  // Real decimals/symbol from CoinMetadata (cached) — assuming 9 renders any
+  // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
+  const coin = await resolveCoinInfo(client, coinType);
   const typeArguments: [string, string] = [assetType, coinType];
   async function applyPending(): Promise<{ digest: string }> {
     if (signer == null) throw new NotConnected('applyPendingTransitionStates requires a signer (it submits a tx)');

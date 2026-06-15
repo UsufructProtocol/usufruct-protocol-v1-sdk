@@ -27,6 +27,7 @@ import { createEscrow, type Escrow } from './escrow.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
 import { resolveFeeInboxId } from './feeref.js';
+import { resolveCoinTag } from './coinmeta.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
@@ -105,6 +106,13 @@ export interface Usufruct {
    * `u.feeInbox()` without hunting an id off an escrow.
    */
   feeInbox(id?: string): Promise<ProtocolFeeInbox>;
+
+  /**
+   * Resolve a `CoinTag` for a coin type, reading its decimals/symbol from the
+   * on-chain `CoinMetadata` (cached). Saves the dev from hardcoding them — and
+   * keeps the SDK coin-agnostic (no assumed 9 decimals). `await u.coinType(t)`.
+   */
+  coinType(type: string): Promise<CoinTag>;
 
   /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
   coin(coin: CoinTag, amount: Price): CoinSource;
@@ -222,6 +230,9 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return createInbox(ctx(), inboxId, 'fees');
     },
 
+    coinType(type) {
+      return resolveCoinTag(client, type);
+    },
     coin(coin, amount) {
       return { kind: 'exact', coin, amountMist: amount.mist };
     },
