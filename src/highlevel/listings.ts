@@ -73,6 +73,8 @@ export async function discoverIntegrated(
     integrator?: string;
     assetType?: string;
     governanceCapId?: string;
+    earningsInboxId?: string;
+    feeInboxId?: string;
     ownedCaps?: ReadonlySet<string>;
   },
 ): Promise<EscrowListing[]> {
@@ -88,6 +90,8 @@ export async function discoverIntegrated(
     if (filter.integrator && s(j['governor_address']) !== filter.integrator) continue;
     if (filter.assetType && normType(s(j['asset_type'])) !== filter.assetType) continue;
     if (filter.governanceCapId && cap !== filter.governanceCapId) continue;
+    if (filter.earningsInboxId && s(j['earnings_inbox_id']) !== filter.earningsInboxId) continue;
+    if (filter.feeInboxId && s(j['fee_inbox_id']) !== filter.feeInboxId) continue;
     if (filter.ownedCaps && !filter.ownedCaps.has(cap)) continue;
     const id = s(j['escrow_id']);
     if (seen.has(id)) continue;

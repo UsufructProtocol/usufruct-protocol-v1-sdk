@@ -7,6 +7,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { collectMessages, discoverInboxMessages, type InboxKind, type MessageGroups } from '../actions/collect.js';
 import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
+import { discoverIntegrated, type EscrowListing } from './listings.js';
 import type { HandleCtx } from './ctx.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { execute } from './send.js';
@@ -20,6 +21,14 @@ export interface Inbox {
   collect(): Promise<Array<{ coin: string; amount: Price }>>;
   /** Hand the inbox (and the right to collect) to another address. */
   transfer(to: string): Promise<{ digest: string }>;
+  /**
+   * The escrows whose settlements push messages into THIS inbox — object-centric,
+   * the inbox answering for itself. The inbox→escrow link lives only in the event
+   * log (`AssetIntegrated` sets the inbox id). For an `EarningsInbox` this is the
+   * governor's portfolio paying in; for the `ProtocolFeeInbox` (a singleton) it's
+   * every escrow of the deployment. Decode-free `EscrowListing`s. Needs `graphql`.
+   */
+  escrowsPushingMessages(): Promise<EscrowListing[]>;
 }
 
 /** The governor's income mailbox. */
@@ -59,5 +68,8 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
       return sumGroups(client, groups);
     },
     transfer: transferOf(ctx, inboxId, `${kind} inbox`),
+    escrowsPushingMessages() {
+      return discoverIntegrated(ctx, kind === 'fees' ? { feeInboxId: inboxId } : { earningsInboxId: inboxId });
+    },
   };
 }

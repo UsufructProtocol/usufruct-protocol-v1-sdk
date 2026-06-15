@@ -153,6 +153,13 @@ events — the only place the cap→escrow link exists). It **follows the cap** 
 includes escrows whose cap was transferred *to* `addr`, and excludes ones whose
 cap they gave *away*.
 
+The same object-centric move extends to the **inboxes** — `AssetIntegrated` also
+sets `earnings_inbox_id` and `fee_inbox_id`, so an inbox can answer which escrows
+feed it: `earningsInbox.escrowsPushingMessages()` is the governor's portfolio
+paying into that inbox; on the `ProtocolFeeInbox` (the deployment singleton) it's
+every escrow of the protocol. Same pattern every time — the object holds an id in
+the event log, so the object answers for itself.
+
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
 transferred away (the secondary-market flow). Governance left with the object.
