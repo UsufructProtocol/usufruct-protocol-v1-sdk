@@ -37,19 +37,22 @@ rights of use, an integrator handing everything off.
 
 ## The handle taxonomy — one handle per capability object
 
+Names are **explicit about the object** — never a bare `cap`/`earnings` (which
+cap? whose earnings?):
+
 | Object | Handle | Writes (authority = holding it) | Door |
 |---|---|---|---|
 | `Escrow` (shared) | `Escrow` | `rent`, `apply` (permissionless) + reads | `u.escrow(id)` |
-| `UsufructCap` | `UsufructCap` | `borrow`/`.into`, `updateRefundAddress`, `burnIfStale`, `burn`, **`transfer`** | `u.cap(id)` |
+| `UsufructCap` | `UsufructCap` | `borrow`/`.into`, `updateRefundAddress`, `burnIfStale`, `burn`, **`transfer`** | `u.usufructCap(id)` |
 | `GovernanceCap` | `GovernanceCap` | `update`/`retire`/`claim`/`extend*`, `renounce`, `list`, **`transfer`** | `u.governanceCap(id)` |
-| `EarningsInbox` | `Inbox` | `balance`, `collect`, **`transfer`** | `u.earnings(id)` |
-| `ProtocolFeeInbox` | `Inbox` | `balance`, `collect`, **`transfer`** | `u.fees(id)` |
+| `EarningsInbox` | `EarningsInbox` | `balance`, `collect`, **`transfer`** | `u.earningsInbox(id)` |
+| `ProtocolFeeInbox` | `ProtocolFeeInbox` | `balance`, `collect`, **`transfer`** | `u.feeInbox(id)` |
 
 There is **no `Governor`** handle. `integrate` mints three objects and returns
 three independent handles:
 
 ```ts
-const { escrow, governanceCap, earnings } = await u.integrate({ asset, market });
+const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset, market });
 // each is a separate bearer object; they can diverge from here.
 ```
 
@@ -58,7 +61,7 @@ portfolio): `governanceCap.update(escrow, market)`. Listing a new escrow under a
 cap also names the inbox it pays into — because the two are separable:
 
 ```ts
-await governanceCap.list(asset, market, { earnings: earnings.inboxId });
+await governanceCap.list(asset, market, { earningsInbox: earningsInbox.inboxId });
 ```
 
 ## `transfer` is first-class — moving the object moves the role
@@ -68,8 +71,8 @@ signed by the current holder). This is the whole point, not an afterthought:
 
 ```ts
 await governanceCap.transfer(treasury);   // hand off governance
-await earnings.transfer(treasury);        // route income elsewhere
-await cap.transfer(buyer);                // sell the right of use
+await earningsInbox.transfer(treasury);   // route income elsewhere
+await usufructCap.transfer(buyer);        // sell the right of use
 ```
 
 After the transfer, the new holder governs/collects/uses; the old holder's
@@ -92,9 +95,9 @@ Separately, it resolves **which of those the signer currently holds**, as ready
 handles (else `null`):
 
 ```ts
-escrow.cap;           // UsufructCap   — if I hold the active cap
+escrow.usufructCap;   // UsufructCap   — if I hold the active cap
 escrow.governanceCap; // GovernanceCap — if I hold the gov cap
-escrow.earnings;      // Inbox         — if I hold the earnings inbox
+escrow.earningsInbox; // EarningsInbox — if I hold the earnings inbox
 escrow.canRent / escrow.canBorrow / escrow.canGovern; // sugar over "do I hold X here?"
 ```
 

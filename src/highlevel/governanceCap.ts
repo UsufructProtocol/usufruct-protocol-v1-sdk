@@ -46,8 +46,8 @@ export interface GovernanceCap {
   /** Hand governance (this cap) to another address. */
   transfer(to: string): Promise<{ digest: string }>;
 
-  /** List a NEW escrow under this cap, paying into the named `earnings` inbox. */
-  list(asset: string, market: Market, opts: { earnings: string }): Promise<Escrow>;
+  /** List a NEW escrow under this cap, paying into the named `earningsInbox`. */
+  list(asset: string, market: Market, opts: { earningsInbox: string }): Promise<Escrow>;
 }
 
 interface RefInfo {
@@ -165,7 +165,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
         asset,
         typeArguments: [assetType, coinType],
         governanceCapId: capId,
-        earningsInboxId: opts.earnings,
+        earningsInboxId: opts.earningsInbox,
       });
       const res = await execute(client, tx, s).catch(mapAbort);
       const escrowId = createdIdByType(res, '::escrow::Escrow');

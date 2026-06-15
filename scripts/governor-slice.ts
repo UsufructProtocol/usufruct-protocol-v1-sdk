@@ -83,10 +83,10 @@ async function main() {
   console.log(`funder ${me}`);
 
   step('1. integrate (new API) — mints THREE independent objects');
-  const { escrow, governanceCap, earnings } = await u.integrate({ asset: await mintAsset(), market: market() });
+  const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset: await mintAsset(), market: market() });
   check('escrow created', escrow.id.length === 66, escrow.id);
   check('governance cap (object) surfaced', governanceCap.capId.length === 66, governanceCap.capId);
-  check('earnings inbox (separate object) surfaced', earnings.inboxId.length === 66, earnings.inboxId);
+  check('earnings inbox (separate object) surfaced', earningsInbox.inboxId.length === 66, earningsInbox.inboxId);
   const rp = await escrow.reader.restPrice();
   check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
 
@@ -106,7 +106,7 @@ async function main() {
   check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
 
   step('3. portfolio — list a second escrow under the same cap, naming the inbox');
-  const listed = await governanceCap.list(await mintAsset(), market(), { earnings: earnings.inboxId });
+  const listed = await governanceCap.list(await mintAsset(), market(), { earningsInbox: earningsInbox.inboxId });
   check('portfolio escrow listed', listed.id.length === 66, listed.id);
   // Portfolio proof (cheap + deterministic): both escrows name the SAME cap.
   const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governanceCapId;
@@ -146,8 +146,8 @@ async function main() {
   actions.applyPendingTransitionStates().toPtb(tx, { pkg: TESTNET, escrowId: id<'Escrow'>(e.escrow.id), typeArguments: [e.escrow.assetType, e.escrow.coinType] });
   await send(client, tx, funder);
 
-  const pending = await e.earnings.balance();
-  const collected = await e.earnings.collect();
+  const pending = await e.earningsInbox.balance();
+  const collected = await e.earningsInbox.collect();
   const dummyPending = pending.find((p) => p.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   const dummyCollected = collected.find((c) => c.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   check('earnings collected > 0', dummyCollected > 0n, `${collected.map((c) => `${c.amount}`).join(', ')}`);

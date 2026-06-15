@@ -25,7 +25,7 @@ import type { CoinSource } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
-import { createInbox, type Inbox } from './inbox.js';
+import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
@@ -84,18 +84,18 @@ export interface Usufruct {
   integrate(args: { asset: string; market: Market }): Promise<{
     escrow: Escrow;
     governanceCap: GovernanceCap;
-    earnings: Inbox;
+    earningsInbox: EarningsInbox;
   }>;
 
   // ── object doors: a handle to a capability object by id (authority = holding it) ──
   /** The `UsufructCap` (its escrow resolved from the object). */
-  cap(id: string): Promise<UsufructCap>;
+  usufructCap(id: string): Promise<UsufructCap>;
   /** The `GovernanceCap`. */
   governanceCap(id: string): GovernanceCap;
   /** An `EarningsInbox`. */
-  earnings(id: string): Inbox;
+  earningsInbox(id: string): EarningsInbox;
   /** The deployer's `ProtocolFeeInbox`. */
-  fees(id: string): Inbox;
+  feeInbox(id: string): ProtocolFeeInbox;
 
   /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
   coin(coin: CoinTag, amount: Price): CoinSource;
@@ -188,11 +188,11 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return {
         escrow: await createEscrow(c, escrowId),
         governanceCap: createGovernanceCap(c, capId),
-        earnings: createInbox(c, inboxId, 'earnings'),
+        earningsInbox: createInbox(c, inboxId, 'earnings'),
       };
     },
 
-    async cap(idStr) {
+    async usufructCap(idStr) {
       const c = ctx();
       const { object } = await client.core.getObject({ objectId: idStr, include: { content: true } });
       const escrowId = UsufructCapBcs.parse(object.content!).escrow_identity.id;
@@ -207,10 +207,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     governanceCap(idStr) {
       return createGovernanceCap(ctx(), idStr);
     },
-    earnings(idStr) {
+    earningsInbox(idStr) {
       return createInbox(ctx(), idStr, 'earnings');
     },
-    fees(idStr) {
+    feeInbox(idStr) {
       return createInbox(ctx(), idStr, 'fees');
     },
 

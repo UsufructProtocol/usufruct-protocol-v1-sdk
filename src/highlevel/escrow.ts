@@ -50,11 +50,11 @@ export interface Escrow {
   readonly canBorrow: boolean;
   readonly canGovern: boolean;
   /** The active `UsufructCap`, if the signer holds it (sync). */
-  readonly cap: UsufructCap | null;
+  readonly usufructCap: UsufructCap | null;
   /** The `GovernanceCap`, if the signer holds it (sync). */
   readonly governanceCap: GovernanceCap | null;
   /** The `EarningsInbox`, if the signer holds it (sync). */
-  readonly earnings: EarningsInbox | null;
+  readonly earningsInbox: EarningsInbox | null;
 
   /**
    * Acquire the right of use for `tenures`. `payment` is required (a real
@@ -115,7 +115,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   const coin = coinInfo(state.coinType);
   const typeArguments: [string, string] = [state.assetType, state.coinType];
-  const cap: UsufructCap | null = role.capId
+  const usufructCap: UsufructCap | null = role.capId
     ? createCap(ctx, {
         capId: role.capId,
         escrowId: idStr,
@@ -124,7 +124,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
       })
     : null;
   const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
-  const earnings: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
+  const earningsInbox: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
 
   async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
     if (signer == null || owner == null) {
@@ -179,9 +179,9 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     canRent: owner != null && status !== 'retired',
     canBorrow: role.capId != null,
     canGovern: role.governs,
-    cap,
+    usufructCap,
     governanceCap,
-    earnings,
+    earningsInbox,
     rent,
     reader,
   };

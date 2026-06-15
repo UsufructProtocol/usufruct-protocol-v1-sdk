@@ -122,7 +122,7 @@ async function main() {
   step('5. NEW API — role re-resolves: Bob now holds the active cap');
   const swordAfter = await u.escrow(escrowA);
   check('canBorrow true now', swordAfter.canBorrow === true);
-  check('escrow.cap id matches the rented cap', swordAfter.cap?.id === cap.id, `${swordAfter.cap?.id}`);
+  check('escrow.usufructCap id matches the rented cap', swordAfter.usufructCap?.id === cap.id, `${swordAfter.usufructCap?.id}`);
   check('status occupied', swordAfter.status === 'occupied', swordAfter.status);
 
   step('6. overpay is allowed — the minimum is not a maximum (fresh escrow)');
