@@ -82,43 +82,41 @@ const market = (over: Partial<Market> = {}): Market => ({
 async function main() {
   console.log(`funder ${me}`);
 
-  step('1. integrate (new API) — mints escrow + governance cap + earnings inbox');
-  const { escrow, governor } = await u.integrate({ asset: await mintAsset(), market: market() });
+  step('1. integrate (new API) — mints THREE independent objects');
+  const { escrow, governanceCap, earnings } = await u.integrate({ asset: await mintAsset(), market: market() });
   check('escrow created', escrow.id.length === 66, escrow.id);
-  check('governance cap surfaced', governor.capId.length === 66, governor.capId);
-  check('earnings inbox surfaced', governor.earnings.inboxId.length === 66, governor.earnings.inboxId);
+  check('governance cap (object) surfaced', governanceCap.capId.length === 66, governanceCap.capId);
+  check('earnings inbox (separate object) surfaced', earnings.inboxId.length === 66, earnings.inboxId);
   const rp = await escrow.reader.restPrice();
   check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
 
-  step('2. governor.update — immediate commitment lets the price change');
-  await governor.update(escrow, market({ restPrice: DUMMY(0.02) }));
+  step('2. governanceCap.update — immediate commitment lets the price change');
+  await governanceCap.update(escrow, market({ restPrice: DUMMY(0.02) }));
   const rp2 = await (await u.escrow(escrow.id)).reader.restPrice();
   check('restPrice updated to 0.02 DUMMY', rp2.kind === 'fixed' && rp2.priceMist === 20_000_000n, j(rp2));
 
-  step('2b. governor.update — a deferred ensemble commitment is enforced (throws)');
+  step('2b. governanceCap.update — a deferred ensemble commitment is enforced (throws)');
   const b = await u.integrate({ asset: await mintAsset(), market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
   let threw = false;
   try {
-    await b.governor.update(b.escrow, market({ restPrice: DUMMY(0.05) }));
+    await b.governanceCap.update(b.escrow, market({ restPrice: DUMMY(0.05) }));
   } catch (e) {
     threw = e instanceof CommittedEnsemble;
   }
   check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
 
-  step('3. portfolio — list a second escrow under the same cap + inbox');
-  const listed = await governor.list(await mintAsset(), market());
+  step('3. portfolio — list a second escrow under the same cap, naming the inbox');
+  const listed = await governanceCap.list(await mintAsset(), market(), { earnings: earnings.inboxId });
   check('portfolio escrow listed', listed.id.length === 66, listed.id);
-  // Portfolio proof (cheap + deterministic): both escrows are governed by the
-  // SAME cap. (governor.escrows() byGovernor returns the funder's entire history
-  // — ~90 escrows here — so it's exercised offline, not hammered live.)
-  const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governor?.capId;
-  const govL = (await withRetry('read listed', () => u.escrow(listed.id))).governor?.capId;
-  check('both escrows share one governance cap (portfolio)', govA === governor.capId && govL === governor.capId, `${govA} / ${govL}`);
+  // Portfolio proof (cheap + deterministic): both escrows name the SAME cap.
+  const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governanceCapId;
+  const govL = (await withRetry('read listed', () => u.escrow(listed.id))).governanceCapId;
+  check('both escrows are governed by the same cap (portfolio)', govA === governanceCap.capId && govL === governanceCap.capId, `${govA} / ${govL}`);
 
   step('4. retire + claim — pull an idle asset back out');
   const r = await u.integrate({ asset: await mintAsset(), market: market() });
-  await r.governor.retire(r.escrow);
-  const claimed = await r.governor.claim(r.escrow);
+  await r.governanceCap.retire(r.escrow);
+  const claimed = await r.governanceCap.claim(r.escrow);
   check('claim returned the asset id', claimed.assetId.length === 66, claimed.assetId);
   const owner = (await client.core.getObject({ objectId: claimed.assetId })).object.owner;
   check('claimed asset is owned by the funder', j(owner).includes(me.slice(2)), j(owner));
@@ -148,12 +146,36 @@ async function main() {
   actions.applyPendingTransitionStates().toPtb(tx, { pkg: TESTNET, escrowId: id<'Escrow'>(e.escrow.id), typeArguments: [e.escrow.assetType, e.escrow.coinType] });
   await send(client, tx, funder);
 
-  const pending = await e.governor.earnings.balance();
-  const collected = await e.governor.earnings.collect();
+  const pending = await e.earnings.balance();
+  const collected = await e.earnings.collect();
   const dummyPending = pending.find((p) => p.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   const dummyCollected = collected.find((c) => c.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   check('earnings collected > 0', dummyCollected > 0n, `${collected.map((c) => `${c.amount}`).join(', ')}`);
   check('balance() preview == collect() (conservation per coin)', dummyPending === dummyCollected, `pending=${dummyPending} collected=${dummyCollected}`);
+
+  step('6. OBJECT-CENTRIC PROOF — transfer the GovernanceCap; governance follows the object');
+  const t = await u.integrate({ asset: await mintAsset(), market: market() });
+  const carol = Ed25519Keypair.generate();
+  {
+    const tx = new Transaction(); // fund Carol with gas so she can sign
+    tx.transferObjects([tx.splitCoins(tx.gas, [100_000_000n])[0]!], carol.toSuiAddress());
+    await send(client, tx, funder);
+  }
+  // the funder (current holder) hands governance to Carol — the cap is a bearer object
+  await t.governanceCap.transfer(carol.toSuiAddress());
+  // Carol, now holding the cap, governs (she never called integrate):
+  const uc = usufruct({ client, signer: carol, assetSchema: dummyAssetSchema });
+  await uc.governanceCap(t.governanceCap.capId).update(t.escrow.id, market({ restPrice: DUMMY(0.03) }));
+  const rpC = await withRetry('readback after Carol governs', () => u.escrow(t.escrow.id).then((x) => x.reader.restPrice()));
+  check('the NEW holder (Carol) governs — update applied', rpC.kind === 'fixed' && rpC.priceMist === 30_000_000n, j(rpC));
+  // the funder, no longer holding the cap, cannot govern:
+  let funderBlocked = false;
+  try {
+    await u.governanceCap(t.governanceCap.capId).update(t.escrow.id, market({ restPrice: DUMMY(0.04) }));
+  } catch {
+    funderBlocked = true;
+  }
+  check('the FORMER holder (funder) can no longer govern — the role left with the object', funderBlocked);
 
   finish();
 }
