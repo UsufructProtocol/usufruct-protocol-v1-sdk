@@ -22,7 +22,8 @@
     "governor": "tsx scripts/governor-slice.ts",
     "demo": "tsx scripts/usufruct-in-action.ts",
     "lifecycle": "tsx scripts/governor-lifecycle.ts",
-    "challenge": "tsx scripts/challenge-flow.ts"
+    "challenge": "tsx scripts/challenge-flow.ts",
+    "secondary": "tsx scripts/secondary-market.ts"
   },
   "keywords": [
     "sui",
