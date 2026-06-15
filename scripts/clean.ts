@@ -18,7 +18,7 @@ import { retire as retireCall, claimAsset as claimCall } from '../src/codegen/us
 import { TESTNET } from '../src/config/network.js';
 import { usufruct } from '../src/index.js';
 import { fetchTypeArgs } from '../src/highlevel/typeargs.js';
-import { loadSigner, makeClient, rateLimited, send, sleep } from './lib.js';
+import { loadSigner, makeClient, rateLimited, retry429, send, sleep } from './lib.js';
 
 const PKG = TESTNET.packageId;
 const DRY = process.argv.includes('--dry');
@@ -41,7 +41,7 @@ async function discover(): Promise<Listed[]> {
   const seen = new Set<string>();
   let cursor: unknown = null;
   do {
-    const r = (await rpc.queryEvents({ query: { MoveEventType: type }, cursor: cursor as never, limit: 50, order: 'descending' })) as {
+    const r = (await retry429(() => rpc.queryEvents({ query: { MoveEventType: type }, cursor: cursor as never, limit: 50, order: 'descending' }))) as {
       data: Array<{ sender?: string; parsedJson: { escrow_id: string; governance_cap_id: string; governor_address: string } }>;
       hasNextPage: boolean;
       nextCursor: unknown;
@@ -60,7 +60,7 @@ async function discover(): Promise<Listed[]> {
 
 /** Current SUI balance (mist) of the signer. */
 async function suiMist(): Promise<bigint> {
-  const b = (await rpc.getBalance({ owner: me, coinType: '0x2::sui::SUI' })) as { totalBalance: string };
+  const b = (await retry429(() => rpc.getBalance({ owner: me, coinType: '0x2::sui::SUI' }))) as { totalBalance: string };
   return BigInt(b.totalBalance);
 }
 
