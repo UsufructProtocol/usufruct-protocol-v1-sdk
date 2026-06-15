@@ -24,7 +24,8 @@
     "lifecycle": "tsx scripts/governor-lifecycle.ts",
     "challenge": "tsx scripts/challenge-flow.ts",
     "secondary": "tsx scripts/secondary-market.ts",
-    "fee": "tsx scripts/protocol-fee.ts"
+    "fee": "tsx scripts/protocol-fee.ts",
+    "earnings": "tsx scripts/earnings-collect.ts"
   },
   "keywords": [
     "sui",
