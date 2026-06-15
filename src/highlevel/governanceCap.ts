@@ -27,6 +27,7 @@ import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
+import { readMarket } from './marketReadback.js';
 import { createdIdByType, execute } from './send.js';
 
 /** An escrow id, or a resolved `Escrow` handle. */
@@ -36,7 +37,12 @@ export interface GovernanceCap {
   readonly capId: string;
 
   // per-escrow governance (the target escrow is required — one cap, many escrows)
-  update(escrow: EscrowRef, market: Market): Promise<{ digest: string }>;
+  /**
+   * Change the market. Takes a `Partial<Market>` — only the fields you change;
+   * the rest are read from the current on-chain market and preserved. (You
+   * reasoned about every field at `integrate`; modifying touches a subset.)
+   */
+  update(escrow: EscrowRef, changes: Partial<Market>): Promise<{ digest: string }>;
   retire(escrow: EscrowRef): Promise<{ digest: string }>;
   claim(escrow: EscrowRef): Promise<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Promise<{ digest: string }>;
@@ -93,11 +99,22 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
   return {
     capId,
 
-    update(ref, market) {
-      const { ensemble } = toEnsembleConfig(market);
-      return write('update', ref, (tx, r) =>
-        updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
-      );
+    async update(ref, changes) {
+      const s = need('update');
+      const r = await resolveRef(ref);
+      // Read the current market, overlay the changes, send the full ensemble.
+      const reader = createReader(client, {
+        packageId,
+        escrowId: r.escrowId,
+        typeArguments: r.typeArguments,
+        ...(assetSchema ? { assetSchema } : {}),
+      });
+      const current = await readMarket(reader, r.typeArguments[1]);
+      const { ensemble } = toEnsembleConfig({ ...current, ...changes });
+      const tx = new Transaction();
+      updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
+      const res = await execute(client, tx, s).catch(mapAbort);
+      return { digest: res.digest };
     },
 
     retire(ref) {

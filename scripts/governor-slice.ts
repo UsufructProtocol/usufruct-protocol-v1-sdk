@@ -94,16 +94,18 @@ async function main() {
   const rp = await escrow.reader.restPrice();
   check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
 
-  step('2. governanceCap.update — immediate commitment lets the price change');
-  await governanceCap.update(escrow, market({ restPrice: DUMMY(0.02) }));
-  const rp2 = await (await u.escrow(escrow.id)).reader.restPrice();
+  step('2. governanceCap.update — Partial<Market> (only the price); the rest is preserved');
+  await governanceCap.update(escrow, { restPrice: DUMMY(0.02) }); // ← just one field
+  const after = await u.escrow(escrow.id);
+  const [rp2, shape2] = await Promise.all([after.reader.restPrice(), after.reader.auctionShape()]);
   check('restPrice updated to 0.02 DUMMY', rp2.kind === 'fixed' && rp2.priceMist === 20_000_000n, j(rp2));
+  check('partial update preserved the rest (auctionShape still linear)', shape2.kind === 'linear', shape2.kind);
 
   step('2b. governanceCap.update — a deferred ensemble commitment is enforced (throws)');
   const b = await u.integrate({ asset: await mintAsset(), market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
   let threw = false;
   try {
-    await b.governanceCap.update(b.escrow, market({ restPrice: DUMMY(0.05) }));
+    await b.governanceCap.update(b.escrow, { restPrice: DUMMY(0.05) });
   } catch (e) {
     threw = e instanceof CommittedEnsemble;
   }

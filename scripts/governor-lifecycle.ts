@@ -38,31 +38,32 @@ async function main() {
     coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
-    auctionShape: 'linear',
+    auctionShape: 'smoothstep', // ← we'll prove this survives a partial update
     descent: 'off',
     handover: 'off',
-    // NOTE (ceremony found): there is no `escalation: 'off'` — and a 0 delta aborts
-    // on-chain (price_escalation_policy::new_fixed_delta). So "no escalation" can't
-    // be said cleanly; you must pass a magic tiny nonzero.
-    escalation: { fixed: DUMMY(0.0001) },
+    escalation: 'off', // no escalation (the protocol's minimal delta)
     retireCommitment: 'immediate', // I can pull the asset anytime
     ensembleCommitment: 'immediate', // I can change the market anytime (for now)
   };
   const { escrow, governanceCap } = await u.integrate({ asset: swordId, market });
   console.log(`① listed ${escrow.id} — floor ${escrow.floorPrice}, cap ${governanceCap.capId}\n`);
 
-  // ════════════ ② ADJUST — bump the rest price ════════════
-  // ⚠ CEREMONY: to change ONE field I must re-state the WHOLE market (every field
-  //   is required). I spread the prior `market` and override `restPrice`.
-  await governanceCap.update(escrow, { ...market, restPrice: DUMMY(0.02) });
-  console.log(`② adjusted — floor is now ${await escrow.reader.restPrice().then((r) => (r.kind === 'fixed' ? r.priceMist : '?'))} mist\n`);
+  // ════════════ ② ADJUST — bump ONLY the rest price ════════════
+  // No ceremony: pass just what changes. The rest of the market is read from the
+  // chain and preserved — so `auctionShape: 'smoothstep'` survives untouched.
+  await governanceCap.update(escrow, { restPrice: DUMMY(0.02) });
+  const [floor, shape] = await Promise.all([
+    escrow.reader.restPrice().then((r) => (r.kind === 'fixed' ? r.priceMist : 0n)),
+    escrow.reader.auctionShape().then((s) => s.kind),
+  ]);
+  console.log(`② adjusted — floor now ${floor} mist; auctionShape preserved: ${shape}\n`);
 
   // ════════════ ③ COMMIT — bind my own hands so renters can trust the market ════════════
   await governanceCap.extendEnsembleCommitment(escrow, { deferredFor: '7d' });
   // now the market is locked for 7 days — a further price change is rejected:
   let locked = false;
   try {
-    await governanceCap.update(escrow, { ...market, restPrice: DUMMY(0.05) });
+    await governanceCap.update(escrow, { restPrice: DUMMY(0.05) });
   } catch (e) {
     locked = e instanceof CommittedEnsemble;
   }

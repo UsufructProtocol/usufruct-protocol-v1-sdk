@@ -56,7 +56,10 @@ describe('highlevel/market — toEnsembleConfig', () => {
       .toEqual({ kind: 'powerLaw', alphaNum: 2, alphaDen: 3 });
   });
 
-  it('maps escalation (fixed + compound)', () => {
+  it('maps escalation (off / fixed / compound)', () => {
+    // 'off' → the minimal valid delta (1 mist); a 0 delta aborts on-chain.
+    expect(toEnsembleConfig(full({ escalation: 'off' })).ensemble.escalation)
+      .toEqual({ kind: 'fixedDelta', deltaMist: 1n });
     expect(toEnsembleConfig(full({ escalation: { fixed: SUI(0.05) } })).ensemble.escalation)
       .toEqual({ kind: 'fixedDelta', deltaMist: 50_000_000n });
     expect(toEnsembleConfig(full({ escalation: { compound: { bps: 100, delta: price(7n) } } })).ensemble.escalation)
