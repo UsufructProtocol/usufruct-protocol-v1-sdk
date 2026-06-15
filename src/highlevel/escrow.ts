@@ -64,8 +64,12 @@ export interface Escrow {
    */
   rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap>;
 
-  /** Permissionless keeper: settle any pending lazy transitions (e.g. tenure expiry). */
-  apply(): Promise<{ digest: string }>;
+  /**
+   * Permissionless keeper: materialize the pending lazy transitions (tenure
+   * expiry, auction expiry, handover) — the Move `apply_pending_transition_states`.
+   * Rarely called by hand; the next interaction (e.g. a rent) applies them anyway.
+   */
+  applyPendingTransitionStates(): Promise<{ digest: string }>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -119,8 +123,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   const coin = coinInfo(state.coinType);
   const typeArguments: [string, string] = [state.assetType, state.coinType];
-  async function apply(): Promise<{ digest: string }> {
-    if (signer == null) throw new NotConnected('apply requires a signer (it submits a tx)');
+  async function applyPending(): Promise<{ digest: string }> {
+    if (signer == null) throw new NotConnected('applyPendingTransitionStates requires a signer (it submits a tx)');
     const tx = new Transaction();
     applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments });
     const res = await execute(client, tx, signer).catch(mapAbort);
@@ -195,7 +199,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     governanceCap,
     earningsInbox,
     rent,
-    apply,
+    applyPendingTransitionStates: applyPending,
     reader,
   };
 }

@@ -45,18 +45,28 @@ async function setup(): Promise<string> {
 }
 
 async function main() {
-  const sword = await setup();
+  const swordId = await setup(); // the raw asset object id, before it's wrapped into an escrow
 
   // ════════════ ① INTEGRATE — Alice lists her asset as a rental market ════════════
   const alice = usufruct({ network: 'testnet', client, signer: ALICE, assetSchema: dummyAssetSchema });
 
   const { escrow, governanceCap, earningsInbox } = await alice.integrate({
-    asset: sword,
+    asset: swordId,
     market: {
+      // ── pricing & tenure (required) ──
       restPrice: DUMMY(0.01), // costs 0.01 DUMMY per tenure
       tenure: '20s', // each tenure lasts 20s
       coin: DUMMY,
-      handover: '5s', // a displaced renter keeps it 5s
+      // ── dynamics (optional — shown here; omit to take the defaults) ──
+      multiTenure: false, //         default: single tenure
+      creditShape: 'linear', //      default — how rent credit accrues over a tenure
+      auctionShape: 'smoothstep', // default 'linear' — how the floor drops in the post-tenancy Dutch auction
+      descent: '10s', //             default 'off' — the auction window back down to the floor
+      handover: '5s', //             default 'off' — a displaced renter keeps the asset this long
+      escalation: { fixed: DUMMY(0.001) }, // default ~none — each new tenancy starts a bit higher
+      // ── commitments (optional — the governor binds its own hands) ──
+      retireCommitment: 'immediate', //   default — can pull the asset anytime
+      ensembleCommitment: 'immediate', // default — can change the market anytime
     },
   });
   console.log(`① listed ${escrow.id}`);
@@ -65,8 +75,8 @@ async function main() {
   // ════════════ ② RENT — Bob acquires the right of use ════════════
   const bob = usufruct({ network: 'testnet', client, signer: BOB, assetSchema: dummyAssetSchema });
 
-  const listing = await bob.escrow(escrow.id);
-  const cap = await listing.rent({ tenures: 1, payment: bob.fromBalance(DUMMY) });
+  const sword = await bob.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
+  const cap = await sword.rent({ tenures: 1, payment: bob.fromBalance(DUMMY) });
   console.log(`② rented — usufructCap ${cap.id}`);
   console.log(`   paid ${cap.receipt!.paid} · until ${cap.receipt!.expiresAt.toISOString()}\n`);
 
@@ -84,7 +94,7 @@ async function main() {
   // (permissionless), then collect from the EarningsInbox Alice holds.
   console.log('④ waiting for the tenure to expire, then settling…');
   await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-  await listing.apply();
+  await sword.applyPendingTransitionStates(); // permissionless; the next rent would do it anyway
   const earned = await earningsInbox.collect();
   console.log(`   collected ${earned.map((e) => `${e.amount}`).join(', ') || '(nothing yet)'} from ${earningsInbox.inboxId}`);
 }
