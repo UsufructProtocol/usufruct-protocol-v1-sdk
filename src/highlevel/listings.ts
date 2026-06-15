@@ -86,6 +86,7 @@ export async function discoverIntegrated(
     sender?: string;
     integrator?: string;
     assetType?: string;
+    coinType?: string;
     governanceCapId?: string;
     earningsInboxId?: string;
     feeInboxId?: string;
@@ -104,6 +105,7 @@ export async function discoverIntegrated(
     const cap = s(j['governance_cap_id']);
     if (filter.integrator && s(j['governor_address']) !== filter.integrator) continue;
     if (filter.assetType && normType(s(j['asset_type'])) !== filter.assetType) continue;
+    if (filter.coinType && normType(s(j['coin_type'])) !== filter.coinType) continue;
     if (filter.governanceCapId && cap !== filter.governanceCapId) continue;
     if (filter.earningsInboxId && s(j['earnings_inbox_id']) !== filter.earningsInboxId) continue;
     if (filter.feeInboxId && s(j['fee_inbox_id']) !== filter.feeInboxId) continue;

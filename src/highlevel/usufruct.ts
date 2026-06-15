@@ -151,6 +151,8 @@ export interface Usufruct {
   escrowsGovernedByCap(governanceCapId: string): Promise<EscrowListing[]>;
   /** The escrows of a given asset Move type, as decode-free `EscrowListing`s. */
   escrowsByAssetType(assetType: string): Promise<EscrowListing[]>;
+  /** The escrows priced in a given coin (payment `CoinType`), as `EscrowListing`s. */
+  escrowsByCoinType(coinType: string): Promise<EscrowListing[]>;
 
   /** The four primitives, untouched. */
   readonly primitives: Primitives;
@@ -304,6 +306,9 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     },
     async escrowsByAssetType(assetType) {
       return discoverIntegrated(ctx(), { assetType: normalizeStructTag(assetType) });
+    },
+    async escrowsByCoinType(coinType) {
+      return discoverIntegrated(ctx(), { coinType: normalizeStructTag(coinType) });
     },
 
     primitives,
