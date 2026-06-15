@@ -4,7 +4,7 @@
  * are `Duration` ('7d'/'1h'/ms), shapes/commitments are named — none of it is
  * hidden (it's the most important thing a governor configures).
  */
-import { type Bps, bps as toBps, mist as toMist, type Ms, ms as toMs } from '../primitives/brand.js';
+import { type Bps, bps as toBps, type Ms, ms as toMs } from '../primitives/brand.js';
 import type {
   EnsembleCommitmentConfig,
   EnsembleConfig,
@@ -43,9 +43,9 @@ export interface Market {
   readonly auctionShape: Shape;
   readonly descent: 'off' | Duration;
   readonly handover: 'off' | 'fullTenure' | Duration;
-  // 'off' is the minimal escalation the protocol allows (a 0 delta aborts on-chain).
+  // The price ALWAYS escalates — the protocol has no "off" (a 0 delta aborts
+  // on-chain, EDeltaZero). The governor must choose a real, positive delta.
   readonly escalation:
-    | 'off'
     | { readonly fixed: Price }
     | { readonly compound: { readonly bps: number | bigint; readonly delta: Price } };
   // commitments
@@ -92,7 +92,6 @@ function descentToConfig(d: 'off' | Duration): NonNullable<EnsembleConfig['desce
 }
 
 function escalationToConfig(e: Market['escalation']): NonNullable<EnsembleConfig['escalation']> {
-  if (e === 'off') return { kind: 'fixedDelta', deltaMist: toMist(1n) }; // minimal valid delta
   return 'fixed' in e
     ? { kind: 'fixedDelta', deltaMist: e.fixed.mist }
     : { kind: 'compoundDelta', bps: toBps(e.compound.bps) as Bps, deltaMist: e.compound.delta.mist };

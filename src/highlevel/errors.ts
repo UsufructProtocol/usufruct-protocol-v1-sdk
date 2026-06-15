@@ -31,6 +31,9 @@ export class CommittedRetire extends UsufructError {}
 /** A governance write attempted without holding the escrow's GovernanceCap. */
 export class NotGovernor extends UsufructError {}
 
+/** Invalid `escalation` — the price always escalates: the delta must be > 0 (and bps in range). */
+export class InvalidEscalation extends UsufructError {}
+
 /**
  * Move abort → typed error, keyed by (module, code). Runtime aborts carry the
  * numeric code + the module where they fired (e.g. `abort code: 18, in
@@ -47,6 +50,8 @@ const ABORTS: ReadonlyArray<{
   { module: 'asset_state', code: 4, Ctor: CommittedRetire }, // ERetireCommitmentFloorNotElapsed
   { module: 'asset_state', code: 2, Ctor: NotAvailable }, // ERetireFlagBlocksBid
   { module: 'asset_state', code: 3, Ctor: NotAvailable }, // ERetiredNoBid
+  { module: 'price_escalation_policy', code: 0, Ctor: InvalidEscalation }, // EDeltaZero
+  { module: 'price_escalation_policy', code: 1, Ctor: InvalidEscalation }, // EBpsRange
 ];
 
 const ABORT_RE = /abort code: (\d+),?\s*in '0x\w+::(\w+)::/;

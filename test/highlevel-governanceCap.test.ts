@@ -1,7 +1,7 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { describe, expect, it } from 'vitest';
 import type { HandleCtx } from '../src/highlevel/ctx.js';
-import { CommittedEnsemble, CommittedRetire, NotConnected, mapAbort } from '../src/highlevel/errors.js';
+import { CommittedEnsemble, CommittedRetire, InvalidEscalation, NotConnected, mapAbort } from '../src/highlevel/errors.js';
 import { createGovernanceCap } from '../src/highlevel/governanceCap.js';
 import { createInbox } from '../src/highlevel/inbox.js';
 import type { Market } from '../src/highlevel/market.js';
@@ -74,6 +74,9 @@ describe('highlevel/errors — commitment aborts map to typed errors', () => {
   it('maps the ensemble + retire commitment floors by (module, code)', () => {
     expect(() => mapAbort(abort(18))).toThrow(CommittedEnsemble);
     expect(() => mapAbort(abort(4))).toThrow(CommittedRetire);
+  });
+  it('maps the price-escalation EDeltaZero abort to InvalidEscalation', () => {
+    expect(() => mapAbort(abort(0, 'price_escalation_policy'))).toThrow(InvalidEscalation);
   });
   it('rethrows an abort with an unmapped code', () => {
     const e = abort(99);

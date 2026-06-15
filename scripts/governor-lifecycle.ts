@@ -41,7 +41,7 @@ async function main() {
     auctionShape: 'smoothstep', // ← we'll prove this survives a partial update
     descent: 'off',
     handover: 'off',
-    escalation: 'off', // no escalation (the protocol's minimal delta)
+    escalation: { fixed: DUMMY(0.001) }, // the price always escalates — pick a real delta
     retireCommitment: 'immediate', // I can pull the asset anytime
     ensembleCommitment: 'immediate', // I can change the market anytime (for now)
   };

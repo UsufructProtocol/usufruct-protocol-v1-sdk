@@ -33,4 +33,5 @@ export {
   CommittedEnsemble,
   CommittedRetire,
   NotGovernor,
+  InvalidEscalation,
 } from './errors.js';

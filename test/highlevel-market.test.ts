@@ -29,7 +29,7 @@ describe('highlevel/market — toEnsembleConfig', () => {
     auctionShape: 'linear',
     descent: 'off',
     handover: 'off',
-    escalation: { fixed: SUI(0) },
+    escalation: { fixed: SUI(0.001) },
     retireCommitment: 'immediate',
     ensembleCommitment: 'immediate',
     ...over,
@@ -56,10 +56,7 @@ describe('highlevel/market — toEnsembleConfig', () => {
       .toEqual({ kind: 'powerLaw', alphaNum: 2, alphaDen: 3 });
   });
 
-  it('maps escalation (off / fixed / compound)', () => {
-    // 'off' → the minimal valid delta (1 mist); a 0 delta aborts on-chain.
-    expect(toEnsembleConfig(full({ escalation: 'off' })).ensemble.escalation)
-      .toEqual({ kind: 'fixedDelta', deltaMist: 1n });
+  it('maps escalation (fixed + compound) — the price always escalates, no off', () => {
     expect(toEnsembleConfig(full({ escalation: { fixed: SUI(0.05) } })).ensemble.escalation)
       .toEqual({ kind: 'fixedDelta', deltaMist: 50_000_000n });
     expect(toEnsembleConfig(full({ escalation: { compound: { bps: 100, delta: price(7n) } } })).ensemble.escalation)
