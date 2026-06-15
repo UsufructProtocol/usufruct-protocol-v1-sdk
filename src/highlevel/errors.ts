@@ -34,6 +34,12 @@ export class NotGovernor extends UsufructError {}
 /** Invalid `escalation` — the price always escalates: the delta must be > 0 (and bps in range). */
 export class InvalidEscalation extends UsufructError {}
 
+/** Invalid curve `Shape` — e.g. powerLaw `num === den` (that's just `linear`). */
+export class InvalidShape extends UsufructError {}
+
+/** An invalid market value the policies reject — a zero duration/price, or handover > tenure. */
+export class InvalidMarket extends UsufructError {}
+
 /**
  * Move abort → typed error, keyed by (module, code). Runtime aborts carry the
  * numeric code + the module where they fired (e.g. `abort code: 18, in
@@ -52,6 +58,19 @@ const ABORTS: ReadonlyArray<{
   { module: 'asset_state', code: 3, Ctor: NotAvailable }, // ERetiredNoBid
   { module: 'price_escalation_policy', code: 0, Ctor: InvalidEscalation }, // EDeltaZero
   { module: 'price_escalation_policy', code: 1, Ctor: InvalidEscalation }, // EBpsRange
+  // curve shape ranges (curve_shape_policy): num/den/alpha ranges + degenerate-linear
+  { module: 'curve_shape_policy', code: 0, Ctor: InvalidShape }, // EAlphaNumRange
+  { module: 'curve_shape_policy', code: 1, Ctor: InvalidShape }, // EAlphaDenRange
+  { module: 'curve_shape_policy', code: 2, Ctor: InvalidShape }, // EDegenerateLinear (num === den)
+  { module: 'curve_shape_policy', code: 3, Ctor: InvalidShape }, // EAlphaAbsRange
+  // invalid market values rejected by the field policies (all code 0 = a zero, or handover > tenure)
+  { module: 'rest_price_policy', code: 0, Ctor: InvalidMarket }, // EPriceZero
+  { module: 'tenure_duration_policy', code: 0, Ctor: InvalidMarket }, // EDurationZero
+  { module: 'auction_window_policy', code: 0, Ctor: InvalidMarket }, // EDescentCeilingZero
+  { module: 'handover_policy', code: 0, Ctor: InvalidMarket }, // EHandoverFloorZero
+  { module: 'retire_commitment_policy', code: 0, Ctor: InvalidMarket }, // ERetireCommitmentFloorZero
+  { module: 'ensemble_commitment_policy', code: 0, Ctor: InvalidMarket }, // EEnsembleCommitmentFloorZero
+  { module: 'policy_ensemble', code: 0, Ctor: InvalidMarket }, // EHandoverFloorExceedsTenure
 ];
 
 const ABORT_RE = /abort code: (\d+),?\s*in '0x\w+::(\w+)::/;

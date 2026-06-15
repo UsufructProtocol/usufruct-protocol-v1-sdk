@@ -16,13 +16,25 @@ import type { CoinTag, Price } from './value.js';
 /** A duration: `'7d'`/`'12h'`/`'30m'`/`'25s'`/`'500ms'`, or a number of ms. */
 export type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;
 
-/** A curve shape, in human form. */
+/** powerLaw exponent numerator — the protocol allows 1..8 (`curve_shape_policy`). */
+export type PowerLawNum = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** powerLaw exponent denominator — the protocol allows 1..4 (`curve_shape_policy`). */
+export type PowerLawDen = 1 | 2 | 3 | 4;
+/** exponential alpha — magnitude 1..8, signed; `<0` decays. 0 is not allowed. */
+export type ExpAlpha = -8 | -7 | -6 | -5 | -4 | -3 | -2 | -1 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+/**
+ * A curve shape, in human form — the ranges match `curve_shape_policy.move`, so
+ * an out-of-range value is a compile error, not an on-chain abort. (One residual
+ * runtime rule: `num !== den` for powerLaw — `num === den` is just `linear` and
+ * the chain rejects it → `InvalidShape`.)
+ */
 export type Shape =
   | 'linear'
   | 'smoothstep'
   | 'logistic'
-  | { readonly powerLaw: { readonly num: number; readonly den: number } }
-  | { readonly exponential: { readonly alpha: number } }; // signed; alpha<0 ⇒ decaying
+  | { readonly powerLaw: { readonly num: PowerLawNum; readonly den: PowerLawDen } }
+  | { readonly exponential: { readonly alpha: ExpAlpha } };
 
 /** A governor's trust promise: act now, or bind its hands for a while. */
 export type Commitment = 'immediate' | { readonly deferredFor: Duration };

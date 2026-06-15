@@ -1,7 +1,7 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { describe, expect, it } from 'vitest';
 import type { HandleCtx } from '../src/highlevel/ctx.js';
-import { CommittedEnsemble, CommittedRetire, InvalidEscalation, NotConnected, mapAbort } from '../src/highlevel/errors.js';
+import { CommittedEnsemble, CommittedRetire, InvalidEscalation, InvalidMarket, InvalidShape, NotConnected, mapAbort } from '../src/highlevel/errors.js';
 import { createGovernanceCap } from '../src/highlevel/governanceCap.js';
 import { createInbox } from '../src/highlevel/inbox.js';
 import type { Market } from '../src/highlevel/market.js';
@@ -77,6 +77,11 @@ describe('highlevel/errors — commitment aborts map to typed errors', () => {
   });
   it('maps the price-escalation EDeltaZero abort to InvalidEscalation', () => {
     expect(() => mapAbort(abort(0, 'price_escalation_policy'))).toThrow(InvalidEscalation);
+  });
+  it('maps curve-shape + field-policy aborts to typed errors', () => {
+    expect(() => mapAbort(abort(2, 'curve_shape_policy'))).toThrow(InvalidShape); // num === den
+    expect(() => mapAbort(abort(0, 'tenure_duration_policy'))).toThrow(InvalidMarket); // zero duration
+    expect(() => mapAbort(abort(0, 'policy_ensemble'))).toThrow(InvalidMarket); // handover > tenure
   });
   it('rethrows an abort with an unmapped code', () => {
     const e = abort(99);

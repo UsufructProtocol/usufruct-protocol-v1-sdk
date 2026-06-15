@@ -16,7 +16,7 @@ export { SUI, price, coinTag, coinInfo } from './value.js';
 export type { Price, CoinInfo, CoinTag } from './value.js';
 
 export { duration, toEnsembleConfig } from './market.js';
-export type { Market, Duration, Shape, Commitment } from './market.js';
+export type { Market, Duration, Shape, Commitment, PowerLawNum, PowerLawDen, ExpAlpha } from './market.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
 export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
@@ -34,4 +34,6 @@ export {
   CommittedRetire,
   NotGovernor,
   InvalidEscalation,
+  InvalidShape,
+  InvalidMarket,
 } from './errors.js';

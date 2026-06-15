@@ -5,7 +5,7 @@
  */
 import type { Reader } from '../read/reader.js';
 import type { Commitment as ViewCommitment, CurveShape } from '../views/config.js';
-import type { Commitment, Market, Shape } from './market.js';
+import type { Commitment, ExpAlpha, Market, PowerLawDen, PowerLawNum, Shape } from './market.js';
 import { coinInfo, coinTag, price } from './value.js';
 
 function curveToShape(c: CurveShape): Shape {
@@ -15,9 +15,10 @@ function curveToShape(c: CurveShape): Shape {
     case 'logistic':
       return c.kind;
     case 'powerLaw':
-      return { powerLaw: { num: c.alphaNum, den: c.alphaDen } };
+      // The chain stored these reduced and in range (num 1..8, den 1..4).
+      return { powerLaw: { num: c.alphaNum as PowerLawNum, den: c.alphaDen as PowerLawDen } };
     case 'exponential':
-      return { exponential: { alpha: c.alphaNeg ? -c.alphaAbs : c.alphaAbs } };
+      return { exponential: { alpha: (c.alphaNeg ? -c.alphaAbs : c.alphaAbs) as ExpAlpha } };
   }
 }
 
