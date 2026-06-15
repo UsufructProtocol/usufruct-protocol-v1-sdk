@@ -25,7 +25,8 @@
     "challenge": "tsx scripts/challenge-flow.ts",
     "secondary": "tsx scripts/secondary-market.ts",
     "fee": "tsx scripts/protocol-fee.ts",
-    "earnings": "tsx scripts/earnings-collect.ts"
+    "earnings": "tsx scripts/earnings-collect.ts",
+    "compose": "tsx scripts/reader-compose.ts"
   },
   "keywords": [
     "sui",
