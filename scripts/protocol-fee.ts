@@ -80,10 +80,10 @@ async function main() {
   // The fee inbox is a deployment SINGLETON shared by every escrow — its balance
   // is the running total of UNCOLLECTED fees across all escrows and coins. So we
   // measure this run's contribution as a DELTA, not as the absolute balance.
-  // ⚠ CEREMONY: its id is only reachable off an escrow handle (escrow.feeInboxId);
-  //   an arg-less `u.feeInbox()` resolving from the configured feeRef would fit.
+  // The holder resolves it with no id: u.feeInbox() reads the configured feeRef.
   const p = usufruct({ network: 'testnet', client, signer: PROTOCOL });
-  const feeInbox = p.feeInbox(escrow.feeInboxId);
+  const feeInbox = await p.feeInbox(); // arg-less: resolved from the configured ProtocolFeeRef
+  check('u.feeInbox() resolves the same singleton as escrow.feeInboxId', feeInbox.inboxId === escrow.feeInboxId);
   const dummyMist = async () =>
     (await feeInbox.balance()).find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   const before = await dummyMist();
@@ -109,7 +109,7 @@ async function main() {
   // ════════════ ⑤ GUARD — a non-holder cannot collect; the chain refuses ════════════
   // Authority IS possession: Alice doesn't hold the inbox, so her collect (which
   // needs &mut ProtocolFeeInbox) is rejected at execution — not by our code, by Sui.
-  const aliceFeeInbox = a.feeInbox(escrow.feeInboxId);
+  const aliceFeeInbox = await a.feeInbox();
   let refused = false;
   try {
     await aliceFeeInbox.collect();

@@ -26,6 +26,7 @@ import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
+import { resolveFeeInboxId } from './feeref.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
@@ -94,8 +95,13 @@ export interface Usufruct {
   governanceCap(id: string): GovernanceCap;
   /** An `EarningsInbox`. */
   earningsInbox(id: string): EarningsInbox;
-  /** The deployer's `ProtocolFeeInbox`. */
-  feeInbox(id: string): ProtocolFeeInbox;
+  /**
+   * The deployer's `ProtocolFeeInbox`. With no id, resolves the deployment
+   * singleton from the configured `ProtocolFeeRef` (the inbox is one object per
+   * deployment, pinned by the frozen ref) — so the holder just calls
+   * `u.feeInbox()` without hunting an id off an escrow.
+   */
+  feeInbox(id?: string): Promise<ProtocolFeeInbox>;
 
   /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
   coin(coin: CoinTag, amount: Price): CoinSource;
@@ -208,8 +214,9 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     earningsInbox(idStr) {
       return createInbox(ctx(), idStr, 'earnings');
     },
-    feeInbox(idStr) {
-      return createInbox(ctx(), idStr, 'fees');
+    async feeInbox(idStr) {
+      const inboxId = idStr ?? (await resolveFeeInboxId(client, feeRefId));
+      return createInbox(ctx(), inboxId, 'fees');
     },
 
     coin(coin, amount) {

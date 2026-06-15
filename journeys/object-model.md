@@ -46,7 +46,7 @@ cap? whose earnings?):
 | `UsufructCap` | `UsufructCap` | `borrow`/`.into`, `updateRefundAddress`, `burnIfStale`, `burn`, **`transfer`** | `u.usufructCap(id)` |
 | `GovernanceCap` | `GovernanceCap` | `update`/`retire`/`claim`/`extend*`, `renounce`, `list`, **`transfer`** | `u.governanceCap(id)` |
 | `EarningsInbox` | `EarningsInbox` | `balance`, `collect`, **`transfer`** | `u.earningsInbox(id)` |
-| `ProtocolFeeInbox` | `ProtocolFeeInbox` | `balance`, `collect`, **`transfer`** | `u.feeInbox(id)` |
+| `ProtocolFeeInbox` | `ProtocolFeeInbox` | `balance`, `collect`, **`transfer`** | `u.feeInbox()` — singleton, resolved from the `ProtocolFeeRef` (or `u.feeInbox(id)`) |
 
 There is **no `Governor`** handle. `integrate` mints three objects and returns
 three independent handles:
