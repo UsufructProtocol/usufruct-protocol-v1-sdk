@@ -8,10 +8,16 @@
  * kernel `reader` (exposed) or, later, `watch`/`priceCurve`.
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
-import { id as toId } from '../primitives/brand.js';
+import type { Signer } from '@mysten/sui/cryptography';
+import { Transaction } from '@mysten/sui/transactions';
+import { id as toId, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import type { Source } from '../primitives/source.js';
+import { rent as rentAction } from '../actions/rent.js';
 import type { UsufructCap } from './cap.js';
+import { type Payment, resolvePayment } from './coins.js';
+import { NotConnected, mapAbort } from './errors.js';
+import { createdIdByType, execute } from './send.js';
 import { coinInfo, price, type Price } from './value.js';
 import { resolveWhen } from './clock.js';
 import { resolveRole } from './role.js';
@@ -39,6 +45,13 @@ export interface Escrow {
   readonly canGovern: boolean;
   readonly cap: UsufructCap | null;
 
+  /**
+   * Acquire the right of use for `tenures`. `payment` is required (a real
+   * `Coin<C>` arg): pass a coin you control, or an opt-in sourcer
+   * (`u.fromBalance(C)` / `u.coin(C, amount)`). Returns the minted `UsufructCap`.
+   */
+  rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap>;
+
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
 }
@@ -62,10 +75,11 @@ export async function createEscrow(
   client: ClientWithCoreApi,
   packageId: string,
   source: Source,
-  owner: string | null,
+  signer: Signer | null,
   idStr: string,
   at?: When,
 ): Promise<Escrow> {
+  const owner = signer?.toSuiAddress() ?? null;
   const escrowId = toId<'Escrow'>(idStr);
 
   const [state, t] = await Promise.all([source.fetch(escrowId), resolveWhen(client, at)]);
@@ -92,6 +106,42 @@ export async function createEscrow(
     ? { id: role.capId, escrowId: idStr, receipt: null }
     : null;
 
+  async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
+    if (signer == null || owner == null) {
+      throw new NotConnected('rent requires a signer; pass one to usufruct() or u.connect()');
+    }
+    const count = BigInt(args.tenures);
+    const minimumMist = floorMist * count; // snapshot floor at fetch time `t`
+
+    const tx = new Transaction();
+    const { arg: payment, paidMist } = await resolvePayment(tx, client, owner, args.payment, {
+      minimumMist,
+      coinType: state.coinType,
+    });
+    const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
+      pkg: { packageId },
+      escrowId,
+      payment,
+      typeArguments: [state.assetType, state.coinType],
+    });
+    tx.transferObjects([minted], owner);
+
+    const res = await execute(client, tx, signer).catch(mapAbort);
+    const capId = createdIdByType(res, '::usufruct_cap::UsufructCap');
+    if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
+
+    const expiry = await reader.tenureExpiryMs();
+    return {
+      id: capId,
+      escrowId: idStr,
+      receipt: {
+        paid: price(paidMist, coin),
+        expiresAt: new Date(Number(expiry ?? 0n)),
+        digest: res.digest,
+      },
+    };
+  }
+
   return {
     id: idStr,
     assetType: state.assetType,
@@ -105,6 +155,7 @@ export async function createEscrow(
     canBorrow: role.capId != null,
     canGovern: role.governs,
     cap,
+    rent,
     reader,
   };
 }

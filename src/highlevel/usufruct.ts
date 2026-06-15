@@ -93,7 +93,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     },
 
     escrow(idStr, opts) {
-      return createEscrow(client, packageId, source, signer?.toSuiAddress() ?? null, idStr, opts?.at);
+      return createEscrow(client, packageId, source, signer, idStr, opts?.at);
     },
 
     coin(coin, amount) {

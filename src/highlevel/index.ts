@@ -17,4 +17,12 @@ export type { Price, CoinInfo, CoinTag } from './value.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
 export type { UsufructCap, RentReceipt } from './cap.js';
-export type { CoinSource } from './coins.js';
+export type { CoinSource, Payment } from './coins.js';
+
+export {
+  UsufructError,
+  InsufficientBalance,
+  InsufficientPayment,
+  NotAvailable,
+  NotConnected,
+} from './errors.js';
