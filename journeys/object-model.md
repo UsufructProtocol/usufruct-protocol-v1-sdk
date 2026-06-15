@@ -105,6 +105,55 @@ This keeps the UI ergonomics ("what can *I* do here?") while being honest that
 the answer is *possession*, resolved by an owned-objects lookup, not an identity
 the SDK assumes.
 
+## Reads: handle-snapshot vs reader-live
+
+There are two ways to read, and they divide the labour cleanly:
+
+| | `escrow.*` getters | `escrow.reader.*` |
+|---|---|---|
+| Freshness | **snapshot** at the fetch time `t` | **live** — each call hits the chain |
+| Cost | one batched fetch, then sync getters | one round-trip per call |
+| Surface | the curated hot fields | the ~80 drift-free kernel views |
+| After a write | **stale** — re-resolve with `u.escrow(id)` | already current — just call again |
+
+The handle's getters (`escrow.status`, `escrow.floorPrice`, `escrow.accruedCredit`,
+…) are a **coherent photograph** taken in a single fetch: every field agrees on
+the same `t`, and they're plain sync reads. That's what you want to render a view.
+But a photograph ages — after any write the getters describe the *old* state, and
+you get a fresh photo by re-resolving the handle.
+
+The `Reader` is the **live probe**. It hangs straight off the handle —
+`const reader = escrow.reader` — with **no re-wiring**: `packageId`, `escrowId`,
+and the type arguments were already resolved when the handle was built. Every
+`reader.*` call is its own round-trip, so the *same* `reader` object answers
+before *and* after a write, no re-resolve needed.
+
+So the two layers compose with zero seams — a read before a high-level write and
+after it differs, because the Reader sees what the write did:
+
+```ts
+const { escrow, governanceCap } = await u.integrate({ asset, market });
+const reader = escrow.reader; // live kernel views, straight off the handle
+
+const before = (await reader.restPrice()).priceMist;        // 10_000_000n
+await governanceCap.update(escrow, { restPrice: COIN(0.025) }); // high-level write
+const after = (await reader.restPrice()).priceMist;         // 25_000_000n — same `reader`
+```
+
+This holds across every write verb — a `rent()` flips `reader.isOccupied()`
+`false→true` and sets `reader.activeUsufructCapId()`; `applyPendingTransitionStates()`
+clears it again. (Live proof: `scripts/reader-compose.ts`, `npm run compose`.)
+
+One subtlety worth knowing: the Reader shows **real chain state, not a
+lazily-computed view**. After a tenure lapses but *before* you apply the
+transition, `reader.activeUsufructCapId()` still returns the sitting cap — the
+chain hasn't settled yet. It's the high-level `applyPendingTransitionStates()`
+write that materializes the transition. Both layers agree on the protocol's lazy
+semantics: nothing settles until a transaction touches the escrow.
+
+**Rule of thumb:** render from the handle snapshot; observe a write's effect, or
+reach a view the handle doesn't surface, through `escrow.reader`.
+
 ## Why this is the full expression of "resolve, don't hide" (rule #5)
 
 Rule #5: only the global singletons (`Clock`, `ProtocolFeeRef`) are injected;
