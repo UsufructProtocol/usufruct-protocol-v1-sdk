@@ -86,6 +86,42 @@ After the transfer, the new holder governs/collects/uses; the old holder's
 handle no longer works (the chain rejects a `tx.object(id)` it doesn't own →
 `NotGovernor` / not-owned).
 
+## Who transfers the produced objects — the high-level / primitives line
+
+The functions that mint objects return them **by value** — the protocol does
+**not** decide a destination:
+
+```move
+public fun integrate<...>(...): (GovernanceCap, EarningsInbox)  // returned
+public fun rent<...>(...): UsufructCap                          // returned
+public fun borrow_asset<...>(...): (Asset, AssetReceipt)        // returned
+```
+
+In Move a returned object *must* be consumed by the caller — transferred, wrapped,
+or passed on — or the transaction won't build. So the destination is a PTB
+decision, and that is exactly where the two layers divide:
+
+- **Primitives / kernel actions** (`src/actions`, `u.primitives`) return the
+  object as a **PTB value** for you to compose: transfer it elsewhere, hand it
+  straight into another call, batch it, sponsor it. Nothing is implied.
+- **High-level handles** make the common choice for you — they append
+  `tx.transferObjects([minted], sender)` so the cap lands in your wallet:
+
+  ```ts
+  // u.integrate → tx.transferObjects([GovernanceCap, EarningsInbox], sender)
+  // escrow.rent → tx.transferObjects([UsufructCap], sender)
+  ```
+
+So "the cap arrives in my wallet" is a **high-level convenience, not protocol
+behaviour**. The same by-value return is what makes everything in this document
+possible at the primitive layer: a secondary-market `transfer(to)` sends it to a
+buyer instead; the asset-agnostic flow feeds a `rent`-minted `UsufructCap`
+straight into an `integrate` (the SDK's default transfer just makes that two txs
+instead of one); `borrow.into` composes the borrowed asset mid-PTB. The high-level
+picks the default destination; the primitives hand you the value and let you
+decide. Rule #5 again — the object is explicit, and someone (you, or the SDK on
+your behalf) always says where it goes.
+
 ## The Escrow: identities (data) vs holdings (what *I* hold)
 
 The escrow knows, as plain data, **which objects relate to it** — regardless of
