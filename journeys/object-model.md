@@ -161,6 +161,35 @@ semantics: nothing settles until a transaction touches the escrow.
 **Rule of thumb:** render from the handle snapshot; observe a write's effect, or
 reach a view the handle doesn't surface, through `escrow.reader`.
 
+## Renting: the decision is the amount, not the coin
+
+The coin is **fixed at `integrate`** (a `phantom CoinType`, immutable). So at
+rent time the renter does not *choose* a coin — the escrow already dictates it.
+The one real decision is the **amount**: pay the floor, or overpay (the surplus
+becomes stake — more credit/time). `rent` reflects exactly that:
+
+```ts
+escrow.rent({ tenures: 1 })                       // pay the floor (floorPrice × tenures)
+escrow.rent({ tenures: 1, pay: escrow.floorPrice.scale(1.5) }) // overpay 50% → extra stake
+```
+
+`pay` is optional and defaults to the floor. The coin is never named — it's the
+escrow's own, drawn from your balance (`tx.gas` for SUI, otherwise select/merge/
+split). There is no `payment`/coin-sourcer: that conflated *which coin* (the
+escrow owns that) with *how much* (the only thing you decide).
+
+**To overpay you must first know the floor.** That asymmetry is honest, and the
+API leans into it: read `escrow.floorPrice` (a `Price`) and derive the amount
+*from it* with `Price` arithmetic — `floor.scale(1.5)` (50% over) or
+`floor.plus(escrow.coin(0.005))` (a fixed tip) — so the overpay is tied to the
+live floor, never a stale literal. `escrow.coin` is the escrow's coin as a tag,
+there to express amounts in it. (Live: `scripts/rent-pricing.ts`, `npm run pricing`.)
+
+This mirrors the genesis side: at `integrate` the coin is a genuine choice, so
+it's an explicit parameter; at `rent` it is *not* a choice, so the API doesn't
+ask. Same principle as the rest of this document — the surface reflects where each
+decision actually lives.
+
 ## Why this is the full expression of "resolve, don't hide" (rule #5)
 
 Rule #5: only the global singletons (`Clock`, `ProtocolFeeRef`) are injected;
