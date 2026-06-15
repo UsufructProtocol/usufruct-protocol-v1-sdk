@@ -36,7 +36,7 @@ describe('highlevel/governanceCap — handle wiring (object, not role)', () => {
   it('exposes capId + the governance write surface + transfer (no earnings bundle)', () => {
     const g = createGovernanceCap(readOnlyCtx, CAP);
     expect(g.capId).toBe(CAP);
-    for (const m of ['update', 'retire', 'claim', 'extendRetireCommitment', 'extendEnsembleCommitment', 'renounce', 'list', 'transfer'] as const) {
+    for (const m of ['updateMarket', 'retire', 'claim', 'extendRetireCommitment', 'extendEnsembleCommitment', 'renounce', 'integrateIntoPortfolio', 'transfer'] as const) {
       expect(typeof g[m]).toBe('function');
     }
     // earnings are a SEPARATE object — not on the GovernanceCap.
@@ -45,7 +45,7 @@ describe('highlevel/governanceCap — handle wiring (object, not role)', () => {
 
   it('writes need a signer (you must hold the cap)', async () => {
     const g = createGovernanceCap(readOnlyCtx, CAP);
-    await expect(g.update(ESCROW, MARKET)).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.updateMarket(ESCROW, MARKET)).rejects.toBeInstanceOf(NotConnected);
     await expect(g.retire(ESCROW)).rejects.toBeInstanceOf(NotConnected);
     await expect(g.claim(ESCROW)).rejects.toBeInstanceOf(NotConnected);
     await expect(g.renounce()).rejects.toBeInstanceOf(NotConnected);

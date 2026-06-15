@@ -42,7 +42,7 @@ export interface GovernanceCap {
    * the rest are read from the current on-chain market and preserved. (You
    * reasoned about every field at `integrate`; modifying touches a subset.)
    */
-  update(escrow: EscrowRef, changes: Partial<Market>): Promise<{ digest: string }>;
+  updateMarket(escrow: EscrowRef, changes: Partial<Market>): Promise<{ digest: string }>;
   retire(escrow: EscrowRef): Promise<{ digest: string }>;
   claim(escrow: EscrowRef): Promise<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Promise<{ digest: string }>;
@@ -53,8 +53,13 @@ export interface GovernanceCap {
   /** Hand governance (this cap) to another address. */
   transfer(to: string): Promise<{ digest: string }>;
 
-  /** List a NEW escrow under this cap, paying into the named `earningsInbox`. */
-  list(asset: string, market: Market, opts: { earningsInbox: string }): Promise<Escrow>;
+  /**
+   * Integrate a NEW asset into this cap's portfolio. The only write that depends
+   * on TWO objects: this `GovernanceCap` (the portfolio it joins) and the
+   * `earningsInbox` it will pay into — so both are named explicitly. Mirrors the
+   * Move `integrate_into_portfolio`.
+   */
+  integrateIntoPortfolio(asset: string, market: Market, opts: { earningsInbox: string }): Promise<Escrow>;
 }
 
 interface RefInfo {
@@ -99,8 +104,8 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
   return {
     capId,
 
-    async update(ref, changes) {
-      const s = need('update');
+    async updateMarket(ref, changes) {
+      const s = need('updateMarket');
       const r = await resolveRef(ref);
       // Read the current market, overlay the changes, send the full ensemble.
       const reader = createReader(client, {
@@ -164,8 +169,8 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     transfer: transferOf(ctx, capId, 'governanceCap'),
 
-    async list(asset, market, opts) {
-      const s = need('list');
+    async integrateIntoPortfolio(asset, market, opts) {
+      const s = need('integrateIntoPortfolio');
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = market.coin.type;
       const { object } = await client.core.getObject({ objectId: asset });
@@ -186,7 +191,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       });
       const res = await execute(client, tx, s).catch(mapAbort);
       const escrowId = createdIdByType(res, '::escrow::Escrow');
-      if (escrowId == null) throw new UsufructError(`list: no Escrow created (digest ${res.digest})`);
+      if (escrowId == null) throw new UsufructError(`integrateIntoPortfolio: no Escrow created (digest ${res.digest})`);
       return createEscrow(ctx, escrowId);
     },
   };

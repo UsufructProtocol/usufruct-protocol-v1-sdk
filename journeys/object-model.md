@@ -44,7 +44,7 @@ cap? whose earnings?):
 |---|---|---|---|
 | `Escrow` (shared) | `Escrow` | `rent`, `apply` (permissionless) + reads | `u.escrow(id)` |
 | `UsufructCap` | `UsufructCap` | `borrow`/`.into`, `updateRefundAddress`, `burnIfStale`, `burn`, **`transfer`** | `u.usufructCap(id)` |
-| `GovernanceCap` | `GovernanceCap` | `update`/`retire`/`claim`/`extend*`, `renounce`, `list`, **`transfer`** | `u.governanceCap(id)` |
+| `GovernanceCap` | `GovernanceCap` | `updateMarket`/`retire`/`claim`/`extend*`, `renounce`, `integrateIntoPortfolio`, **`transfer`** | `u.governanceCap(id)` |
 | `EarningsInbox` | `EarningsInbox` | `balance`, `collect`, **`transfer`** | `u.earningsInbox(id)` |
 | `ProtocolFeeInbox` | `ProtocolFeeInbox` | `balance`, `collect`, **`transfer`** | `u.feeInbox()` — singleton, resolved from the `ProtocolFeeRef` (or `u.feeInbox(id)`) |
 
@@ -57,11 +57,12 @@ const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset, mark
 ```
 
 The per-escrow governance writes name their target escrow (one cap governs a
-portfolio): `governanceCap.update(escrow, market)`. Listing a new escrow under a
-cap also names the inbox it pays into — because the two are separable:
+portfolio): `governanceCap.updateMarket(escrow, market)`. Adding a new asset to
+the portfolio is the one write that depends on **two** objects — the cap (the
+portfolio it joins) and the inbox it pays into — so both are named explicitly:
 
 ```ts
-await governanceCap.list(asset, market, { earningsInbox: earningsInbox.inboxId });
+await governanceCap.integrateIntoPortfolio(asset, market, { earningsInbox: earningsInbox.inboxId });
 ```
 
 ## `transfer` is first-class — moving the object moves the role
@@ -136,7 +137,7 @@ const { escrow, governanceCap } = await u.integrate({ asset, market });
 const reader = escrow.reader; // live kernel views, straight off the handle
 
 const before = (await reader.restPrice()).priceMist;        // 10_000_000n
-await governanceCap.update(escrow, { restPrice: COIN(0.025) }); // high-level write
+await governanceCap.updateMarket(escrow, { restPrice: COIN(0.025) }); // high-level write
 const after = (await reader.restPrice()).priceMist;         // 25_000_000n — same `reader`
 ```
 

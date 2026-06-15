@@ -10,7 +10,7 @@
  *
  * We interleave reads with three different write verbs and assert each flipped:
  *
- *   A · CONFIG  — reader.restPrice()          before/after governanceCap.update({restPrice})
+ *   A · CONFIG  — reader.restPrice()          before/after governanceCap.updateMarket({restPrice})
  *   B · STATE   — reader.isOccupied()/cap      before/after a rent (Escrow handle)
  *   C · LAZY    — reader.activeUsufructCapId() before/after applyPendingTransitionStates()
  *
@@ -71,12 +71,12 @@ async function main() {
   const reader = escrow.reader; // ← the drift-free kernel reader, straight off the handle
   console.log(`listed ${escrow.id}; reader hangs off the handle (no re-wiring)\n`);
 
-  // ════════════ A · CONFIG — restPrice before/after governanceCap.update ════════════
+  // ════════════ A · CONFIG — restPrice before/after governanceCap.updateMarket ════════════
   const restBefore = (await reader.restPrice()).priceMist;
-  await governanceCap.update(escrow, { restPrice: DUMMY(0.025) }); // high-level write
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.025) }); // high-level write
   const restAfter = (await reader.restPrice()).priceMist;
   console.log(`A · restPrice  ${restBefore} → ${restAfter} mist`);
-  check('reader.restPrice reflects governanceCap.update', restBefore !== restAfter && restAfter === DUMMY(0.025).mist);
+  check('reader.restPrice reflects governanceCap.updateMarket', restBefore !== restAfter && restAfter === DUMMY(0.025).mist);
 
   // ════════════ B · STATE — isOccupied / activeUsufructCapId before/after rent ════════════
   const [occBefore, capBefore] = [await reader.isOccupied(), await reader.activeUsufructCapId()];

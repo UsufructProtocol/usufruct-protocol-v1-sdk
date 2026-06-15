@@ -51,7 +51,7 @@ async function main() {
   // ════════════ ② ADJUST — bump ONLY the rest price ════════════
   // No ceremony: pass just what changes. The rest of the market is read from the
   // chain and preserved — so `auctionShape: 'smoothstep'` survives untouched.
-  await governanceCap.update(escrow, { restPrice: DUMMY(0.02) });
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) });
   const [floor, shape] = await Promise.all([
     escrow.reader.restPrice().then((r) => (r.kind === 'fixed' ? r.priceMist : 0n)),
     escrow.reader.auctionShape().then((s) => s.kind),
@@ -63,7 +63,7 @@ async function main() {
   // now the market is locked for 7 days — a further price change is rejected:
   let locked = false;
   try {
-    await governanceCap.update(escrow, { restPrice: DUMMY(0.05) });
+    await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.05) });
   } catch (e) {
     locked = e instanceof CommittedEnsemble;
   }

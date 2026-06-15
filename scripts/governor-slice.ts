@@ -94,8 +94,8 @@ async function main() {
   const rp = await escrow.reader.restPrice();
   check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
 
-  step('2. governanceCap.update — Partial<Market> (only the price); the rest is preserved');
-  await governanceCap.update(escrow, { restPrice: DUMMY(0.02) }); // ← just one field
+  step('2. governanceCap.updateMarket — Partial<Market> (only the price); the rest is preserved');
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) }); // ← just one field
   const [rp2, shape2] = await withRetry('readback after partial update', async () => {
     const after = await u.escrow(escrow.id);
     return Promise.all([after.reader.restPrice(), after.reader.auctionShape()]);
@@ -103,18 +103,18 @@ async function main() {
   check('restPrice updated to 0.02 DUMMY', rp2.kind === 'fixed' && rp2.priceMist === 20_000_000n, j(rp2));
   check('partial update preserved the rest (auctionShape still linear)', shape2.kind === 'linear', shape2.kind);
 
-  step('2b. governanceCap.update — a deferred ensemble commitment is enforced (throws)');
+  step('2b. governanceCap.updateMarket — a deferred ensemble commitment is enforced (throws)');
   const b = await u.integrate({ asset: await mintAsset(), market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
   let threw = false;
   try {
-    await b.governanceCap.update(b.escrow, { restPrice: DUMMY(0.05) });
+    await b.governanceCap.updateMarket(b.escrow, { restPrice: DUMMY(0.05) });
   } catch (e) {
     threw = e instanceof CommittedEnsemble;
   }
   check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
 
-  step('3. portfolio — list a second escrow under the same cap, naming the inbox');
-  const listed = await governanceCap.list(await mintAsset(), market(), { earningsInbox: earningsInbox.inboxId });
+  step('3. portfolio — integrateIntoPortfolio a second escrow under the same cap, naming the inbox');
+  const listed = await governanceCap.integrateIntoPortfolio(await mintAsset(), market(), { earningsInbox: earningsInbox.inboxId });
   check('portfolio escrow listed', listed.id.length === 66, listed.id);
   // Portfolio proof (cheap + deterministic): both escrows name the SAME cap.
   const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governanceCapId;
@@ -173,13 +173,13 @@ async function main() {
   await t.governanceCap.transfer(carol.toSuiAddress());
   // Carol, now holding the cap, governs (she never called integrate):
   const uc = usufruct({ client, signer: carol });
-  await uc.governanceCap(t.governanceCap.capId).update(t.escrow.id, market({ restPrice: DUMMY(0.03) }));
+  await uc.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.03) }));
   const rpC = await withRetry('readback after Carol governs', () => u.escrow(t.escrow.id).then((x) => x.reader.restPrice()));
   check('the NEW holder (Carol) governs — update applied', rpC.kind === 'fixed' && rpC.priceMist === 30_000_000n, j(rpC));
   // the funder, no longer holding the cap, cannot govern:
   let funderBlocked = false;
   try {
-    await u.governanceCap(t.governanceCap.capId).update(t.escrow.id, market({ restPrice: DUMMY(0.04) }));
+    await u.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.04) }));
   } catch {
     funderBlocked = true;
   }
