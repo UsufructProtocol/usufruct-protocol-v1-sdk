@@ -47,6 +47,17 @@ export interface Escrow {
   readonly feeInboxId: string;
   readonly activeUsufructCapId: string | null;
 
+  // always-liquid demand state — a challenger has bid on the occupied escrow.
+  // Non-null only while `status === 'demand'`; otherwise all null / false.
+  /** A bid is outstanding and a handover window is running (`status === 'demand'`). */
+  readonly isChallenged: boolean;
+  /** The pending challenger's `UsufructCap`, waiting to take over. */
+  readonly pendingUsufructCapId: string | null;
+  /** The pending challenger's address. */
+  readonly pendingUsufructuaryAddr: string | null;
+  /** When the sitting tenant's handover protection ends (the bid can then settle). */
+  readonly handoverExpiresAt: Date | null;
+
   // the signer's holdings here, resolved in the same fetch (possession = role)
   readonly canRent: boolean;
   readonly canBorrow: boolean;
@@ -117,10 +128,15 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   ]);
 
   // `accruedCreditMist` aborts on a non-rented escrow — read it only when rented.
+  // The demand-state views (pending challenger + handover) only exist in `demand`.
   const rented = status === 'occupied' || status === 'demand';
-  const [accruedMist, role] = await Promise.all([
+  const challenged = status === 'demand';
+  const [accruedMist, role, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
     rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
     resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
+    challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
+    challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
+    challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
   ]);
 
   const coin = coinInfo(coinType);
@@ -194,6 +210,10 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     earningsInboxId: inboxId,
     feeInboxId,
     activeUsufructCapId: activeCapId,
+    isChallenged: challenged,
+    pendingUsufructCapId: pendingCapId,
+    pendingUsufructuaryAddr: pendingAddr,
+    handoverExpiresAt: handoverMs == null ? null : new Date(Number(handoverMs)),
     canRent: owner != null && status !== 'retired',
     canBorrow: role.capId != null,
     canGovern: role.governs,

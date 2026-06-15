@@ -9,7 +9,13 @@
  */
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { withBorrowedAsset } from '../actions/borrow.js';
+import {
+  burnStaleUsufructCap,
+  burnUsufructCapToPtb,
+  updateUsufructuaryRefundAddress,
+} from '../actions/governance.js';
 import { id as toId } from '../primitives/brand.js';
+import { createReader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
@@ -53,6 +59,15 @@ export interface UsufructCap {
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
   transfer(to: string): Promise<{ digest: string }>;
+  /**
+   * Burn this cap, but only if it's stale (the holder was displaced). Checks the
+   * chain first: if the cap is still active/pending it's a no-op (`burned: false`).
+   */
+  burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;
+  /** Voluntarily relinquish the right of use — burn the cap unconditionally. */
+  burn(): Promise<{ digest: string }>;
+  /** Redirect where this cap's stake refunds on settlement. */
+  updateRefundAddress(addr: string): Promise<{ digest: string }>;
   /** Back-edge: re-resolve the escrow this cap belongs to. */
   escrow(): Promise<Escrow>;
 }
@@ -89,12 +104,52 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     withBorrowedAsset(tx, ptbArgs, use);
   };
 
+  const capPtbArgs = {
+    pkg: { packageId },
+    escrowId: toId<'Escrow'>(args.escrowId),
+    usufructCapId: args.capId,
+    typeArguments: args.typeArguments,
+  };
+
+  async function burnIfStale(): Promise<{ burned: boolean; digest: string | null }> {
+    if (signer == null) throw new NotConnected('burnIfStale requires a signer (it submits a tx)');
+    const reader = createReader(client, {
+      packageId,
+      escrowId: toId<'Escrow'>(args.escrowId),
+      typeArguments: args.typeArguments,
+    });
+    if (!(await reader.usufructCapIsStale(args.capId))) return { burned: false, digest: null };
+    const tx = new Transaction();
+    burnStaleUsufructCap({ usufructCapId: args.capId }).toPtb(tx, capPtbArgs);
+    const res = await execute(client, tx, signer).catch(mapAbort);
+    return { burned: true, digest: res.digest };
+  }
+
+  async function burn(): Promise<{ digest: string }> {
+    if (signer == null) throw new NotConnected('burn requires a signer (it submits a tx)');
+    const tx = new Transaction();
+    burnUsufructCapToPtb(tx, { pkg: { packageId }, usufructCapId: args.capId });
+    const res = await execute(client, tx, signer).catch(mapAbort);
+    return { digest: res.digest };
+  }
+
+  async function updateRefundAddress(addr: string): Promise<{ digest: string }> {
+    if (signer == null) throw new NotConnected('updateRefundAddress requires a signer (it submits a tx)');
+    const tx = new Transaction();
+    updateUsufructuaryRefundAddress({ usufructCapId: args.capId, newAddress: addr }).toPtb(tx, capPtbArgs);
+    const res = await execute(client, tx, signer).catch(mapAbort);
+    return { digest: res.digest };
+  }
+
   return {
     id: args.capId,
     escrowId: args.escrowId,
     receipt: args.receipt,
     borrow,
     transfer: transferOf(ctx, args.capId, 'cap'),
+    burnIfStale,
+    burn,
+    updateRefundAddress,
     escrow: () => createEscrow(ctx, args.escrowId),
   };
 }

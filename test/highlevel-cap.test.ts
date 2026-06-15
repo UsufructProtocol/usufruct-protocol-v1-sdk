@@ -35,6 +35,21 @@ describe('highlevel/cap — UsufructCap handle', () => {
     expect(() => cap.borrow(() => {})).toThrow(NotConnected);
   });
 
+  it('exposes the cap-holder write surface (object, not role)', () => {
+    const cap = createCap(ctx, ARGS);
+    for (const m of ['transfer', 'burnIfStale', 'burn', 'updateRefundAddress'] as const) {
+      expect(typeof cap[m]).toBe('function');
+    }
+  });
+
+  it('cap-holder writes need a signer (you must hold the cap)', async () => {
+    const cap = createCap(ctx, ARGS);
+    await expect(cap.burnIfStale()).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.burn()).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.updateRefundAddress(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.transfer(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
+  });
+
   it('borrow.into appends a borrow→return bracket into a caller-driven PTB', () => {
     const cap = createCap(ctx, ARGS);
     const tx = new Transaction();

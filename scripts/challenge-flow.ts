@@ -14,9 +14,6 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import * as actions from '../src/actions/index.js';
-import { TESTNET } from '../src/config/network.js';
-import { id } from '../src/primitives/brand.js';
 import { coinTag, usufruct, type Market } from '../src/index.js';
 import { createdId, loadSigner, makeClient, rateLimited, send, sleep, waitForChainTime } from './lib.js';
 
@@ -83,36 +80,24 @@ async function main() {
   const carolCap = await occupied.rent({ tenures: 1, payment: uc.fromBalance(DUMMY) }); // renting occupied = the bid
   console.log(`   Carol bid — cap ${carolCap.id}, paid ${carolCap.receipt!.paid}\n`);
 
-  // ════════════ ④ READ — the always-liquid state ════════════
+  // ════════════ ④ READ — the always-liquid state, off the Escrow handle ════════════
   const demand = await uc.escrow(escrow.id);
-  // ⚠ CEREMONY: the Escrow handle surfaces `status` + `activeUsufructCapId`, but NOT
-  //   the pending challenger nor the handover window — so we drop to `reader`.
-  const [pending, handoverMs, activeAddr] = await Promise.all([
-    demand.reader.pendingUsufructuaryAddr(),
-    demand.reader.handoverExpiryMs(),
-    demand.reader.activeUsufructuaryAddr(),
-  ]);
-  console.log(`④ status=${demand.status}`);
-  console.log(`   active (sitting tenant) = ${activeAddr === bob.toSuiAddress() ? 'Bob' : activeAddr}`);
-  console.log(`   pending (challenger)    = ${pending === carol.toSuiAddress() ? 'Carol' : pending}`);
-  console.log(`   handover expires at     = ${new Date(Number(handoverMs)).toISOString()}\n`);
+  console.log(`④ status=${demand.status} (challenged=${demand.isChallenged})`);
+  console.log(`   active cap (sitting tenant) = ${demand.activeUsufructCapId === bobCap.id ? 'Bob' : demand.activeUsufructCapId}`);
+  console.log(`   pending (challenger)        = ${demand.pendingUsufructuaryAddr === carol.toSuiAddress() ? 'Carol' : demand.pendingUsufructuaryAddr}`);
+  console.log(`   handover expires at         = ${demand.handoverExpiresAt?.toISOString()}\n`);
 
   // ════════════ ⑤ HANDOVER — wait out Bob's window, settle ════════════
   console.log('⑤ waiting out the handover window, then settling…');
-  await waitForChainTime(client, BigInt(Number(handoverMs)));
+  await waitForChainTime(client, BigInt(demand.handoverExpiresAt!.getTime()));
   await demand.applyPendingTransitionStates();
   const after = await uc.escrow(escrow.id);
   console.log(`   status=${after.status}; active cap is now ${after.activeUsufructCapId === carolCap.id ? 'Carol' : after.activeUsufructCapId}\n`);
 
   // ════════════ ⑥ STALE — Bob's cap is now dead weight; he burns it ════════════
-  const stale = await after.reader.usufructCapIsStale(bobCap.id); // ⚠ CEREMONY: not on the cap handle
-  // ⚠ CEREMONY: UsufructCap has no burnIfStale() — drop to the kernel action.
-  const tx = new Transaction();
-  actions
-    .burnStaleUsufructCap({ usufructCapId: bobCap.id })
-    .toPtb(tx, { pkg: TESTNET, escrowId: id<'Escrow'>(escrow.id), usufructCapId: bobCap.id, typeArguments: [escrow.assetType, escrow.coinType] });
-  await send(client, tx, bob);
-  console.log(`⑥ Bob's cap was stale=${stale}; burned it (via the kernel — no cap.burnIfStale yet)`);
+  // bobCap already carries Bob's signer; burnIfStale() checks the chain then burns.
+  const { burned, digest } = await bobCap.burnIfStale();
+  console.log(`⑥ Bob's cap was stale → burnIfStale() burned=${burned} (${digest})`);
 
   await sleep(0);
 }
