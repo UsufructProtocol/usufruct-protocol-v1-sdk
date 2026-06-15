@@ -22,8 +22,19 @@ export class NotAvailable extends UsufructError {}
 /** A write that needs a signer was attempted on a read-only handle. */
 export class NotConnected extends UsufructError {}
 
+/** `update` before the ensemble commitment window elapses. */
+export class CommittedEnsemble extends UsufructError {}
+
+/** `retire` before the retire commitment window elapses. */
+export class CommittedRetire extends UsufructError {}
+
+/** A governance write attempted without holding the escrow's GovernanceCap. */
+export class NotGovernor extends UsufructError {}
+
 const ABORTS: ReadonlyArray<readonly [string, new (m: string) => UsufructError]> = [
   ['EInsufficientPayment', InsufficientPayment],
+  ['EEnsembleCommitmentFloorNotElapsed', CommittedEnsemble],
+  ['ERetireCommitmentFloorNotElapsed', CommittedRetire],
   ['ERetiredNoBid', NotAvailable],
   ['ERetireFlagBlocksBid', NotAvailable],
 ];

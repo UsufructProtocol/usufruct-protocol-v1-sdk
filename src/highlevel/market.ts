@@ -70,7 +70,8 @@ function shapeToConfig(s: Shape): ShapeConfig {
   return { kind: 'exponential', alphaAbs: Math.abs(a), alphaNeg: a < 0 };
 }
 
-function commitmentToConfig(c: Commitment): RetireCommitmentConfig {
+/** Map a {@link Commitment} to the kernel's commitment config. */
+export function toCommitmentConfig(c: Commitment): RetireCommitmentConfig {
   return c === 'immediate' ? { kind: 'immediate' } : { kind: 'deferred', floorMs: duration(c.deferredFor) };
 }
 
@@ -121,10 +122,10 @@ export function toEnsembleConfig(market: Market): {
   return {
     ensemble,
     ...(market.retireCommitment != null
-      ? { retireCommitment: commitmentToConfig(market.retireCommitment) }
+      ? { retireCommitment: toCommitmentConfig(market.retireCommitment) }
       : {}),
     ...(market.ensembleCommitment != null
-      ? { ensembleCommitment: commitmentToConfig(market.ensembleCommitment) }
+      ? { ensembleCommitment: toCommitmentConfig(market.ensembleCommitment) }
       : {}),
   };
 }

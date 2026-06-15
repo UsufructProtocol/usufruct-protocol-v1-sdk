@@ -5,15 +5,20 @@
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
+import type { IndexerSource } from '../indexer/source.js';
 import type { Source } from '../primitives/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 
 export interface HandleCtx {
   readonly client: ClientWithCoreApi;
   readonly packageId: string;
+  /** The frozen `ProtocolFeeRef` consumed by `integrate`. */
+  readonly feeRefId: string;
   readonly source: Source;
   /** Null when read-only; required for writes. */
   readonly signer: Signer | null;
   /** Asset BCS schema for decode/reads; defaults to uid-only when omitted. */
   readonly assetSchema?: AssetSchema;
+  /** GraphQL-backed discovery (for `governor.escrows()` byGovernor); optional. */
+  readonly indexer?: IndexerSource;
 }

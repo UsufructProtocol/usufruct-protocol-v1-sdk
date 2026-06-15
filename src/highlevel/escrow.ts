@@ -14,6 +14,7 @@ import { rent as rentAction } from '../actions/rent.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { type Payment, resolvePayment } from './coins.js';
 import type { HandleCtx } from './ctx.js';
+import { createGovernor, type Governor } from './governor.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
 import { coinInfo, price, type Price } from './value.js';
@@ -42,6 +43,8 @@ export interface Escrow {
   readonly canBorrow: boolean;
   readonly canGovern: boolean;
   readonly cap: UsufructCap | null;
+  /** The supply-side handle, if the signer governs this escrow (sync). */
+  readonly governor: Governor | null;
 
   /**
    * Acquire the right of use for `tenures`. `payment` is required (a real
@@ -83,12 +86,13 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     ...(assetSchema ? { assetSchema } : {}),
   });
 
-  const [floorMist, status, expiryMs, activeCapId, govCapId] = await Promise.all([
+  const [floorMist, status, expiryMs, activeCapId, govCapId, inboxId] = await Promise.all([
     reader.floorPriceMist(t),
     resolveStatus(reader),
     reader.tenureExpiryMs(),
     reader.activeUsufructCapId(),
     reader.governanceCapId(),
+    reader.earningsInboxId(),
   ]);
 
   // `accruedCreditMist` aborts on a non-rented escrow — read it only when rented.
@@ -107,6 +111,9 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
         typeArguments,
         receipt: null,
       })
+    : null;
+  const governor: Governor | null = role.governs
+    ? createGovernor(ctx, { capId: govCapId, inboxId })
     : null;
 
   async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
@@ -159,6 +166,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     canBorrow: role.capId != null,
     canGovern: role.governs,
     cap,
+    governor,
     rent,
     reader,
   };

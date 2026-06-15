@@ -20,6 +20,7 @@ export type { Market, Duration, Shape, Commitment } from './market.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
 export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
+export type { Governor, Earnings, EscrowRef } from './governor.js';
 export type { CoinSource, Payment } from './coins.js';
 
 export {
@@ -28,4 +29,7 @@ export {
   InsufficientPayment,
   NotAvailable,
   NotConnected,
+  CommittedEnsemble,
+  CommittedRetire,
+  NotGovernor,
 } from './errors.js';

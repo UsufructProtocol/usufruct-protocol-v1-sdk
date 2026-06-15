@@ -9,14 +9,22 @@
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
+import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
+import { Transaction } from '@mysten/sui/transactions';
+import { integrate as integrateAction } from '../actions/integrate.js';
 import { TESTNET } from '../config/network.js';
+import { indexerSource, type IndexerSource } from '../indexer/index.js';
 import { chainSource, type Source } from '../primitives/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import type { CoinSource } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
+import { createGovernor, type Governor } from './governor.js';
+import { NotConnected, mapAbort } from './errors.js';
+import { type Market, toEnsembleConfig } from './market.js';
+import { createdIdByType, execute } from './send.js';
 import type { CoinTag, Price } from './value.js';
 
 export type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
@@ -40,8 +48,12 @@ export interface UsufructConfig {
   readonly signer?: Signer;
   /** Defaults to the network's deployed package id. */
   readonly packageId?: string;
+  /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
+  readonly feeRefId?: string;
   /** Asset BCS schema for non-uid assets (SPEC §10); defaults to uid-only. */
   readonly assetSchema?: AssetSchema;
+  /** GraphQL endpoint (URL or client) — enables discovery (`governor.escrows()`). */
+  readonly graphql?: string | SuiGraphQLClient;
 }
 
 /** The raw kernel, one property away (escape hatch — SPEC rule #2). */
@@ -59,6 +71,12 @@ export interface Usufruct {
 
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+
+  /** Genesis: wrap an owned `asset` into a rental market; mints escrow + cap + inbox. */
+  integrate(args: { asset: string; market: Market }): Promise<{ escrow: Escrow; governor: Governor }>;
+
+  /** Door: a `Governor` by its cap + earnings-inbox ids. */
+  governor(capId: string, inboxId: string): Governor;
 
   /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
   coin(coin: CoinTag, amount: Price): CoinSource;
@@ -79,10 +97,21 @@ function resolveClient(config: UsufructConfig): ClientWithCoreApi {
 export function usufruct(config: UsufructConfig = {}): Usufruct {
   const client = resolveClient(config);
   const packageId = config.packageId ?? TESTNET.packageId;
+  const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
   const assetSchema = config.assetSchema;
   let signer: Signer | null = config.signer ?? null;
 
   const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
+
+  const graphqlClient =
+    config.graphql == null
+      ? null
+      : typeof config.graphql === 'string'
+        ? new SuiGraphQLClient({ url: config.graphql, network: config.network ?? 'testnet' })
+        : config.graphql;
+  const indexer: IndexerSource | null = graphqlClient
+    ? indexerSource(graphqlClient, { packageId, ...(assetSchema ? { assetSchema } : {}) })
+    : null;
 
   const primitives: Primitives = {
     source,
@@ -92,9 +121,11 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const ctx = (): HandleCtx => ({
     client,
     packageId,
+    feeRefId,
     source,
     signer,
     ...(assetSchema ? { assetSchema } : {}),
+    ...(indexer ? { indexer } : {}),
   });
 
   return {
@@ -107,6 +138,39 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
     escrow(idStr, opts) {
       return createEscrow(ctx(), idStr, opts?.at);
+    },
+
+    async integrate({ asset, market }) {
+      const s = signer;
+      if (s == null) throw new NotConnected('integrate requires a signer; pass one to usufruct() or u.connect()');
+      const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
+      const coinType = market.coin.type;
+      const { object } = await client.core.getObject({ objectId: asset });
+      const assetType = object.type;
+
+      const tx = new Transaction();
+      const created = integrateAction({
+        ensemble,
+        ...(retireCommitment ? { retireCommitment } : {}),
+        ...(ensembleCommitment ? { ensembleCommitment } : {}),
+        assetType,
+        coinType,
+      }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
+      tx.transferObjects([created[0]!, created[1]!], s.toSuiAddress()); // [GovernanceCap, EarningsInbox]
+
+      const res = await execute(client, tx, s).catch(mapAbort);
+      const escrowId = createdIdByType(res, '::escrow::Escrow');
+      const capId = createdIdByType(res, '::governance_cap::GovernanceCap');
+      const inboxId = createdIdByType(res, '::earnings_inbox::EarningsInbox');
+      if (!escrowId || !capId || !inboxId) {
+        throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
+      }
+      const c = ctx();
+      return { escrow: await createEscrow(c, escrowId), governor: createGovernor(c, { capId, inboxId }) };
+    },
+
+    governor(capId, inboxId) {
+      return createGovernor(ctx(), { capId, inboxId });
     },
 
     coin(coin, amount) {
