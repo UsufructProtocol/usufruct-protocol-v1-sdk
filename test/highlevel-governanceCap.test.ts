@@ -11,7 +11,19 @@ const hex = (b: string) => '0x' + b.repeat(32);
 const CAP = hex('11');
 const INBOX = hex('22');
 const ESCROW = hex('33');
-const MARKET: Market = { restPrice: SUI(0.5), tenure: '1d', coin: SUI };
+const MARKET: Market = {
+  restPrice: SUI(0.5),
+  tenure: '1d',
+  coin: SUI,
+  multiTenure: false,
+  creditShape: 'linear',
+  auctionShape: 'linear',
+  descent: 'off',
+  handover: 'off',
+  escalation: { fixed: SUI(0) },
+  retireCommitment: 'immediate',
+  ensembleCommitment: 'immediate',
+};
 
 const readOnlyCtx: HandleCtx = {
   client: {} as ClientWithCoreApi,

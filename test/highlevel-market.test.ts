@@ -19,60 +19,64 @@ describe('highlevel/market — duration parser', () => {
 });
 
 describe('highlevel/market — toEnsembleConfig', () => {
+  // A complete market (every field required) — tests override one field at a time.
+  const full = (over: Partial<Market> = {}): Market => ({
+    restPrice: SUI(1),
+    tenure: '1d',
+    coin: SUI,
+    multiTenure: false,
+    creditShape: 'linear',
+    auctionShape: 'linear',
+    descent: 'off',
+    handover: 'off',
+    escalation: { fixed: SUI(0) },
+    retireCommitment: 'immediate',
+    ensembleCommitment: 'immediate',
+    ...over,
+  });
+
   it('maps pricing + tenure to mist/ms', () => {
-    const m: Market = { restPrice: SUI(0.5), tenure: '1d', coin: SUI };
-    const { ensemble } = toEnsembleConfig(m);
+    const { ensemble } = toEnsembleConfig(full({ restPrice: SUI(0.5), tenure: '1d' }));
     expect(ensemble.restPrice).toBe(500_000_000n);
     expect(ensemble.tenureMs).toBe(86_400_000n);
   });
 
   it('maps handover / descent variants', () => {
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, handover: 'off' }).ensemble.handover)
-      .toEqual({ kind: 'off' });
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, handover: 'fullTenure' }).ensemble.handover)
-      .toEqual({ kind: 'fullTenure' });
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, handover: '1h' }).ensemble.handover)
-      .toEqual({ kind: 'fixed', floorMs: 3_600_000n });
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, descent: '12h' }).ensemble.descent)
-      .toEqual({ kind: 'fixed', ceilingMs: 43_200_000n });
+    expect(toEnsembleConfig(full({ handover: 'off' })).ensemble.handover).toEqual({ kind: 'off' });
+    expect(toEnsembleConfig(full({ handover: 'fullTenure' })).ensemble.handover).toEqual({ kind: 'fullTenure' });
+    expect(toEnsembleConfig(full({ handover: '1h' })).ensemble.handover).toEqual({ kind: 'fixed', floorMs: 3_600_000n });
+    expect(toEnsembleConfig(full({ descent: '12h' })).ensemble.descent).toEqual({ kind: 'fixed', ceilingMs: 43_200_000n });
   });
 
   it('maps shapes, including signed exponential alpha', () => {
-    const { ensemble } = toEnsembleConfig({
-      restPrice: SUI(1), tenure: '1d', coin: SUI,
-      creditShape: 'smoothstep',
-      auctionShape: { exponential: { alpha: -3 } },
-    });
+    const { ensemble } = toEnsembleConfig(full({ creditShape: 'smoothstep', auctionShape: { exponential: { alpha: -3 } } }));
     expect(ensemble.creditShape).toEqual({ kind: 'smoothstep' });
     expect(ensemble.auctionShape).toEqual({ kind: 'exponential', alphaAbs: 3, alphaNeg: true });
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, creditShape: { powerLaw: { num: 2, den: 3 } } })
-      .ensemble.creditShape).toEqual({ kind: 'powerLaw', alphaNum: 2, alphaDen: 3 });
+    expect(toEnsembleConfig(full({ creditShape: { powerLaw: { num: 2, den: 3 } } })).ensemble.creditShape)
+      .toEqual({ kind: 'powerLaw', alphaNum: 2, alphaDen: 3 });
   });
 
   it('maps escalation (fixed + compound)', () => {
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, escalation: { fixed: SUI(0.05) } })
-      .ensemble.escalation).toEqual({ kind: 'fixedDelta', deltaMist: 50_000_000n });
-    expect(toEnsembleConfig({ restPrice: SUI(1), tenure: '1d', coin: SUI, escalation: { compound: { bps: 100, delta: price(7n) } } })
-      .ensemble.escalation).toEqual({ kind: 'compoundDelta', bps: 100n, deltaMist: 7n });
+    expect(toEnsembleConfig(full({ escalation: { fixed: SUI(0.05) } })).ensemble.escalation)
+      .toEqual({ kind: 'fixedDelta', deltaMist: 50_000_000n });
+    expect(toEnsembleConfig(full({ escalation: { compound: { bps: 100, delta: price(7n) } } })).ensemble.escalation)
+      .toEqual({ kind: 'compoundDelta', bps: 100n, deltaMist: 7n });
   });
 
-  it('maps commitments as separate configs', () => {
-    const { retireCommitment, ensembleCommitment } = toEnsembleConfig({
-      restPrice: SUI(1), tenure: '1d', coin: SUI,
-      retireCommitment: 'immediate',
-      ensembleCommitment: { deferredFor: '7d' },
-    });
+  it('maps commitments as separate, always-present configs', () => {
+    const { retireCommitment, ensembleCommitment } = toEnsembleConfig(
+      full({ retireCommitment: 'immediate', ensembleCommitment: { deferredFor: '7d' } }),
+    );
     expect(retireCommitment).toEqual({ kind: 'immediate' });
     expect(ensembleCommitment).toEqual({ kind: 'deferred', floorMs: 604_800_000n });
   });
 
-  it('omits absent optional fields entirely', () => {
-    const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig({
-      restPrice: SUI(1), tenure: '1d', coin: SUI,
-    });
-    expect('handover' in ensemble).toBe(false);
-    expect('escalation' in ensemble).toBe(false);
-    expect(retireCommitment).toBeUndefined();
-    expect(ensembleCommitment).toBeUndefined();
+  it('every field is present in the mapped config (no defaults to fall back on)', () => {
+    const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(full());
+    for (const k of ['restPrice', 'tenureMs', 'multiTenure', 'handover', 'descent', 'creditShape', 'auctionShape', 'escalation'] as const) {
+      expect(k in ensemble).toBe(true);
+    }
+    expect(retireCommitment).toBeDefined();
+    expect(ensembleCommitment).toBeDefined();
   });
 });

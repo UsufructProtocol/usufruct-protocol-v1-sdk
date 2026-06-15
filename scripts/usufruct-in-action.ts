@@ -50,21 +50,23 @@ async function main() {
 
   const { escrow, governanceCap, earningsInbox } = await alice.integrate({
     asset: swordId,
+    // Every field is required — a market is a set of economic decisions, and the
+    // API makes the governor reason about each one (no silent defaults).
     market: {
-      // ── pricing & tenure (required) ──
+      // ── pricing & tenure ──
       restPrice: DUMMY(0.01), // costs 0.01 DUMMY per tenure
       tenure: '20s', // each tenure lasts 20s
       coin: DUMMY,
-      // ── dynamics (optional — shown here; omit to take the defaults) ──
-      multiTenure: false, //         default: single tenure
-      creditShape: 'linear', //      default — how rent credit accrues over a tenure
-      auctionShape: 'smoothstep', // default 'linear' — how the floor drops in the post-tenancy Dutch auction
-      descent: '10s', //             default 'off' — the auction window back down to the floor
-      handover: '5s', //             default 'off' — a displaced renter keeps the asset this long
-      escalation: { fixed: DUMMY(0.001) }, // default ~none — each new tenancy starts a bit higher
-      // ── commitments (optional — the governor binds its own hands) ──
-      retireCommitment: 'immediate', //   default — can pull the asset anytime
-      ensembleCommitment: 'immediate', // default — can change the market anytime
+      multiTenure: false, // one tenure at a time (no multi-tenure commitments)
+      // ── dynamics ──
+      creditShape: 'linear', //      how rent credit accrues over a tenure
+      auctionShape: 'smoothstep', // how the floor drops in the post-tenancy Dutch auction
+      descent: '10s', //             the auction window back down to the floor ('off' to disable)
+      handover: '5s', //             a displaced renter keeps the asset this long ('off' / 'fullTenure')
+      escalation: { fixed: DUMMY(0.001) }, // each new tenancy starts a bit higher
+      // ── commitments (the governor binds its own hands) ──
+      retireCommitment: 'immediate', //   may pull the asset anytime ({ deferredFor } to lock)
+      ensembleCommitment: 'immediate', // may change the market anytime ({ deferredFor } to lock)
     },
   });
   console.log(`① listed ${escrow.id}`);

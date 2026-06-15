@@ -27,24 +27,28 @@ export type Shape =
 /** A governor's trust promise: act now, or bind its hands for a while. */
 export type Commitment = 'immediate' | { readonly deferredFor: Duration };
 
-/** The full market: pricing + dynamics + the trust commitments. */
+/**
+ * The full market: pricing + dynamics + the trust commitments. **Every field is
+ * required** — no defaults. A market is a set of economic decisions; the API
+ * makes the governor reason about each one, rather than inheriting a silent default.
+ */
 export interface Market {
   // pricing & tenure
   readonly restPrice: Price;
   readonly tenure: Duration;
   readonly coin: CoinTag;
-  readonly multiTenure?: boolean;
+  readonly multiTenure: boolean;
   // dynamics
-  readonly creditShape?: Shape;
-  readonly auctionShape?: Shape;
-  readonly descent?: 'off' | Duration;
-  readonly handover?: 'off' | 'fullTenure' | Duration;
-  readonly escalation?:
+  readonly creditShape: Shape;
+  readonly auctionShape: Shape;
+  readonly descent: 'off' | Duration;
+  readonly handover: 'off' | 'fullTenure' | Duration;
+  readonly escalation:
     | { readonly fixed: Price }
     | { readonly compound: { readonly bps: number | bigint; readonly delta: Price } };
   // commitments
-  readonly retireCommitment?: Commitment;
-  readonly ensembleCommitment?: Commitment;
+  readonly retireCommitment: Commitment;
+  readonly ensembleCommitment: Commitment;
 }
 
 const UNIT_MS: Record<string, bigint> = {
@@ -75,57 +79,40 @@ export function toCommitmentConfig(c: Commitment): RetireCommitmentConfig {
   return c === 'immediate' ? { kind: 'immediate' } : { kind: 'deferred', floorMs: duration(c.deferredFor) };
 }
 
-/** Map a {@link Market} to the kernel's ensemble + commitment configs. */
+function handoverToConfig(h: 'off' | 'fullTenure' | Duration): NonNullable<EnsembleConfig['handover']> {
+  if (h === 'off') return { kind: 'off' };
+  if (h === 'fullTenure') return { kind: 'fullTenure' };
+  return { kind: 'fixed', floorMs: duration(h) };
+}
+
+function descentToConfig(d: 'off' | Duration): NonNullable<EnsembleConfig['descent']> {
+  return d === 'off' ? { kind: 'off' } : { kind: 'fixed', ceilingMs: duration(d) };
+}
+
+function escalationToConfig(e: Market['escalation']): NonNullable<EnsembleConfig['escalation']> {
+  return 'fixed' in e
+    ? { kind: 'fixedDelta', deltaMist: e.fixed.mist }
+    : { kind: 'compoundDelta', bps: toBps(e.compound.bps) as Bps, deltaMist: e.compound.delta.mist };
+}
+
+/** Map a {@link Market} (all fields required) to the kernel's ensemble + commitment configs. */
 export function toEnsembleConfig(market: Market): {
   ensemble: EnsembleConfig;
-  retireCommitment?: RetireCommitmentConfig;
-  ensembleCommitment?: EnsembleCommitmentConfig;
+  retireCommitment: RetireCommitmentConfig;
+  ensembleCommitment: EnsembleCommitmentConfig;
 } {
-  const ensemble: EnsembleConfig = {
-    restPrice: market.restPrice.mist,
-    tenureMs: duration(market.tenure),
-    ...(market.multiTenure != null ? { multiTenure: market.multiTenure } : {}),
-    ...(market.handover != null
-      ? {
-          handover:
-            market.handover === 'off'
-              ? { kind: 'off' as const }
-              : market.handover === 'fullTenure'
-                ? { kind: 'fullTenure' as const }
-                : { kind: 'fixed' as const, floorMs: duration(market.handover) },
-        }
-      : {}),
-    ...(market.descent != null
-      ? {
-          descent:
-            market.descent === 'off'
-              ? { kind: 'off' as const }
-              : { kind: 'fixed' as const, ceilingMs: duration(market.descent) },
-        }
-      : {}),
-    ...(market.creditShape != null ? { creditShape: shapeToConfig(market.creditShape) } : {}),
-    ...(market.auctionShape != null ? { auctionShape: shapeToConfig(market.auctionShape) } : {}),
-    ...(market.escalation != null
-      ? {
-          escalation:
-            'fixed' in market.escalation
-              ? { kind: 'fixedDelta' as const, deltaMist: market.escalation.fixed.mist }
-              : {
-                  kind: 'compoundDelta' as const,
-                  bps: toBps(market.escalation.compound.bps) as Bps,
-                  deltaMist: market.escalation.compound.delta.mist,
-                },
-        }
-      : {}),
-  };
-
   return {
-    ensemble,
-    ...(market.retireCommitment != null
-      ? { retireCommitment: toCommitmentConfig(market.retireCommitment) }
-      : {}),
-    ...(market.ensembleCommitment != null
-      ? { ensembleCommitment: toCommitmentConfig(market.ensembleCommitment) }
-      : {}),
+    ensemble: {
+      restPrice: market.restPrice.mist,
+      tenureMs: duration(market.tenure),
+      multiTenure: market.multiTenure,
+      handover: handoverToConfig(market.handover),
+      descent: descentToConfig(market.descent),
+      creditShape: shapeToConfig(market.creditShape),
+      auctionShape: shapeToConfig(market.auctionShape),
+      escalation: escalationToConfig(market.escalation),
+    },
+    retireCommitment: toCommitmentConfig(market.retireCommitment),
+    ensembleCommitment: toCommitmentConfig(market.ensembleCommitment),
   };
 }
