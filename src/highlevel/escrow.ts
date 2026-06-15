@@ -13,13 +13,13 @@ import { createReader, type Reader } from '../read/reader.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
 import { createCap, type UsufructCap } from './cap.js';
-import { type Payment, resolvePayment } from './coins.js';
+import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
-import { coinTag, price, type Price } from './value.js';
+import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { resolveRole } from './role.js';
@@ -33,6 +33,9 @@ export interface Escrow {
   readonly id: string;
   readonly assetType: string;
   readonly coinType: string;
+  /** The escrow's payment coin as a tag (resolved decimals/symbol) — to express
+   *  amounts in it, e.g. `pay: escrow.coin(0.6)`. The coin is fixed at integrate. */
+  readonly coin: CoinTag;
 
   // reads — a snapshot at the fetch time `t`
   readonly status: EscrowStatus;
@@ -71,13 +74,15 @@ export interface Escrow {
   readonly earningsInbox: EarningsInbox | null;
 
   /**
-   * Acquire the right of use for `tenures`. `payment` is **optional** — by
-   * default the call draws what it needs from your balance of *this escrow's
-   * coin* (the escrow already dictates the coin; you needn't name it). Override
-   * only for control: a coin you hold, or an opt-in sourcer (`u.coin(C, amount)`
-   * to cap the spend, `u.fromBalance(C)`). Returns the minted `UsufructCap`.
+   * Acquire the right of use for `tenures`. The only decision is the **amount**:
+   * `pay` (a `Price`) defaults to the floor (`floorPrice × tenures`); pay more to
+   * **overpay** — the surplus becomes stake (more credit/time). The coin is the
+   * escrow's own, drawn from your balance — you never name it. Returns the cap.
+   *
+   *   escrow.rent({ tenures: 1 })                    // pay the floor
+   *   escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
    */
-  rent(args: { tenures: number; payment?: Payment }): Promise<UsufructCap>;
+  rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap>;
 
   /**
    * Permissionless keeper: materialize the pending lazy transitions (tenure
@@ -165,21 +170,18 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
   const earningsInbox: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
 
-  async function rent(args: { tenures: number; payment?: Payment }): Promise<UsufructCap> {
+  async function rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap> {
     if (signer == null || owner == null) {
       throw new NotConnected('rent requires a signer; pass one to usufruct() or u.connect()');
     }
     const count = BigInt(args.tenures);
-    const minimumMist = floorMist * count; // snapshot floor at fetch time `t`
+    const floorTotal = floorMist * count; // snapshot floor at fetch time `t`
+    // The decision: pay the floor (default) or overpay (surplus → stake). The
+    // coin is the escrow's own — auto-sourced; the renter only chooses the number.
+    const paidMist = args.pay ? args.pay.mist : floorTotal;
 
-    // Default: draw from your balance of THIS escrow's coin — the escrow already
-    // dictates the coin, so the renter needn't name it.
-    const source: Payment = args.payment ?? { kind: 'minimum', coin: coinTag(coin) };
     const tx = new Transaction();
-    const { arg: payment, paidMist } = await resolvePayment(tx, client, owner, source, {
-      minimumMist,
-      coinType: coinType,
-    });
+    const payment = await sourceCoin(tx, client, owner, { coinType, amountMist: paidMist });
     const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
       pkg: { packageId },
       escrowId,
@@ -209,6 +211,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     id: idStr,
     assetType: assetType,
     coinType: coinType,
+    coin: coinTag(coin),
     status,
     isAvailable: status === 'idle' || status === 'descent',
     floorPrice: price(floorMist, coin),

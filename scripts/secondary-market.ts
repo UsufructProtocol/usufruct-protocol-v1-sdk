@@ -88,7 +88,7 @@ async function main() {
   check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).earningsInbox != null);
 
   // ════════════ ② RENT — Bob takes the right of use ════════════
-  const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1, payment: usufruct({ network: 'testnet', client, signer: bob }).fromBalance(DUMMY) });
+  const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1 });
   console.log(`\n② Bob rented — UsufructCap ${bobCap.id}`);
   check('Bob can borrow after renting', (await seenBy(bob, escrow.id)).canBorrow);
 

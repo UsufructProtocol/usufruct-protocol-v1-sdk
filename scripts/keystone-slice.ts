@@ -35,7 +35,7 @@ const ASSET_T = `${DUMMY_PKG}::dummy_asset::DummyAsset`;
 const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
 const TYPE_ARGS: [string, string] = [ASSET_T, COIN_T];
 
-// The escrow's coin, as a Layer 2 tag (so `u.fromBalance(DUMMY)` / `u.coin(...)`).
+// The escrow's coin, as a Layer 2 tag — used here to express an overpay amount.
 const DUMMY = coinTag({ type: COIN_T, decimals: 9, symbol: 'DUMMY_COIN' });
 
 const REST_PRICE = 10_000_000n; // floor (mist) = 0.01 DUMMY_COIN — the known rest price
@@ -97,8 +97,8 @@ async function main() {
   check('canBorrow false (no cap yet)', sword.canBorrow === false);
   check('floorPrice == rest price', sword.floorPrice.mist === REST_PRICE, `${sword.floorPrice}`);
 
-  step('3. NEW API — Bob rents 2 tenures (payment = u.fromBalance(DUMMY))');
-  const cap = await sword.rent({ tenures: 2, payment: u.fromBalance(DUMMY) });
+  step('3. NEW API — Bob rents 2 tenures (pay defaults to floor×2)');
+  const cap = await sword.rent({ tenures: 2 });
   check('cap minted + received', cap.id.length === 66, cap.id);
   check('receipt.paid == floor×2', cap.receipt?.paid.mist === REST_PRICE * 2n, `${cap.receipt?.paid}`);
   check(
@@ -127,7 +127,7 @@ async function main() {
   const escrowB = await integrate();
   const swordB = await u.escrow(escrowB);
   const overpayMist = REST_PRICE * 2n + 500n;
-  const capB = await swordB.rent({ tenures: 2, payment: u.coin(DUMMY, price(mist(overpayMist), DUMMY)) });
+  const capB = await swordB.rent({ tenures: 2, pay: price(mist(overpayMist), DUMMY) });
   check('overpay receipt.paid == requested', capB.receipt?.paid.mist === overpayMist, `${capB.receipt?.paid}`);
   const swordB2 = await u.escrow(escrowB);
   const stake = await swordB2.reader.activeStakeBalanceMist();

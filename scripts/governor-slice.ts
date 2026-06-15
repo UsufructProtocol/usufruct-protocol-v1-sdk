@@ -145,7 +145,7 @@ async function main() {
   }
   const ub = usufruct({ client, signer: bob });
   const sword = await withRetry('Bob reads escrow', () => ub.escrow(e.escrow.id));
-  const cap = await sword.rent({ tenures: 1, payment: ub.fromBalance(DUMMY) });
+  const cap = await sword.rent({ tenures: 1 });
   const expiry = BigInt(cap.receipt!.expiresAt.getTime());
   await waitForChainTime(client, expiry);
   // apply the lazy tenure-expiry → posts an EarningsMessage to the inbox

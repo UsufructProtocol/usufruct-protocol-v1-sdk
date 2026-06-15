@@ -80,7 +80,7 @@ async function main() {
   // ════════════ B · STATE — isOccupied / activeUsufructCapId before/after rent ════════════
   const [occBefore, capBefore] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1, payment: ub.fromBalance(DUMMY) }); // high-level write
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }); // high-level write
   const [occAfter, capAfter] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
   console.log(`B · isOccupied ${occBefore} → ${occAfter}; activeCap ${capBefore} → ${capAfter}`);
   check('reader.isOccupied flips false→true on rent', occBefore === false && occAfter === true);

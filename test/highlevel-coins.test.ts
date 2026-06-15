@@ -2,11 +2,11 @@ import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { isCoinSource, resolvePayment } from '../src/highlevel/coins.js';
+import { sourceCoin } from '../src/highlevel/coins.js';
 import { InsufficientBalance, InsufficientPayment, mapAbort } from '../src/highlevel/errors.js';
-import { SUI, coinTag } from '../src/highlevel/value.js';
+import { SUI } from '../src/highlevel/value.js';
 
-const DUMMY = coinTag({ type: '0xd::dummy_coin::DUMMY_COIN', decimals: 9, symbol: 'DUMMY' });
+const DUMMY_T = '0xd::dummy_coin::DUMMY_COIN';
 const COIN = bcs.struct('Coin', { id: bcs.Address, balance: bcs.u64() });
 
 /** Fake client serving `owner`'s Coin<C> objects with the given balances. */
@@ -27,65 +27,32 @@ function fakeCoins(balances: bigint[]): ClientWithCoreApi {
 
 const NO_CLIENT = {} as ClientWithCoreApi;
 
-describe('highlevel/coins — isCoinSource', () => {
-  it('recognises sources, rejects raw coin args', () => {
-    expect(isCoinSource({ kind: 'minimum', coin: SUI })).toBe(true);
-    expect(isCoinSource({ kind: 'exact', coin: SUI, amountMist: 1n })).toBe(true);
+describe('highlevel/coins — sourceCoin (the amount is the only decision)', () => {
+  it('splits SUI from gas — no owned-object lookup', async () => {
     const tx = new Transaction();
-    expect(isCoinSource(tx.object('0x123'))).toBe(false);
-  });
-});
-
-describe('highlevel/coins — resolvePayment', () => {
-  it("'minimum' yields exactly floor×count (the minimum)", async () => {
-    const tx = new Transaction();
-    const { paidMist } = await resolvePayment(tx, fakeCoins([1_000n]), '0xbob',
-      { kind: 'minimum', coin: DUMMY }, { minimumMist: 600n, coinType: DUMMY.type });
-    expect(paidMist).toBe(600n);
+    // NO_CLIENT proves the SUI branch never touches the client.
+    const arg = await sourceCoin(tx, NO_CLIENT, '0xbob', { coinType: SUI.type, amountMist: 500n });
+    expect(arg).toBeDefined();
   });
 
-  it("'exact' yields the requested amount (overpay → stake)", async () => {
+  it('SUI branch is address-normalized (0x2 ≡ 0x000…2)', async () => {
     const tx = new Transaction();
-    const { paidMist } = await resolvePayment(tx, fakeCoins([1_000n]), '0xbob',
-      { kind: 'exact', coin: DUMMY, amountMist: 750n }, { minimumMist: 600n, coinType: DUMMY.type });
-    expect(paidMist).toBe(750n);
+    const long = '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI';
+    const arg = await sourceCoin(tx, NO_CLIENT, '0xbob', { coinType: long, amountMist: 1n });
+    expect(arg).toBeDefined(); // resolved via gas, not the owned-coin path
   });
 
-  it('SUI splits from gas (no owned-object lookup)', async () => {
+  it('selects/merges owned coins to cover the amount', async () => {
     const tx = new Transaction();
-    const { paidMist } = await resolvePayment(tx, NO_CLIENT, '0xbob',
-      { kind: 'minimum', coin: SUI }, { minimumMist: 500n, coinType: SUI.type });
-    expect(paidMist).toBe(500n);
+    const arg = await sourceCoin(tx, fakeCoins([100n, 200n, 400n]), '0xbob', { coinType: DUMMY_T, amountMist: 650n });
+    expect(arg).toBeDefined();
   });
 
-  it('merges multiple owned coins to cover the target', async () => {
+  it('throws InsufficientBalance when owned coins cannot cover the amount', async () => {
     const tx = new Transaction();
-    const { paidMist } = await resolvePayment(tx, fakeCoins([100n, 200n, 400n]), '0xbob',
-      { kind: 'minimum', coin: DUMMY }, { minimumMist: 650n, coinType: DUMMY.type });
-    expect(paidMist).toBe(650n);
-  });
-
-  it('throws InsufficientBalance when owned coins cannot cover', async () => {
-    const tx = new Transaction();
-    await expect(resolvePayment(tx, fakeCoins([100n, 200n]), '0xbob',
-      { kind: 'minimum', coin: DUMMY }, { minimumMist: 650n, coinType: DUMMY.type }))
-      .rejects.toBeInstanceOf(InsufficientBalance);
-  });
-
-  it('throws when the source coin ≠ the escrow coin', async () => {
-    const tx = new Transaction();
-    await expect(resolvePayment(tx, fakeCoins([1_000n]), '0xbob',
-      { kind: 'minimum', coin: SUI }, { minimumMist: 1n, coinType: DUMMY.type }))
-      .rejects.toBeInstanceOf(InsufficientBalance);
-  });
-
-  it('returns a raw coin arg as-is', async () => {
-    const tx = new Transaction();
-    const raw = tx.object('0xmycoin');
-    const { arg, paidMist } = await resolvePayment(tx, NO_CLIENT, '0xbob', raw,
-      { minimumMist: 42n, coinType: DUMMY.type });
-    expect(arg).toBe(raw);
-    expect(paidMist).toBe(42n);
+    await expect(
+      sourceCoin(tx, fakeCoins([100n, 200n]), '0xbob', { coinType: DUMMY_T, amountMist: 650n }),
+    ).rejects.toBeInstanceOf(InsufficientBalance);
   });
 });
 

@@ -79,7 +79,7 @@ async function main() {
 
   // ════════════ ② RENT — Bob takes it; pays the stake that becomes credit ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1, payment: ub.fromBalance(DUMMY) });
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
   console.log(`② Bob rented — paid ${bobCap.receipt!.paid}; tenure ends ${bobCap.receipt!.expiresAt.toISOString()}\n`);
 
   // ════════════ ③ EXPIRE — wait out the tenure, then settle (posts the earnings) ════════════

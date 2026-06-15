@@ -69,14 +69,14 @@ async function main() {
 
   // ════════════ ② RENT — Bob takes it ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1, payment: ub.fromBalance(DUMMY) });
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
   console.log(`② Bob rented — cap ${bobCap.id}, paid ${bobCap.receipt!.paid}\n`);
 
   // ════════════ ③ CHALLENGE — Carol rents the OCCUPIED escrow (the bid) ════════════
   const uc = usufruct({ network: 'testnet', client, signer: carol });
   const occupied = await uc.escrow(escrow.id);
   console.log(`③ Carol sees status=${occupied.status}, ascending floor=${occupied.floorPrice} → she bids`);
-  const carolCap = await occupied.rent({ tenures: 1, payment: uc.fromBalance(DUMMY) }); // renting occupied = the bid
+  const carolCap = await occupied.rent({ tenures: 1 }); // renting occupied = the bid
   console.log(`   Carol bid — cap ${carolCap.id}, paid ${carolCap.receipt!.paid}\n`);
 
   // ════════════ ④ READ — the always-liquid state, off the Escrow handle ════════════

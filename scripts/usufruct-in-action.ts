@@ -76,7 +76,7 @@ async function main() {
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
   const sword = await bob.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
-  const cap = await sword.rent({ tenures: 1, payment: bob.fromBalance(DUMMY) });
+  const cap = await sword.rent({ tenures: 1 });
   console.log(`② rented — usufructCap ${cap.id}`);
   console.log(`   paid ${cap.receipt!.paid} · until ${cap.receipt!.expiresAt.toISOString()}\n`);
 

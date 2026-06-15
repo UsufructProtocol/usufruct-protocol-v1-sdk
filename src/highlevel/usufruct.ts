@@ -4,8 +4,7 @@
  * the (optional) signer, and is the door onto the authority graph.
  *
  * Phase A: the factory, client/signer plumbing, and the `primitives` escape
- * hatch. `escrow` / `coin` / `fromBalance` are declared here and implemented in
- * Phases B–C (they throw until then).
+ * hatch. `escrow` / `coinType` are declared here and implemented in Phases B–C.
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
@@ -21,7 +20,6 @@ import { chainSource, type Source } from '../primitives/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import { createCap, type UsufructCap } from './cap.js';
-import type { CoinSource } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
@@ -31,7 +29,7 @@ import { resolveCoinTag } from './coinmeta.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
-import type { CoinTag, Price } from './value.js';
+import type { CoinTag } from './value.js';
 
 export type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
 
@@ -113,11 +111,6 @@ export interface Usufruct {
    * keeps the SDK coin-agnostic (no assumed 9 decimals). `await u.coinType(t)`.
    */
   coinType(type: string): Promise<CoinTag>;
-
-  /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
-  coin(coin: CoinTag, amount: Price): CoinSource;
-  /** Opt-in coin sourcer: let the call split exactly what it needs. */
-  fromBalance(coin: CoinTag): CoinSource;
 
   /** The four primitives, untouched. */
   readonly primitives: Primitives;
@@ -232,12 +225,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
     coinType(type) {
       return resolveCoinTag(client, type);
-    },
-    coin(coin, amount) {
-      return { kind: 'exact', coin, amountMist: amount.mist };
-    },
-    fromBalance(coin) {
-      return { kind: 'minimum', coin };
     },
 
     primitives,
