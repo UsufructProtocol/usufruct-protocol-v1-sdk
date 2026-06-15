@@ -23,7 +23,8 @@
     "demo": "tsx scripts/usufruct-in-action.ts",
     "lifecycle": "tsx scripts/governor-lifecycle.ts",
     "challenge": "tsx scripts/challenge-flow.ts",
-    "secondary": "tsx scripts/secondary-market.ts"
+    "secondary": "tsx scripts/secondary-market.ts",
+    "fee": "tsx scripts/protocol-fee.ts"
   },
   "keywords": [
     "sui",
