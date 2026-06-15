@@ -19,7 +19,7 @@ import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
-import { price, type Price } from './value.js';
+import { coinTag, price, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { resolveRole } from './role.js';
@@ -71,11 +71,13 @@ export interface Escrow {
   readonly earningsInbox: EarningsInbox | null;
 
   /**
-   * Acquire the right of use for `tenures`. `payment` is required (a real
-   * `Coin<C>` arg): pass a coin you control, or an opt-in sourcer
-   * (`u.fromBalance(C)` / `u.coin(C, amount)`). Returns the minted `UsufructCap`.
+   * Acquire the right of use for `tenures`. `payment` is **optional** — by
+   * default the call draws what it needs from your balance of *this escrow's
+   * coin* (the escrow already dictates the coin; you needn't name it). Override
+   * only for control: a coin you hold, or an opt-in sourcer (`u.coin(C, amount)`
+   * to cap the spend, `u.fromBalance(C)`). Returns the minted `UsufructCap`.
    */
-  rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap>;
+  rent(args: { tenures: number; payment?: Payment }): Promise<UsufructCap>;
 
   /**
    * Permissionless keeper: materialize the pending lazy transitions (tenure
@@ -163,15 +165,18 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
   const earningsInbox: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
 
-  async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
+  async function rent(args: { tenures: number; payment?: Payment }): Promise<UsufructCap> {
     if (signer == null || owner == null) {
       throw new NotConnected('rent requires a signer; pass one to usufruct() or u.connect()');
     }
     const count = BigInt(args.tenures);
     const minimumMist = floorMist * count; // snapshot floor at fetch time `t`
 
+    // Default: draw from your balance of THIS escrow's coin — the escrow already
+    // dictates the coin, so the renter needn't name it.
+    const source: Payment = args.payment ?? { kind: 'minimum', coin: coinTag(coin) };
     const tx = new Transaction();
-    const { arg: payment, paidMist } = await resolvePayment(tx, client, owner, args.payment, {
+    const { arg: payment, paidMist } = await resolvePayment(tx, client, owner, source, {
       minimumMist,
       coinType: coinType,
     });

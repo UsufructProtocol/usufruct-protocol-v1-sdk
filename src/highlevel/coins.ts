@@ -12,6 +12,7 @@
 import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import { normalizeStructTag } from '@mysten/sui/utils';
 import { InsufficientBalance } from './errors.js';
 import type { CoinTag } from './value.js';
 
@@ -58,7 +59,9 @@ export async function resolvePayment(
     // A coin the developer controls; its full value becomes stake (≥ minimum assumed).
     return { arg: payment, paidMist: ctx.minimumMist };
   }
-  if (payment.coin.type !== ctx.coinType) {
+  // Compare normalized — `0x2::sui::SUI` and `0x000…2::sui::SUI` are the same coin.
+  const escrowCoin = normalizeStructTag(ctx.coinType);
+  if (normalizeStructTag(payment.coin.type) !== escrowCoin) {
     throw new InsufficientBalance(
       `payment coin ${payment.coin.type} ≠ escrow coin ${ctx.coinType}`,
     );
@@ -66,7 +69,7 @@ export async function resolvePayment(
 
   const target = targetMist(payment, ctx.minimumMist);
 
-  if (ctx.coinType === SUI_TYPE) {
+  if (escrowCoin === normalizeStructTag(SUI_TYPE)) {
     const [out] = tx.splitCoins(tx.gas, [target]);
     return { arg: out, paidMist: target };
   }
