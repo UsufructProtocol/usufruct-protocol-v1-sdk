@@ -90,8 +90,9 @@ describe('highlevel/coins — resolvePayment', () => {
 });
 
 describe('highlevel/errors — mapAbort', () => {
-  it('maps EInsufficientPayment to a typed error', () => {
-    expect(() => mapAbort(new Error('... EInsufficientPayment ...'))).toThrow(InsufficientPayment);
+  it('maps EInsufficientPayment (asset_state code 1) to a typed error', () => {
+    const e = new Error("MoveAbort in 1st command, abort code: 1, in '0xpkg::asset_state::execute_rent' (instruction 3)");
+    expect(() => mapAbort(e)).toThrow(InsufficientPayment);
   });
 
   it('rethrows unknown errors unchanged', () => {

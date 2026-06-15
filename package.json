@@ -18,7 +18,8 @@
     "format": "prettier --write src",
     "test": "vitest run",
     "e2e": "tsx scripts/e2e-testnet.ts",
-    "keystone": "tsx scripts/keystone-slice.ts"
+    "keystone": "tsx scripts/keystone-slice.ts",
+    "governor": "tsx scripts/governor-slice.ts"
   },
   "keywords": [
     "sui",

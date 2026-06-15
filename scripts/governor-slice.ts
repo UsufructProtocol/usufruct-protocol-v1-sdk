@@ -1,0 +1,164 @@
+/**
+ * Live testnet validation of the Layer 2 Governor slice (Fase 20, Phase E).
+ *
+ * Drives the NEW supply-side API against testnet — the chain is the arbiter:
+ *   u.integrate → readback → governor.update (immediate ok / deferred throws) →
+ *   list/escrows → retire/claim → earnings.collect (coin-partitioned, §5.2).
+ *
+ * Funder = loadSigner(); an ephemeral Bob (funded from the funder) rents so the
+ * inbox earns. Dummy asset/coin are free-mint. Run: `npm run governor`.
+ */
+import { bcs } from '@mysten/sui/bcs';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
+import * as actions from '../src/actions/index.js';
+import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
+import { id } from '../src/primitives/brand.js';
+import { CommittedEnsemble, coinTag, usufruct, type Market } from '../src/index.js';
+import {
+  check,
+  createdId,
+  finish,
+  loadSigner,
+  makeClient,
+  rateLimited,
+  send,
+  sleep,
+  step,
+  waitForChainTime,
+} from './lib.js';
+
+const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
+const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
+const DUMMY_COIN_TREASURY =
+  '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
+const COIN_T = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`;
+const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
+const DUMMY = coinTag({ type: COIN_T, decimals: 9, symbol: 'DUMMY_COIN' });
+
+const client = rateLimited(makeClient());
+const funder = loadSigner();
+const me = funder.toSuiAddress();
+
+/** BigInt-safe JSON (for check() detail strings). */
+const j = (x: unknown) => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'bigint' ? `${v}` : v));
+
+/** Retry transient public-fullnode flakiness (truncated devInspect, timeouts). */
+async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 5): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = String(e);
+      const transient = /no results|devInspect|dryRun|429|TIMEOUT|ECONNRESET|fetch failed/i.test(msg);
+      if (!transient || i >= tries - 1) throw e;
+      const wait = 4_000 * (i + 1);
+      console.log(`  [retry] ${label} in ${wait}ms — ${msg.slice(0, 70)}`);
+      await sleep(wait);
+    }
+  }
+}
+
+const u = usufruct({ client, signer: funder, assetSchema: dummyAssetSchema, graphql: GRAPHQL_TESTNET });
+
+/** Mint a DummyAsset to the funder; return its object id. */
+async function mintAsset(): Promise<string> {
+  const tx = new Transaction();
+  tx.transferObjects([tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` })], me);
+  return createdId(await send(client, tx, funder), '::dummy_asset::DummyAsset');
+}
+
+const market = (over: Partial<Market> = {}): Market => ({
+  restPrice: DUMMY(0.01),
+  tenure: '2m',
+  coin: DUMMY,
+  multiTenure: true,
+  handover: '25s',
+  retireCommitment: 'immediate',
+  ensembleCommitment: 'immediate',
+  ...over,
+});
+
+async function main() {
+  console.log(`funder ${me}`);
+
+  step('1. integrate (new API) — mints escrow + governance cap + earnings inbox');
+  const { escrow, governor } = await u.integrate({ asset: await mintAsset(), market: market() });
+  check('escrow created', escrow.id.length === 66, escrow.id);
+  check('governance cap surfaced', governor.capId.length === 66, governor.capId);
+  check('earnings inbox surfaced', governor.earnings.inboxId.length === 66, governor.earnings.inboxId);
+  const rp = await escrow.reader.restPrice();
+  check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
+
+  step('2. governor.update — immediate commitment lets the price change');
+  await governor.update(escrow, market({ restPrice: DUMMY(0.02) }));
+  const rp2 = await (await u.escrow(escrow.id)).reader.restPrice();
+  check('restPrice updated to 0.02 DUMMY', rp2.kind === 'fixed' && rp2.priceMist === 20_000_000n, j(rp2));
+
+  step('2b. governor.update — a deferred ensemble commitment is enforced (throws)');
+  const b = await u.integrate({ asset: await mintAsset(), market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
+  let threw = false;
+  try {
+    await b.governor.update(b.escrow, market({ restPrice: DUMMY(0.05) }));
+  } catch (e) {
+    threw = e instanceof CommittedEnsemble;
+  }
+  check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
+
+  step('3. portfolio — list a second escrow under the same cap + inbox');
+  const listed = await governor.list(await mintAsset(), market());
+  check('portfolio escrow listed', listed.id.length === 66, listed.id);
+  // Portfolio proof (cheap + deterministic): both escrows are governed by the
+  // SAME cap. (governor.escrows() byGovernor returns the funder's entire history
+  // — ~90 escrows here — so it's exercised offline, not hammered live.)
+  const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governor?.capId;
+  const govL = (await withRetry('read listed', () => u.escrow(listed.id))).governor?.capId;
+  check('both escrows share one governance cap (portfolio)', govA === governor.capId && govL === governor.capId, `${govA} / ${govL}`);
+
+  step('4. retire + claim — pull an idle asset back out');
+  const r = await u.integrate({ asset: await mintAsset(), market: market() });
+  await r.governor.retire(r.escrow);
+  const claimed = await r.governor.claim(r.escrow);
+  check('claim returned the asset id', claimed.assetId.length === 66, claimed.assetId);
+  const owner = (await client.core.getObject({ objectId: claimed.assetId })).object.owner;
+  check('claimed asset is owned by the funder', j(owner).includes(me.slice(2)), j(owner));
+
+  step('5. earnings — Bob rents a short-tenure escrow; tenure expires; collect (§5.2)');
+  // handover must not exceed the tenure (new_ensemble aborts otherwise), so the
+  // short-tenure escrow uses a short handover too.
+  const e = await u.integrate({ asset: await mintAsset(), market: market({ tenure: '15s', handover: '5s' }) });
+  // fund an ephemeral Bob (SUI gas + DUMMY) from the funder
+  const bob = Ed25519Keypair.generate();
+  {
+    const tx = new Transaction();
+    tx.transferObjects([tx.splitCoins(tx.gas, [200_000_000n])[0]!], bob.toSuiAddress());
+    tx.transferObjects(
+      [tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`, arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000_000_000n)] })],
+      bob.toSuiAddress(),
+    );
+    await send(client, tx, funder);
+  }
+  const ub = usufruct({ client, signer: bob, assetSchema: dummyAssetSchema });
+  const sword = await withRetry('Bob reads escrow', () => ub.escrow(e.escrow.id));
+  const cap = await sword.rent({ tenures: 1, payment: ub.fromBalance(DUMMY) });
+  const expiry = BigInt(cap.receipt!.expiresAt.getTime());
+  await waitForChainTime(client, expiry);
+  // apply the lazy tenure-expiry → posts an EarningsMessage to the inbox
+  const tx = new Transaction();
+  actions.applyPendingTransitionStates().toPtb(tx, { pkg: TESTNET, escrowId: id<'Escrow'>(e.escrow.id), typeArguments: [e.escrow.assetType, e.escrow.coinType] });
+  await send(client, tx, funder);
+
+  const pending = await e.governor.earnings.balance();
+  const collected = await e.governor.earnings.collect();
+  const dummyPending = pending.find((p) => p.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
+  const dummyCollected = collected.find((c) => c.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
+  check('earnings collected > 0', dummyCollected > 0n, `${collected.map((c) => `${c.amount}`).join(', ')}`);
+  check('balance() preview == collect() (conservation per coin)', dummyPending === dummyCollected, `pending=${dummyPending} collected=${dummyCollected}`);
+
+  finish();
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

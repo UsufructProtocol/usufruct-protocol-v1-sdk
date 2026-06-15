@@ -31,19 +31,36 @@ export class CommittedRetire extends UsufructError {}
 /** A governance write attempted without holding the escrow's GovernanceCap. */
 export class NotGovernor extends UsufructError {}
 
-const ABORTS: ReadonlyArray<readonly [string, new (m: string) => UsufructError]> = [
-  ['EInsufficientPayment', InsufficientPayment],
-  ['EEnsembleCommitmentFloorNotElapsed', CommittedEnsemble],
-  ['ERetireCommitmentFloorNotElapsed', CommittedRetire],
-  ['ERetiredNoBid', NotAvailable],
-  ['ERetireFlagBlocksBid', NotAvailable],
+/**
+ * Move abort → typed error, keyed by (module, code). Runtime aborts carry the
+ * numeric code + the module where they fired (e.g. `abort code: 18, in
+ * '0x…::asset_state::…'`) — NOT the Move constant name — so we match those.
+ * Codes are from `engine/asset_state.move` (verified live).
+ */
+const ABORTS: ReadonlyArray<{
+  readonly module: string;
+  readonly code: number;
+  readonly Ctor: new (m: string) => UsufructError;
+}> = [
+  { module: 'asset_state', code: 1, Ctor: InsufficientPayment }, // EInsufficientPayment
+  { module: 'asset_state', code: 18, Ctor: CommittedEnsemble }, // EEnsembleCommitmentFloorNotElapsed
+  { module: 'asset_state', code: 4, Ctor: CommittedRetire }, // ERetireCommitmentFloorNotElapsed
+  { module: 'asset_state', code: 2, Ctor: NotAvailable }, // ERetireFlagBlocksBid
+  { module: 'asset_state', code: 3, Ctor: NotAvailable }, // ERetiredNoBid
 ];
 
-/** Rethrow a caught error as a typed `UsufructError` when its message names a known abort. */
+const ABORT_RE = /abort code: (\d+),?\s*in '0x\w+::(\w+)::/;
+
+/** Rethrow a caught error as a typed `UsufructError` when its message is a known abort. */
 export function mapAbort(e: unknown): never {
   const msg = String((e as { message?: unknown })?.message ?? e);
-  for (const [code, Ctor] of ABORTS) {
-    if (msg.includes(code)) throw new Ctor(msg);
+  const m = ABORT_RE.exec(msg);
+  if (m) {
+    const code = Number(m[1]);
+    const mod = m[2];
+    for (const a of ABORTS) {
+      if (a.module === mod && a.code === code) throw new a.Ctor(msg);
+    }
   }
   throw e;
 }

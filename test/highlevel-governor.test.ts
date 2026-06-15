@@ -44,8 +44,15 @@ describe('highlevel/governor — needs a signer for writes', () => {
 });
 
 describe('highlevel/errors — commitment aborts map to typed errors', () => {
-  it('maps the ensemble + retire commitment floors', () => {
-    expect(() => mapAbort(new Error('… EEnsembleCommitmentFloorNotElapsed …'))).toThrow(CommittedEnsemble);
-    expect(() => mapAbort(new Error('… ERetireCommitmentFloorNotElapsed …'))).toThrow(CommittedRetire);
+  // Runtime aborts carry (code, module), not the Move constant name.
+  const abort = (code: number, mod = 'asset_state') =>
+    new Error(`MoveAbort in 1st command, abort code: ${code}, in '0xpkg::${mod}::guard' (instruction 9)`);
+  it('maps the ensemble + retire commitment floors by (module, code)', () => {
+    expect(() => mapAbort(abort(18))).toThrow(CommittedEnsemble);
+    expect(() => mapAbort(abort(4))).toThrow(CommittedRetire);
+  });
+  it('rethrows an abort with an unmapped code', () => {
+    const e = abort(99);
+    expect(() => mapAbort(e)).toThrow(e);
   });
 });

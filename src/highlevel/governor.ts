@@ -17,6 +17,7 @@ import {
 import { integrateIntoPortfolio } from '../actions/integrate.js';
 import { retire as retireAction } from '../actions/retire.js';
 import { type Id, id as toId } from '../primitives/brand.js';
+import { createReader } from '../read/reader.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
@@ -68,14 +69,9 @@ function sumGroups(groups: MessageGroups): Array<{ coin: string; amount: Price }
   }));
 }
 
-/** `'0x..::module::Type'` → `'::module::Type'` (effect-type fragment). */
-function typeFrag(t: string): string {
-  return `::${t.split('::').slice(1).join('::')}`;
-}
-
 /** Build a `Governor` handle bound to its GovernanceCap + EarningsInbox. */
 export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: string }): Governor {
-  const { client, packageId, feeRefId, source, signer } = ctx;
+  const { client, packageId, feeRefId, source, signer, assetSchema } = ctx;
   const capId = opts.capId;
   const pkg = { packageId, feeRefId };
 
@@ -177,6 +173,15 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
     async claim(ref) {
       const s = need('claim');
       const r = await resolveRef(ref);
+      // A claimed asset is *unwrapped* (not "Created" in effects), so read its
+      // id from the escrow's view before consuming the escrow.
+      const reader = createReader(client, {
+        packageId,
+        escrowId: r.escrowId,
+        typeArguments: r.typeArguments,
+        ...(assetSchema ? { assetSchema } : {}),
+      });
+      const assetId = await reader.assetId();
       const tx = new Transaction();
       const asset = claimAsset().toPtb(tx, {
         pkg,
@@ -186,7 +191,7 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
       });
       tx.transferObjects([asset], s.toSuiAddress());
       const res = await execute(client, tx, s).catch(mapAbort);
-      return { assetId: createdIdByType(res, typeFrag(r.assetType)) ?? '', digest: res.digest };
+      return { assetId: String(assetId), digest: res.digest };
     },
 
     async renounce() {
@@ -230,7 +235,13 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
       }
       const out: Escrow[] = [];
       for await (const state of ctx.indexer.query({ byGovernor: owner })) {
-        out.push(await createEscrow(ctx, state.objectId));
+        // Skip escrows whose reads fail (consumed/retired, or a flaky node) —
+        // discovery returns what it can, never crashes on one bad escrow.
+        try {
+          out.push(await createEscrow(ctx, state.objectId));
+        } catch {
+          continue;
+        }
       }
       return out;
     },
