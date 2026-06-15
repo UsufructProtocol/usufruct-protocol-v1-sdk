@@ -20,7 +20,8 @@
     "e2e": "tsx scripts/e2e-testnet.ts",
     "keystone": "tsx scripts/keystone-slice.ts",
     "governor": "tsx scripts/governor-slice.ts",
-    "demo": "tsx scripts/usufruct-in-action.ts"
+    "demo": "tsx scripts/usufruct-in-action.ts",
+    "lifecycle": "tsx scripts/governor-lifecycle.ts"
   },
   "keywords": [
     "sui",
