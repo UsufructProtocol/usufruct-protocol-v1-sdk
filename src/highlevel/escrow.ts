@@ -14,7 +14,8 @@ import { rent as rentAction } from '../actions/rent.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { type Payment, resolvePayment } from './coins.js';
 import type { HandleCtx } from './ctx.js';
-import { createGovernor, type Governor } from './governor.js';
+import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
+import { createInbox, type EarningsInbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
 import { coinInfo, price, type Price } from './value.js';
@@ -38,13 +39,22 @@ export interface Escrow {
   readonly accruedCredit: Price;
   readonly expiresAt: Date | null;
 
-  // the signer's role here, resolved in the same fetch
+  // identities — which objects relate to this escrow (data, any holder)
+  readonly governanceCapId: string;
+  readonly earningsInboxId: string;
+  readonly feeInboxId: string;
+  readonly activeUsufructCapId: string | null;
+
+  // the signer's holdings here, resolved in the same fetch (possession = role)
   readonly canRent: boolean;
   readonly canBorrow: boolean;
   readonly canGovern: boolean;
+  /** The active `UsufructCap`, if the signer holds it (sync). */
   readonly cap: UsufructCap | null;
-  /** The supply-side handle, if the signer governs this escrow (sync). */
-  readonly governor: Governor | null;
+  /** The `GovernanceCap`, if the signer holds it (sync). */
+  readonly governanceCap: GovernanceCap | null;
+  /** The `EarningsInbox`, if the signer holds it (sync). */
+  readonly earnings: EarningsInbox | null;
 
   /**
    * Acquire the right of use for `tenures`. `payment` is required (a real
@@ -86,20 +96,21 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     ...(assetSchema ? { assetSchema } : {}),
   });
 
-  const [floorMist, status, expiryMs, activeCapId, govCapId, inboxId] = await Promise.all([
+  const [floorMist, status, expiryMs, activeCapId, govCapId, inboxId, feeInboxId] = await Promise.all([
     reader.floorPriceMist(t),
     resolveStatus(reader),
     reader.tenureExpiryMs(),
     reader.activeUsufructCapId(),
     reader.governanceCapId(),
     reader.earningsInboxId(),
+    reader.feeInboxId(),
   ]);
 
   // `accruedCreditMist` aborts on a non-rented escrow — read it only when rented.
   const rented = status === 'occupied' || status === 'demand';
   const [accruedMist, role] = await Promise.all([
     rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
-    resolveRole(client, packageId, owner, activeCapId, govCapId),
+    resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
   ]);
 
   const coin = coinInfo(state.coinType);
@@ -112,9 +123,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
         receipt: null,
       })
     : null;
-  const governor: Governor | null = role.governs
-    ? createGovernor(ctx, { capId: govCapId, inboxId })
-    : null;
+  const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
+  const earnings: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
 
   async function rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap> {
     if (signer == null || owner == null) {
@@ -162,11 +172,16 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     floorPrice: price(floorMist, coin),
     accruedCredit: price(accruedMist, coin),
     expiresAt: expiryMs == null ? null : new Date(Number(expiryMs)),
+    governanceCapId: govCapId,
+    earningsInboxId: inboxId,
+    feeInboxId,
+    activeUsufructCapId: activeCapId,
     canRent: owner != null && status !== 'retired',
     canBorrow: role.capId != null,
     canGovern: role.governs,
     cap,
-    governor,
+    governanceCap,
+    earnings,
     rent,
     reader,
   };

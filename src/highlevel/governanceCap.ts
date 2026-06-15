@@ -1,13 +1,16 @@
 /**
- * The `Governor` handle (Layer 2) — the supply side. Wraps the `GovernanceCap`
- * and its `EarningsInbox`. One cap governs a *portfolio*, so the per-escrow
- * writes name their target `escrow` (the Move fns take `escrow` AND
- * `&GovernanceCap`); `earnings`/`renounce`/`list` are cap/portfolio level.
+ * The `GovernanceCap` handle (Layer 2) — a bearer capability object. Holding it
+ * makes you the governor of the escrows it governs (NOT necessarily the address
+ * that integrated). One cap governs a *portfolio*, so the per-escrow writes name
+ * their target `escrow` (the Move fns take `escrow` AND `&GovernanceCap`).
+ *
+ * Earnings are a *separate* object (`EarningsInbox`) — not bundled here. When
+ * listing into the portfolio you name the inbox the new escrow pays into,
+ * because the two are independently transferable.
  */
 import type { Signer } from '@mysten/sui/cryptography';
 import { Transaction } from '@mysten/sui/transactions';
 import { claimAsset } from '../actions/claimAsset.js';
-import { collectMessages, discoverInboxMessages, type MessageGroups } from '../actions/collect.js';
 import {
   extendEnsembleCommitment as extendEnsembleAction,
   extendRetireCommitment as extendRetireAction,
@@ -18,28 +21,18 @@ import { integrateIntoPortfolio } from '../actions/integrate.js';
 import { retire as retireAction } from '../actions/retire.js';
 import { type Id, id as toId } from '../primitives/brand.js';
 import { createReader } from '../read/reader.js';
+import { transferOf } from './bearer.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
-import { coinInfo, price, type Price } from './value.js';
 
 /** An escrow id, or a resolved `Escrow` handle. */
 export type EscrowRef = string | Escrow;
 
-/** The governor's owned `EarningsInbox` (income, separate from governance). */
-export interface Earnings {
-  readonly inboxId: string;
-  /** Preview pending income per coin (no collect). */
-  balance(): Promise<Array<{ coin: string; amount: Price }>>;
-  /** Collect the whole portfolio's income, partitioned by coin (§5.2). */
-  collect(): Promise<Array<{ coin: string; amount: Price }>>;
-}
-
-export interface Governor {
+export interface GovernanceCap {
   readonly capId: string;
-  readonly earnings: Earnings;
 
   // per-escrow governance (the target escrow is required — one cap, many escrows)
   update(escrow: EscrowRef, market: Market): Promise<{ digest: string }>;
@@ -50,30 +43,23 @@ export interface Governor {
 
   // cap-level
   renounce(): Promise<{ digest: string }>;
+  /** Hand governance (this cap) to another address. */
+  transfer(to: string): Promise<{ digest: string }>;
 
-  // portfolio
-  list(asset: string, market: Market): Promise<Escrow>;
-  escrows(): Promise<Escrow[]>;
+  /** List a NEW escrow under this cap, paying into the named `earnings` inbox. */
+  list(asset: string, market: Market, opts: { earnings: string }): Promise<Escrow>;
 }
 
 interface RefInfo {
   readonly escrowId: Id<'Escrow'>;
   readonly typeArguments: [string, string];
-  readonly assetType: string;
 }
 
-function sumGroups(groups: MessageGroups): Array<{ coin: string; amount: Price }> {
-  return [...groups].map(([coin, refs]) => ({
-    coin,
-    amount: price(refs.reduce((a, r) => a + r.amountMist, 0n), coinInfo(coin)),
-  }));
-}
-
-/** Build a `Governor` handle bound to its GovernanceCap + EarningsInbox. */
-export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: string }): Governor {
+/** Build a `GovernanceCap` handle. Authority = the signer currently holding it. */
+export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCap {
   const { client, packageId, feeRefId, source, signer, assetSchema } = ctx;
-  const capId = opts.capId;
   const pkg = { packageId, feeRefId };
+  const govId = toId<'GovernanceCap'>(capId);
 
   const need = (action: string): Signer => {
     if (signer == null) {
@@ -84,10 +70,10 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
 
   async function resolveRef(ref: EscrowRef): Promise<RefInfo> {
     if (typeof ref !== 'string') {
-      return { escrowId: toId<'Escrow'>(ref.id), typeArguments: [ref.assetType, ref.coinType], assetType: ref.assetType };
+      return { escrowId: toId<'Escrow'>(ref.id), typeArguments: [ref.assetType, ref.coinType] };
     }
     const state = await source.fetch(toId<'Escrow'>(ref));
-    return { escrowId: toId<'Escrow'>(ref), typeArguments: [state.assetType, state.coinType], assetType: state.assetType };
+    return { escrowId: toId<'Escrow'>(ref), typeArguments: [state.assetType, state.coinType] };
   }
 
   /** Resolve the escrow, build one PTB command, sign+send. */
@@ -104,69 +90,31 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
     return { digest: res.digest };
   }
 
-  const earnings: Earnings = {
-    inboxId: opts.inboxId,
-    async balance() {
-      return sumGroups(await discoverInboxMessages(client, opts.inboxId, 'earnings'));
-    },
-    async collect() {
-      const s = need('earnings.collect');
-      const groups = await discoverInboxMessages(client, opts.inboxId, 'earnings');
-      if (groups.size === 0) return [];
-      const tx = new Transaction();
-      const coins = collectMessages({ kind: 'earnings', groups }).toPtb(tx, { pkg, inboxId: opts.inboxId });
-      tx.transferObjects(coins, s.toSuiAddress());
-      await execute(client, tx, s).catch(mapAbort);
-      return sumGroups(groups);
-    },
-  };
-
   return {
     capId,
-    earnings,
 
     update(ref, market) {
       const { ensemble } = toEnsembleConfig(market);
       return write('update', ref, (tx, r) =>
-        updateEnsemble(ensemble).toPtb(tx, {
-          pkg,
-          escrowId: r.escrowId,
-          governanceCapId: toId<'GovernanceCap'>(capId),
-          typeArguments: r.typeArguments,
-        }),
+        updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     retire(ref) {
       return write('retire', ref, (tx, r) =>
-        retireAction().toPtb(tx, {
-          pkg,
-          escrowId: r.escrowId,
-          governanceCapId: toId<'GovernanceCap'>(capId),
-          typeArguments: r.typeArguments,
-        }),
+        retireAction().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendRetireCommitment(ref, until) {
       return write('extendRetireCommitment', ref, (tx, r) =>
-        extendRetireAction(toCommitmentConfig(until)).toPtb(tx, {
-          pkg,
-          escrowId: r.escrowId,
-          governanceCapId: toId<'GovernanceCap'>(capId),
-          typeArguments: r.typeArguments,
-        }),
+        extendRetireAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendEnsembleCommitment(ref, until) {
       return write('extendEnsembleCommitment', ref, (tx, r) =>
-        extendEnsembleAction(toCommitmentConfig(until)).toPtb(tx, {
-          pkg,
-          escrowId: r.escrowId,
-          governanceCapId: toId<'GovernanceCap'>(capId),
-          typeArguments: r.typeArguments,
-        }),
+        extendEnsembleAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
@@ -183,12 +131,7 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
       });
       const assetId = await reader.assetId();
       const tx = new Transaction();
-      const asset = claimAsset().toPtb(tx, {
-        pkg,
-        escrowId: r.escrowId,
-        governanceCapId: toId<'GovernanceCap'>(capId),
-        typeArguments: r.typeArguments,
-      });
+      const asset = claimAsset().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
       tx.transferObjects([asset], s.toSuiAddress());
       const res = await execute(client, tx, s).catch(mapAbort);
       return { assetId: String(assetId), digest: res.digest };
@@ -202,7 +145,9 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
       return { digest: res.digest };
     },
 
-    async list(asset, market) {
+    transfer: transferOf(ctx, capId, 'governanceCap'),
+
+    async list(asset, market, opts) {
       const s = need('list');
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = market.coin.type;
@@ -216,34 +161,16 @@ export function createGovernor(ctx: HandleCtx, opts: { capId: string; inboxId: s
         assetType,
         coinType,
       }).toPtb(tx, {
-        pkg: { packageId, feeRefId },
+        pkg,
         asset,
         typeArguments: [assetType, coinType],
         governanceCapId: capId,
-        earningsInboxId: opts.inboxId,
+        earningsInboxId: opts.earnings,
       });
       const res = await execute(client, tx, s).catch(mapAbort);
       const escrowId = createdIdByType(res, '::escrow::Escrow');
       if (escrowId == null) throw new UsufructError(`list: no Escrow created (digest ${res.digest})`);
       return createEscrow(ctx, escrowId);
-    },
-
-    async escrows() {
-      const owner = signer?.toSuiAddress() ?? null;
-      if (ctx.indexer == null || owner == null) {
-        throw new UsufructError('escrows() needs GraphQL discovery and a signer; pass { graphql, signer } to usufruct()');
-      }
-      const out: Escrow[] = [];
-      for await (const state of ctx.indexer.query({ byGovernor: owner })) {
-        // Skip escrows whose reads fail (consumed/retired, or a flaky node) —
-        // discovery returns what it can, never crashes on one bad escrow.
-        try {
-          out.push(await createEscrow(ctx, state.objectId));
-        } catch {
-          continue;
-        }
-      }
-      return out;
     },
   };
 }

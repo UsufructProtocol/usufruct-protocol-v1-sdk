@@ -34,42 +34,52 @@ function fakeOwned(owned: Record<string, string[]>, pageSize = 50): ClientWithCo
   } as unknown as ClientWithCoreApi;
 }
 
+const INBOX = `${PKG}::earnings_inbox::EarningsInbox`;
+
 describe('highlevel/role — resolveRole', () => {
   it('no owner (read-only) → no role', async () => {
-    const r = await resolveRole(fakeOwned({}), PKG, null, '0xcap', '0xgov');
-    expect(r).toEqual({ capId: null, governs: false });
+    const r = await resolveRole(fakeOwned({}), PKG, null, '0xcap', '0xgov', '0xinbox');
+    expect(r).toEqual({ capId: null, governs: false, holdsEarnings: false });
   });
 
-  it('no active cap and no gov cap → no role (no lookups needed)', async () => {
-    const r = await resolveRole(fakeOwned({}), PKG, '0xbob', null, null);
-    expect(r).toEqual({ capId: null, governs: false });
+  it('no objects to look up → no role', async () => {
+    const r = await resolveRole(fakeOwned({}), PKG, '0xbob', null, null, null);
+    expect(r).toEqual({ capId: null, governs: false, holdsEarnings: false });
   });
 
   it('signer holds the active cap → capId set, canBorrow', async () => {
     const client = fakeOwned({ [CAP]: ['0xother', '0xcap'] });
-    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null);
+    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null, null);
     expect(r.capId).toBe('0xcap');
     expect(r.governs).toBe(false);
   });
 
   it('signer does NOT hold the active cap → capId null', async () => {
     const client = fakeOwned({ [CAP]: ['0xother'] });
-    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null);
+    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null, null);
     expect(r.capId).toBeNull();
   });
 
   it('signer holds the governance cap → governs', async () => {
     const client = fakeOwned({ [GOV]: ['0xgov'] });
-    const r = await resolveRole(client, PKG, '0xalice', null, '0xgov');
+    const r = await resolveRole(client, PKG, '0xalice', null, '0xgov', null);
     expect(r.governs).toBe(true);
     expect(r.capId).toBeNull();
+  });
+
+  it('signer holds the earnings inbox → holdsEarnings (separable from governance)', async () => {
+    // holds the inbox but NOT the gov cap — the object-centric split in action.
+    const client = fakeOwned({ [INBOX]: ['0xinbox'] });
+    const r = await resolveRole(client, PKG, '0xtreasury', null, '0xgov', '0xinbox');
+    expect(r.holdsEarnings).toBe(true);
+    expect(r.governs).toBe(false);
   });
 
   it('paginates owned objects (cap on a later page)', async () => {
     const many = Array.from({ length: 120 }, (_, i) => `0x${i}`);
     many.push('0xcap');
     const client = fakeOwned({ [CAP]: many });
-    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null);
+    const r = await resolveRole(client, PKG, '0xbob', '0xcap', null, null);
     expect(r.capId).toBe('0xcap');
   });
 });

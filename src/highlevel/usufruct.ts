@@ -13,15 +13,19 @@ import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';
 import { integrate as integrateAction } from '../actions/integrate.js';
+import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
 import { indexerSource, type IndexerSource } from '../indexer/index.js';
+import { id as toId } from '../primitives/brand.js';
 import { chainSource, type Source } from '../primitives/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
+import { createCap, type UsufructCap } from './cap.js';
 import type { CoinSource } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
-import { createGovernor, type Governor } from './governor.js';
+import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
+import { createInbox, type Inbox } from './inbox.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
@@ -72,11 +76,26 @@ export interface Usufruct {
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
 
-  /** Genesis: wrap an owned `asset` into a rental market; mints escrow + cap + inbox. */
-  integrate(args: { asset: string; market: Market }): Promise<{ escrow: Escrow; governor: Governor }>;
+  /**
+   * Genesis: wrap an owned `asset` into a rental market. Mints three *independent*
+   * bearer objects (escrow + governance cap + earnings inbox) — returned as
+   * separate handles, all initially yours, transferable apart.
+   */
+  integrate(args: { asset: string; market: Market }): Promise<{
+    escrow: Escrow;
+    governanceCap: GovernanceCap;
+    earnings: Inbox;
+  }>;
 
-  /** Door: a `Governor` by its cap + earnings-inbox ids. */
-  governor(capId: string, inboxId: string): Governor;
+  // ── object doors: a handle to a capability object by id (authority = holding it) ──
+  /** The `UsufructCap` (its escrow resolved from the object). */
+  cap(id: string): Promise<UsufructCap>;
+  /** The `GovernanceCap`. */
+  governanceCap(id: string): GovernanceCap;
+  /** An `EarningsInbox`. */
+  earnings(id: string): Inbox;
+  /** The deployer's `ProtocolFeeInbox`. */
+  fees(id: string): Inbox;
 
   /** Opt-in coin sourcer: split an exact amount from your `Coin<C>`. */
   coin(coin: CoinTag, amount: Price): CoinSource;
@@ -166,11 +185,33 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
         throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
       }
       const c = ctx();
-      return { escrow: await createEscrow(c, escrowId), governor: createGovernor(c, { capId, inboxId }) };
+      return {
+        escrow: await createEscrow(c, escrowId),
+        governanceCap: createGovernanceCap(c, capId),
+        earnings: createInbox(c, inboxId, 'earnings'),
+      };
     },
 
-    governor(capId, inboxId) {
-      return createGovernor(ctx(), { capId, inboxId });
+    async cap(idStr) {
+      const c = ctx();
+      const { object } = await client.core.getObject({ objectId: idStr, include: { content: true } });
+      const escrowId = UsufructCapBcs.parse(object.content!).escrow_identity.id;
+      const state = await c.source.fetch(toId<'Escrow'>(escrowId));
+      return createCap(c, {
+        capId: idStr,
+        escrowId,
+        typeArguments: [state.assetType, state.coinType],
+        receipt: null,
+      });
+    },
+    governanceCap(idStr) {
+      return createGovernanceCap(ctx(), idStr);
+    },
+    earnings(idStr) {
+      return createInbox(ctx(), idStr, 'earnings');
+    },
+    fees(idStr) {
+      return createInbox(ctx(), idStr, 'fees');
     },
 
     coin(coin, amount) {

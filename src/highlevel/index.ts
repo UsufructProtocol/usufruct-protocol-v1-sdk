@@ -20,7 +20,8 @@ export type { Market, Duration, Shape, Commitment } from './market.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
 export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
-export type { Governor, Earnings, EscrowRef } from './governor.js';
+export type { GovernanceCap, EscrowRef } from './governanceCap.js';
+export type { Inbox, EarningsInbox, ProtocolFeeInbox } from './inbox.js';
 export type { CoinSource, Payment } from './coins.js';
 
 export {

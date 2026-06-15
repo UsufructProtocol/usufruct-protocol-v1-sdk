@@ -10,6 +10,7 @@
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { withBorrowedAsset } from '../actions/borrow.js';
 import { id as toId } from '../primitives/brand.js';
+import { transferOf } from './bearer.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, mapAbort } from './errors.js';
@@ -50,6 +51,8 @@ export interface UsufructCap {
   readonly receipt: RentReceipt | null;
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
+  /** Hand the right of use (this cap) to another address. */
+  transfer(to: string): Promise<{ digest: string }>;
   /** Back-edge: re-resolve the escrow this cap belongs to. */
   escrow(): Promise<Escrow>;
 }
@@ -91,6 +94,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     escrowId: args.escrowId,
     receipt: args.receipt,
     borrow,
+    transfer: transferOf(ctx, args.capId, 'cap'),
     escrow: () => createEscrow(ctx, args.escrowId),
   };
 }
