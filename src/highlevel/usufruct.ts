@@ -14,7 +14,7 @@ import { TESTNET } from '../config/network.js';
 import { chainSource, type Source } from '../primitives/source.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import type { CoinSource } from './coins.js';
-import type { Escrow } from './escrow.js';
+import { createEscrow, type Escrow } from './escrow.js';
 import type { CoinTag, Price } from './value.js';
 
 export type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
@@ -92,8 +92,8 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       signer = next;
     },
 
-    escrow() {
-      throw new Error('usufruct.escrow: not implemented until Phase B');
+    escrow(idStr, opts) {
+      return createEscrow(client, packageId, source, signer?.toSuiAddress() ?? null, idStr, opts?.at);
     },
 
     coin(coin, amount) {
