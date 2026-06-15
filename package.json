@@ -28,6 +28,7 @@
     "agnostic": "tsx scripts/coin-agnostic.ts",
     "sui": "tsx scripts/sui-coin.ts",
     "pricing": "tsx scripts/rent-pricing.ts",
+    "clean": "tsx scripts/clean.ts",
     "earnings": "tsx scripts/earnings-collect.ts",
     "compose": "tsx scripts/reader-compose.ts"
   },
