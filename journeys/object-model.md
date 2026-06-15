@@ -138,13 +138,20 @@ ways to discover escrows are genuinely different:
 | Door | Means | Source |
 |---|---|---|
 | `u.escrowsIntegratedBy(addr)` | who *brought it into being* (history) | `AssetIntegrated.governor_address == addr` |
-| `u.escrowsGovernedBy(addr)` | who *governs it now* (possession) | `addr`'s owned `GovernanceCap`s ∩ the event log |
+| `u.escrowsGovernedByCap(capId)` | what *this cap* governs (its portfolio) | `AssetIntegrated.governance_cap_id == capId` |
+| `u.escrowsGovernedBy(addr)` | what *addr* governs now (possession) | `addr`'s owned `GovernanceCap`s ∩ the event log |
 
-`escrowsGovernedBy` is the object-centric one: it lists the caps `addr` owns
-*right now* and intersects them with the `AssetIntegrated` events (the only place
-the cap→escrow link exists). It **follows the cap** — it includes escrows whose
-cap was transferred *to* `addr`, and excludes ones whose cap they gave *away*. (One
-cap can govern a whole portfolio — every escrow under it is returned.)
+`escrowsGovernedByCap(capId)` is the **purest** object-centric query: the cap *is*
+the governor, so you ask the cap what it governs — keyed on the object, not a
+holder. It's also a method on the handle: `governanceCap.escrows()` (the cap
+answering for itself). One cap can govern a whole **portfolio** — every escrow
+under it is returned.
+
+`escrowsGovernedBy(addr)` is the holder-convenience built on it: it lists the caps
+`addr` owns *right now* and unions their escrows (intersecting `AssetIntegrated`
+events — the only place the cap→escrow link exists). It **follows the cap** — it
+includes escrows whose cap was transferred *to* `addr`, and excludes ones whose
+cap they gave *away*.
 
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it

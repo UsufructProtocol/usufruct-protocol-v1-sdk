@@ -10,6 +10,7 @@
 import { normalizeStructTag } from '@mysten/sui/utils';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
+import { UsufructError } from './errors.js';
 
 /** An escrow's identities, read from its `AssetIntegrated` event (decode-free). */
 export interface EscrowListing {
@@ -56,4 +57,42 @@ export function createListing(
     integratedAt: e.timestamp ? new Date(e.timestamp) : null,
     escrow: () => createEscrow(ctx, escrowId),
   };
+}
+
+/**
+ * Stream `AssetIntegrated` events and map the matching ones to `EscrowListing`s.
+ * `sender` narrows server-side; the rest are exact client-side filters on the
+ * event payload (`integrator` = integration-time governor; `governanceCapId` =
+ * the cap that governs it; `ownedCaps` = "a cap I hold"). Deduped by escrow id.
+ * Needs the indexer (a `graphql` endpoint).
+ */
+export async function discoverIntegrated(
+  ctx: HandleCtx,
+  filter: {
+    sender?: string;
+    integrator?: string;
+    assetType?: string;
+    governanceCapId?: string;
+    ownedCaps?: ReadonlySet<string>;
+  },
+): Promise<EscrowListing[]> {
+  if (ctx.indexer == null) {
+    throw new UsufructError('discovery requires a GraphQL endpoint — pass `graphql` to usufruct()');
+  }
+  const type = `${ctx.packageId}::asset_state::AssetIntegrated`;
+  const out: EscrowListing[] = [];
+  const seen = new Set<string>();
+  for await (const ev of ctx.indexer.events({ type, ...(filter.sender ? { sender: filter.sender } : {}) })) {
+    const j = ev.json;
+    const cap = s(j['governance_cap_id']);
+    if (filter.integrator && s(j['governor_address']) !== filter.integrator) continue;
+    if (filter.assetType && normType(s(j['asset_type'])) !== filter.assetType) continue;
+    if (filter.governanceCapId && cap !== filter.governanceCapId) continue;
+    if (filter.ownedCaps && !filter.ownedCaps.has(cap)) continue;
+    const id = s(j['escrow_id']);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(createListing(ctx, { json: j, timestamp: ev.timestamp }));
+  }
+  return out;
 }

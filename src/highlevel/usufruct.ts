@@ -27,9 +27,9 @@ import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.
 import { resolveFeeInboxId } from './feeref.js';
 import { normalizeStructTag } from '@mysten/sui/utils';
 import { resolveCoinTag } from './coinmeta.js';
-import { createListing, normType, type EscrowListing } from './listings.js';
+import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { ownedIds } from './role.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { createdIdByType, execute } from './send.js';
 import type { CoinTag } from './value.js';
@@ -135,6 +135,13 @@ export interface Usufruct {
    * can govern many escrows (a portfolio) — all are returned. Needs `graphql`.
    */
   escrowsGovernedBy(holder: string): Promise<EscrowListing[]>;
+  /**
+   * The escrows a specific `GovernanceCap` governs — its **portfolio**, keyed on
+   * the cap object itself (the purest object-centric query: the cap *is* the
+   * governor). `escrowsGovernedBy(addr)` is the union of this over `addr`'s owned
+   * caps. Needs `graphql`. (Also on the handle: `governanceCap.escrows()`.)
+   */
+  escrowsGovernedByCap(governanceCapId: string): Promise<EscrowListing[]>;
   /** The escrows of a given asset Move type, as decode-free `EscrowListing`s. */
   escrowsByAssetType(assetType: string): Promise<EscrowListing[]>;
 
@@ -148,38 +155,6 @@ function resolveClient(config: UsufructConfig): ClientWithCoreApi {
   return new SuiGrpcClient({ network, baseUrl: GRPC_URL[network] });
 }
 
-/**
- * Discover escrows from `AssetIntegrated` events (decode-free). `sender` narrows
- * server-side; `integrator` / `assetType` are exact client-side filters on the
- * event payload. Deduped by escrow id. Needs the indexer (a `graphql` endpoint).
- *
- * Note: `integrator` filters the event's `governor_address` — the *integration-time*
- * governor (who signed `integrate`). It is NOT "who governs now": governance is
- * object-centric (whoever holds the `GovernanceCap`). The listing exposes
- * `governanceCapId`; resolve possession at the handle (`canGovern`).
- */
-async function discoverIntegrated(
-  ctx: HandleCtx,
-  filter: { sender?: string; integrator?: string; assetType?: string; ownedCaps?: ReadonlySet<string> },
-): Promise<EscrowListing[]> {
-  if (ctx.indexer == null) {
-    throw new UsufructError('discovery requires a GraphQL endpoint — pass `graphql` to usufruct()');
-  }
-  const type = `${ctx.packageId}::asset_state::AssetIntegrated`;
-  const out: EscrowListing[] = [];
-  const seen = new Set<string>();
-  for await (const ev of ctx.indexer.events({ type, ...(filter.sender ? { sender: filter.sender } : {}) })) {
-    const j = ev.json;
-    if (filter.integrator && String(j['governor_address']) !== filter.integrator) continue;
-    if (filter.assetType && normType(String(j['asset_type'])) !== filter.assetType) continue;
-    if (filter.ownedCaps && !filter.ownedCaps.has(String(j['governance_cap_id']))) continue;
-    const id = String(j['escrow_id']);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(createListing(ctx, { json: j, timestamp: ev.timestamp }));
-  }
-  return out;
-}
 
 /** Construct the entry handle. */
 export function usufruct(config: UsufructConfig = {}): Usufruct {
@@ -294,6 +269,9 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       // have been transferred from its integrator, so we must scan all events.
       const ownedCaps = await ownedIds(client, holder, `${packageId}::governance_cap::GovernanceCap`);
       return discoverIntegrated(ctx(), { ownedCaps });
+    },
+    async escrowsGovernedByCap(governanceCapId) {
+      return discoverIntegrated(ctx(), { governanceCapId });
     },
     async escrowsByAssetType(assetType) {
       return discoverIntegrated(ctx(), { assetType: normalizeStructTag(assetType) });
