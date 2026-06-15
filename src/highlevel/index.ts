@@ -22,6 +22,7 @@ export type { Escrow, EscrowStatus } from './escrow.js';
 export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
 export type { GovernanceCap, EscrowRef } from './governanceCap.js';
 export type { Inbox, EarningsInbox, ProtocolFeeInbox } from './inbox.js';
+export type { EscrowListing } from './listings.js';
 
 export {
   UsufructError,

@@ -122,6 +122,40 @@ picks the default destination; the primitives hand you the value and let you
 decide. Rule #5 again — the object is explicit, and someone (you, or the SDK on
 your behalf) always says where it goes.
 
+## Discovery is object-centric — you govern by the cap, not by an address
+
+Finding "the escrows I govern" is not an address query. Governance is possession
+of the `GovernanceCap`, and that cap is `key + store` — transferable. So the
+governor of an escrow is *whoever holds its cap now*, which may differ from the
+address that integrated it.
+
+And there is a sharp on-chain fact behind this: **the `GovernanceCap` does not
+store which escrows it governs.** Its Move struct is just `{ id }`. That cap→escrow
+link is **not on-chain at all** — it lives only in the event log
+(`AssetIntegrated` carries both `governance_cap_id` and `escrow_id`). So the two
+ways to discover escrows are genuinely different:
+
+| Door | Means | Source |
+|---|---|---|
+| `u.escrowsIntegratedBy(addr)` | who *brought it into being* (history) | `AssetIntegrated.governor_address == addr` |
+| `u.escrowsGovernedBy(addr)` | who *governs it now* (possession) | `addr`'s owned `GovernanceCap`s ∩ the event log |
+
+`escrowsGovernedBy` is the object-centric one: it lists the caps `addr` owns
+*right now* and intersects them with the `AssetIntegrated` events (the only place
+the cap→escrow link exists). It **follows the cap** — it includes escrows whose
+cap was transferred *to* `addr`, and excludes ones whose cap they gave *away*. (One
+cap can govern a whole portfolio — every escrow under it is returned.)
+
+The difference is real and observable: on testnet our address had **integrated
+224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
+transferred away (the secondary-market flow). Governance left with the object.
+
+Both doors return decode-free `EscrowListing`s (every field straight from the
+event — no per-escrow fetch), each with an `.escrow()` back-edge to the full
+handle. This is the third read axis — state (handles + `Reader`), and now events —
+sitting on the indexer's typed event stream, same primitives/high-level line as
+everything else.
+
 ## The Escrow: identities (data) vs holdings (what *I* hold)
 
 The escrow knows, as plain data, **which objects relate to it** — regardless of
