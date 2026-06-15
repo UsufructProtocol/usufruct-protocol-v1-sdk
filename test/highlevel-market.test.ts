@@ -23,7 +23,6 @@ describe('highlevel/market — toEnsembleConfig', () => {
   const full = (over: Partial<Market> = {}): Market => ({
     restPrice: SUI(1),
     tenure: '1d',
-    coin: SUI,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'linear',

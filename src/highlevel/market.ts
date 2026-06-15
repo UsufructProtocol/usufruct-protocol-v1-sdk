@@ -11,7 +11,7 @@ import type {
   RetireCommitmentConfig,
   ShapeConfig,
 } from '../config/ensemble.js';
-import type { CoinTag, Price } from './value.js';
+import type { Price } from './value.js';
 
 /** A duration: `'7d'`/`'12h'`/`'30m'`/`'25s'`/`'500ms'`, or a number of ms. */
 export type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;
@@ -43,12 +43,16 @@ export type Commitment = 'immediate' | { readonly deferredFor: Duration };
  * The full market: pricing + dynamics + the trust commitments. **Every field is
  * required** — no defaults. A market is a set of economic decisions; the API
  * makes the governor reason about each one, rather than inheriting a silent default.
+ *
+ * The payment **coin is NOT here** — it's a `phantom CoinType` baked into the
+ * escrow's type at `integrate`, immutable thereafter. So it's a parameter of
+ * `integrate` (and `governanceCap.integrateIntoPortfolio`), never a `Market`
+ * field: a market is the mutable policy you can `updateMarket`; the coin is not.
  */
 export interface Market {
   // pricing & tenure
   readonly restPrice: Price;
   readonly tenure: Duration;
-  readonly coin: CoinTag;
   readonly multiTenure: boolean;
   // dynamics
   readonly creditShape: Shape;

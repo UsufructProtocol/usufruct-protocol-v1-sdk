@@ -54,7 +54,6 @@ async function main() {
   const market: Market = {
     restPrice: DUMMY(0.01),
     tenure: '5m', // long, so the tenure doesn't expire during the demo
-    coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'linear',
@@ -65,7 +64,7 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), market });
+  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
   console.log(`① listed ${escrow.id}\n`);
 
   // ════════════ ② RENT — Bob takes it ════════════

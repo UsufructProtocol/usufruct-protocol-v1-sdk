@@ -62,7 +62,6 @@ async function main() {
   const market: Market = {
     restPrice: DUMMY(0.01),
     tenure: '20s', // short, so it lapses during the demo and the fee settles
-    coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'linear',
@@ -73,7 +72,7 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), market });
+  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
   console.log(`① Alice listed ${escrow.id}`);
   console.log(`   protocol fee inbox (singleton) = ${escrow.feeInboxId}\n`);
 

@@ -52,7 +52,7 @@ There is **no `Governor`** handle. `integrate` mints three objects and returns
 three independent handles:
 
 ```ts
-const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset, market });
+const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset, coin, market });
 // each is a separate bearer object; they can diverge from here.
 ```
 
@@ -62,8 +62,14 @@ the portfolio is the one write that depends on **two** objects — the cap (the
 portfolio it joins) and the inbox it pays into — so both are named explicitly:
 
 ```ts
-await governanceCap.integrateIntoPortfolio(asset, market, { earningsInbox: earningsInbox.inboxId });
+await governanceCap.integrateIntoPortfolio(asset, coin, market, { earningsInbox: earningsInbox.inboxId });
 ```
+
+The `coin` is a parameter of `integrate` / `integrateIntoPortfolio`, **never a
+`Market` field**: in Move it's a `phantom CoinType` baked into the escrow's type
+at genesis and immutable thereafter. A `Market` is the mutable policy you can
+`updateMarket`; the coin is not, so it lives where it's decided once — and a
+portfolio may hold escrows of different coins, all paying one inbox.
 
 ## `transfer` is first-class — moving the object moves the role
 
@@ -133,7 +139,7 @@ So the two layers compose with zero seams — a read before a high-level write a
 after it differs, because the Reader sees what the write did:
 
 ```ts
-const { escrow, governanceCap } = await u.integrate({ asset, market });
+const { escrow, governanceCap } = await u.integrate({ asset, coin, market });
 const reader = escrow.reader; // live kernel views, straight off the handle
 
 const before = (await reader.restPrice()).priceMist;        // 10_000_000n

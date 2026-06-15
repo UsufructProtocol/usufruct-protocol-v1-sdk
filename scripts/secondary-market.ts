@@ -72,7 +72,6 @@ async function main() {
   const market: Market = {
     restPrice: DUMMY(0.01),
     tenure: '1h',
-    coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'linear',
@@ -83,7 +82,7 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), market });
+  const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
   console.log(`① Alice listed ${escrow.id}`);
   check('Alice governs after integrate', (await seenBy(ALICE, escrow.id)).canGovern);
   check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).earningsInbox != null);

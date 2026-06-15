@@ -71,7 +71,6 @@ async function mintAsset(): Promise<string> {
 const market = (over: Partial<Market> = {}): Market => ({
   restPrice: DUMMY(0.01),
   tenure: '2m',
-  coin: DUMMY,
   multiTenure: true,
   creditShape: 'linear',
   auctionShape: 'linear',
@@ -87,7 +86,7 @@ async function main() {
   console.log(`funder ${me}`);
 
   step('1. integrate (new API) — mints THREE independent objects');
-  const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset: await mintAsset(), market: market() });
+  const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
   check('escrow created', escrow.id.length === 66, escrow.id);
   check('governance cap (object) surfaced', governanceCap.capId.length === 66, governanceCap.capId);
   check('earnings inbox (separate object) surfaced', earningsInbox.inboxId.length === 66, earningsInbox.inboxId);
@@ -104,7 +103,7 @@ async function main() {
   check('partial update preserved the rest (auctionShape still linear)', shape2.kind === 'linear', shape2.kind);
 
   step('2b. governanceCap.updateMarket — a deferred ensemble commitment is enforced (throws)');
-  const b = await u.integrate({ asset: await mintAsset(), market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
+  const b = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
   let threw = false;
   try {
     await b.governanceCap.updateMarket(b.escrow, { restPrice: DUMMY(0.05) });
@@ -114,7 +113,7 @@ async function main() {
   check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
 
   step('3. portfolio — integrateIntoPortfolio a second escrow under the same cap, naming the inbox');
-  const listed = await governanceCap.integrateIntoPortfolio(await mintAsset(), market(), { earningsInbox: earningsInbox.inboxId });
+  const listed = await governanceCap.integrateIntoPortfolio(await mintAsset(), DUMMY, market(), { earningsInbox: earningsInbox.inboxId });
   check('portfolio escrow listed', listed.id.length === 66, listed.id);
   // Portfolio proof (cheap + deterministic): both escrows name the SAME cap.
   const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governanceCapId;
@@ -122,7 +121,7 @@ async function main() {
   check('both escrows are governed by the same cap (portfolio)', govA === governanceCap.capId && govL === governanceCap.capId, `${govA} / ${govL}`);
 
   step('4. retire + claim — pull an idle asset back out');
-  const r = await u.integrate({ asset: await mintAsset(), market: market() });
+  const r = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
   await r.governanceCap.retire(r.escrow);
   const claimed = await r.governanceCap.claim(r.escrow);
   check('claim returned the asset id', claimed.assetId.length === 66, claimed.assetId);
@@ -132,7 +131,7 @@ async function main() {
   step('5. earnings — Bob rents a short-tenure escrow; tenure expires; collect (§5.2)');
   // handover must not exceed the tenure (new_ensemble aborts otherwise), so the
   // short-tenure escrow uses a short handover too.
-  const e = await u.integrate({ asset: await mintAsset(), market: market({ tenure: '15s', handover: '5s' }) });
+  const e = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ tenure: '15s', handover: '5s' }) });
   // fund an ephemeral Bob (SUI gas + DUMMY) from the funder
   const bob = Ed25519Keypair.generate();
   {
@@ -162,7 +161,7 @@ async function main() {
   check('balance() preview == collect() (conservation per coin)', dummyPending === dummyCollected, `pending=${dummyPending} collected=${dummyCollected}`);
 
   step('6. OBJECT-CENTRIC PROOF — transfer the GovernanceCap; governance follows the object');
-  const t = await u.integrate({ asset: await mintAsset(), market: market() });
+  const t = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
   const carol = Ed25519Keypair.generate();
   {
     const tx = new Transaction(); // fund Carol with gas so she can sign

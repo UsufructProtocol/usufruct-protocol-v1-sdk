@@ -78,11 +78,14 @@ export interface Usufruct {
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
 
   /**
-   * Genesis: wrap an owned `asset` into a rental market. Mints three *independent*
-   * bearer objects (escrow + governance cap + earnings inbox) — returned as
-   * separate handles, all initially yours, transferable apart.
+   * Genesis: wrap an owned `asset` into a rental market priced in `coin`. Mints
+   * three *independent* bearer objects (escrow + governance cap + earnings inbox)
+   * — returned as separate handles, all initially yours, transferable apart.
+   *
+   * `coin` is the immutable `phantom CoinType` of the escrow — fixed here, never
+   * changeable (it's not part of the mutable `Market`).
    */
-  integrate(args: { asset: string; market: Market }): Promise<{
+  integrate(args: { asset: string; coin: CoinTag; market: Market }): Promise<{
     escrow: Escrow;
     governanceCap: GovernanceCap;
     earningsInbox: EarningsInbox;
@@ -164,11 +167,11 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return createEscrow(ctx(), idStr, opts?.at);
     },
 
-    async integrate({ asset, market }) {
+    async integrate({ asset, coin, market }) {
       const s = signer;
       if (s == null) throw new NotConnected('integrate requires a signer; pass one to usufruct() or u.connect()');
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
-      const coinType = market.coin.type;
+      const coinType = coin.type;
       const { object } = await client.core.getObject({ objectId: asset });
       const assetType = object.type;
 

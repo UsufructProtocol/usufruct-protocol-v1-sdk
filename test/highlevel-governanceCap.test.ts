@@ -14,7 +14,6 @@ const ESCROW = hex('33');
 const MARKET: Market = {
   restPrice: SUI(0.5),
   tenure: '1d',
-  coin: SUI,
   multiTenure: false,
   creditShape: 'linear',
   auctionShape: 'linear',

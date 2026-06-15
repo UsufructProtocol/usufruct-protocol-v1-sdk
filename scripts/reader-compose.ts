@@ -56,7 +56,6 @@ async function main() {
   const market: Market = {
     restPrice: DUMMY(0.01),
     tenure: '20s', // short, so C can settle a lapsed tenure during the demo
-    coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'linear',
@@ -67,7 +66,7 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), market });
+  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
   const reader = escrow.reader; // ← the drift-free kernel reader, straight off the handle
   console.log(`listed ${escrow.id}; reader hangs off the handle (no re-wiring)\n`);
 

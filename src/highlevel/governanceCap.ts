@@ -27,6 +27,7 @@ import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
+import type { CoinTag } from './value.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType, execute } from './send.js';
 
@@ -54,12 +55,19 @@ export interface GovernanceCap {
   transfer(to: string): Promise<{ digest: string }>;
 
   /**
-   * Integrate a NEW asset into this cap's portfolio. The only write that depends
-   * on TWO objects: this `GovernanceCap` (the portfolio it joins) and the
-   * `earningsInbox` it will pay into — so both are named explicitly. Mirrors the
-   * Move `integrate_into_portfolio`.
+   * Integrate a NEW asset (priced in `coin`) into this cap's portfolio. The only
+   * write that depends on TWO objects: this `GovernanceCap` (the portfolio it
+   * joins) and the `earningsInbox` it will pay into — so both are named
+   * explicitly. `coin` is the new escrow's immutable `phantom CoinType` (a
+   * portfolio may hold escrows of different coins, all paying one inbox). Mirrors
+   * the Move `integrate_into_portfolio`.
    */
-  integrateIntoPortfolio(asset: string, market: Market, opts: { earningsInbox: string }): Promise<Escrow>;
+  integrateIntoPortfolio(
+    asset: string,
+    coin: CoinTag,
+    market: Market,
+    opts: { earningsInbox: string },
+  ): Promise<Escrow>;
 }
 
 interface RefInfo {
@@ -169,10 +177,10 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     transfer: transferOf(ctx, capId, 'governanceCap'),
 
-    async integrateIntoPortfolio(asset, market, opts) {
+    async integrateIntoPortfolio(asset, coin, market, opts) {
       const s = need('integrateIntoPortfolio');
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
-      const coinType = market.coin.type;
+      const coinType = coin.type;
       const { object } = await client.core.getObject({ objectId: asset });
       const assetType = object.type;
       const tx = new Transaction();

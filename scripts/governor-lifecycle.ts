@@ -35,7 +35,6 @@ async function main() {
   const market: Market = {
     restPrice: DUMMY(0.01),
     tenure: '1h',
-    coin: DUMMY,
     multiTenure: false,
     creditShape: 'linear',
     auctionShape: 'smoothstep', // ← we'll prove this survives a partial update
@@ -45,7 +44,7 @@ async function main() {
     retireCommitment: 'immediate', // I can pull the asset anytime
     ensembleCommitment: 'immediate', // I can change the market anytime (for now)
   };
-  const { escrow, governanceCap } = await u.integrate({ asset: swordId, market });
+  const { escrow, governanceCap } = await u.integrate({ asset: swordId, coin: DUMMY, market });
   console.log(`① listed ${escrow.id} — floor ${escrow.floorPrice}, cap ${governanceCap.capId}\n`);
 
   // ════════════ ② ADJUST — bump ONLY the rest price ════════════

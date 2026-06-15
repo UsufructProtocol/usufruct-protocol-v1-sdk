@@ -42,11 +42,12 @@ export async function readMarket(reader: Reader, coinType: string): Promise<Mark
       reader.ensembleCommitment(),
     ]);
 
+  // `coin` is the escrow's immutable phantom type, not a Market field — but its
+  // mist amounts still render in that coin, so we tag the prices with it.
   const coin = coinTag(coinInfo(coinType));
   return {
     restPrice: price(restPrice.priceMist, coin),
     tenure: Number(tenure.ceilingMs),
-    coin,
     multiTenure: extend.kind === 'multi',
     creditShape: curveToShape(credit),
     auctionShape: curveToShape(auctionShape),

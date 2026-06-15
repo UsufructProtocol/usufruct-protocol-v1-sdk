@@ -50,13 +50,13 @@ async function main() {
 
   const { escrow, governanceCap, earningsInbox } = await alice.integrate({
     asset: swordId,
+    coin: DUMMY, // the payment coin — an IMMUTABLE phantom type fixed here, never in the market
     // Every field is required — a market is a set of economic decisions, and the
     // API makes the governor reason about each one (no silent defaults).
     market: {
       // ── pricing & tenure ──
       restPrice: DUMMY(0.01), // costs 0.01 DUMMY per tenure
       tenure: '20s', // each tenure lasts 20s
-      coin: DUMMY,
       multiTenure: false, // one tenure at a time (no multi-tenure commitments)
       // ── dynamics ──
       creditShape: 'linear', //      how rent credit accrues over a tenure
