@@ -48,7 +48,9 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 5): Pro
       return await fn();
     } catch (e) {
       const msg = String(e);
-      const transient = /no results|devInspect|dryRun|429|TIMEOUT|ECONNRESET|fetch failed/i.test(msg);
+      // Public-fullnode flakiness shapes: truncated devInspect surfaces as either
+      // "no results from devInspect" OR a malformed result → "reading 'returnValues'".
+      const transient = /no results|devInspect|dryRun|returnValues|Cannot read properties|429|TIMEOUT|ECONNRESET|fetch failed/i.test(msg);
       if (!transient || i >= tries - 1) throw e;
       const wait = 4_000 * (i + 1);
       console.log(`  [retry] ${label} in ${wait}ms — ${msg.slice(0, 70)}`);
