@@ -96,8 +96,10 @@ async function main() {
 
   step('2. governanceCap.update — Partial<Market> (only the price); the rest is preserved');
   await governanceCap.update(escrow, { restPrice: DUMMY(0.02) }); // ← just one field
-  const after = await u.escrow(escrow.id);
-  const [rp2, shape2] = await Promise.all([after.reader.restPrice(), after.reader.auctionShape()]);
+  const [rp2, shape2] = await withRetry('readback after partial update', async () => {
+    const after = await u.escrow(escrow.id);
+    return Promise.all([after.reader.restPrice(), after.reader.auctionShape()]);
+  });
   check('restPrice updated to 0.02 DUMMY', rp2.kind === 'fixed' && rp2.priceMist === 20_000_000n, j(rp2));
   check('partial update preserved the rest (auctionShape still linear)', shape2.kind === 'linear', shape2.kind);
 
