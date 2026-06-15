@@ -10,6 +10,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
+import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { type Payment, resolvePayment } from './coins.js';
@@ -63,6 +64,9 @@ export interface Escrow {
    */
   rent(args: { tenures: number; payment: Payment }): Promise<UsufructCap>;
 
+  /** Permissionless keeper: settle any pending lazy transitions (e.g. tenure expiry). */
+  apply(): Promise<{ digest: string }>;
+
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
 }
@@ -115,6 +119,14 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   const coin = coinInfo(state.coinType);
   const typeArguments: [string, string] = [state.assetType, state.coinType];
+  async function apply(): Promise<{ digest: string }> {
+    if (signer == null) throw new NotConnected('apply requires a signer (it submits a tx)');
+    const tx = new Transaction();
+    applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments });
+    const res = await execute(client, tx, signer).catch(mapAbort);
+    return { digest: res.digest };
+  }
+
   const usufructCap: UsufructCap | null = role.capId
     ? createCap(ctx, {
         capId: role.capId,
@@ -183,6 +195,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     governanceCap,
     earningsInbox,
     rent,
+    apply,
     reader,
   };
 }
