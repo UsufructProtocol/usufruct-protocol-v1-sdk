@@ -16,3 +16,6 @@ export * as indexer from './indexer/index.js';
 export * from './primitives/brand.js';
 export * from './config/ensemble.js';
 export * from './config/network.js';
+
+// Layer 2: the high-level, developer-facing API (the default entry point).
+export * from './highlevel/index.js';
