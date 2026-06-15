@@ -12,8 +12,10 @@ import type { Signer } from '@mysten/sui/cryptography';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { TESTNET } from '../config/network.js';
 import { chainSource, type Source } from '../primitives/source.js';
+import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import type { CoinSource } from './coins.js';
+import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import type { CoinTag, Price } from './value.js';
 
@@ -38,6 +40,8 @@ export interface UsufructConfig {
   readonly signer?: Signer;
   /** Defaults to the network's deployed package id. */
   readonly packageId?: string;
+  /** Asset BCS schema for non-uid assets (SPEC §10); defaults to uid-only. */
+  readonly assetSchema?: AssetSchema;
 }
 
 /** The raw kernel, one property away (escape hatch — SPEC rule #2). */
@@ -75,14 +79,23 @@ function resolveClient(config: UsufructConfig): ClientWithCoreApi {
 export function usufruct(config: UsufructConfig = {}): Usufruct {
   const client = resolveClient(config);
   const packageId = config.packageId ?? TESTNET.packageId;
+  const assetSchema = config.assetSchema;
   let signer: Signer | null = config.signer ?? null;
 
-  const source = chainSource(client, { packageId });
+  const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
 
   const primitives: Primitives = {
     source,
     reader: (target) => createReader(client, target),
   };
+
+  const ctx = (): HandleCtx => ({
+    client,
+    packageId,
+    source,
+    signer,
+    ...(assetSchema ? { assetSchema } : {}),
+  });
 
   return {
     get address() {
@@ -93,7 +106,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     },
 
     escrow(idStr, opts) {
-      return createEscrow(client, packageId, source, signer, idStr, opts?.at);
+      return createEscrow(ctx(), idStr, opts?.at);
     },
 
     coin(coin, amount) {

@@ -7,15 +7,13 @@
  * The reads are a snapshot at `t` (the fetch time); for live values use the
  * kernel `reader` (exposed) or, later, `watch`/`priceCurve`.
  */
-import type { ClientWithCoreApi } from '@mysten/sui/client';
-import type { Signer } from '@mysten/sui/cryptography';
 import { Transaction } from '@mysten/sui/transactions';
-import { id as toId, tenureCount } from '../primitives/brand.js';
+import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
-import type { Source } from '../primitives/source.js';
 import { rent as rentAction } from '../actions/rent.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { type Payment, resolvePayment } from './coins.js';
+import type { HandleCtx } from './ctx.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { createdIdByType, execute } from './send.js';
 import { coinInfo, price, type Price } from './value.js';
@@ -71,14 +69,8 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 }
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
-export async function createEscrow(
-  client: ClientWithCoreApi,
-  packageId: string,
-  source: Source,
-  signer: Signer | null,
-  idStr: string,
-  at?: When,
-): Promise<Escrow> {
+export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
+  const { client, packageId, source, signer, assetSchema } = ctx;
   const owner = signer?.toSuiAddress() ?? null;
   const escrowId = toId<'Escrow'>(idStr);
 
@@ -88,23 +80,28 @@ export async function createEscrow(
     packageId,
     escrowId,
     typeArguments: [state.assetType, state.coinType],
+    ...(assetSchema ? { assetSchema } : {}),
   });
 
-  const [floorMist, accruedMist, status, expiryMs, activeCapId, govCapId] = await Promise.all([
+  const [floorMist, status, expiryMs, activeCapId, govCapId] = await Promise.all([
     reader.floorPriceMist(t),
-    reader.accruedCreditMist(t),
     resolveStatus(reader),
     reader.tenureExpiryMs(),
     reader.activeUsufructCapId(),
     reader.governanceCapId(),
   ]);
 
-  const role = await resolveRole(client, packageId, owner, activeCapId, govCapId);
+  // `accruedCreditMist` aborts on a non-rented escrow — read it only when rented.
+  const rented = status === 'occupied' || status === 'demand';
+  const [accruedMist, role] = await Promise.all([
+    rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
+    resolveRole(client, packageId, owner, activeCapId, govCapId),
+  ]);
 
   const coin = coinInfo(state.coinType);
   const typeArguments: [string, string] = [state.assetType, state.coinType];
   const cap: UsufructCap | null = role.capId
-    ? createCap(client, packageId, source, signer, {
+    ? createCap(ctx, {
         capId: role.capId,
         escrowId: idStr,
         typeArguments,
@@ -137,7 +134,7 @@ export async function createEscrow(
     if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
 
     const expiry = await reader.tenureExpiryMs();
-    return createCap(client, packageId, source, signer, {
+    return createCap(ctx, {
       capId,
       escrowId: idStr,
       typeArguments,

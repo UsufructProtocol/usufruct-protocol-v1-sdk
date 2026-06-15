@@ -17,7 +17,8 @@
     "lint": "eslint src",
     "format": "prettier --write src",
     "test": "vitest run",
-    "e2e": "tsx scripts/e2e-testnet.ts"
+    "e2e": "tsx scripts/e2e-testnet.ts",
+    "keystone": "tsx scripts/keystone-slice.ts"
   },
   "keywords": [
     "sui",

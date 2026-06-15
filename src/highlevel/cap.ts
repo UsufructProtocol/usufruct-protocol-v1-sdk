@@ -7,12 +7,10 @@
  * `return` — the protocol's reason to exist, made effortless without taking the
  * middle away.
  */
-import type { ClientWithCoreApi } from '@mysten/sui/client';
-import type { Signer } from '@mysten/sui/cryptography';
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { withBorrowedAsset } from '../actions/borrow.js';
 import { id as toId } from '../primitives/brand.js';
-import type { Source } from '../primitives/source.js';
+import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { execute } from './send.js';
@@ -64,13 +62,8 @@ export interface CapArgs {
 }
 
 /** Build a `UsufructCap` handle bound to its escrow's type args. */
-export function createCap(
-  client: ClientWithCoreApi,
-  packageId: string,
-  source: Source,
-  signer: Signer | null,
-  args: CapArgs,
-): UsufructCap {
+export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
+  const { client, packageId, signer } = ctx;
   const ptbArgs = {
     pkg: { packageId },
     escrowId: toId<'Escrow'>(args.escrowId),
@@ -98,6 +91,6 @@ export function createCap(
     escrowId: args.escrowId,
     receipt: args.receipt,
     borrow,
-    escrow: () => createEscrow(client, packageId, source, signer, args.escrowId),
+    escrow: () => createEscrow(ctx, args.escrowId),
   };
 }
