@@ -147,17 +147,29 @@ export interface Escrow {
    * Returns a `stop()`. Needs a gRPC client (the SDK's default). React to *the
    * event you choose*, with its data: `escrow.onEvents(e => …, { kinds: ['BidPlaced'] })`.
    */
-  onEvents(onEvent: (event: HistoryEvent) => void, opts?: { kinds?: readonly string[] }): () => void;
+  onEvents(
+    onEvent: (event: HistoryEvent) => void,
+    opts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean },
+  ): () => void;
   /** Sugar: react to one event kind. `escrow.on('BidPlaced', e => counterBid(e.data))`. */
   on(kind: string, onEvent: (event: HistoryEvent) => void): () => void;
   /**
    * Resolve with the **next** typed event (one-shot, auto-unsubscribed) — the
    * event twin of `waitFor`. `await escrow.next('BidPlaced')` instead of wiring a
-   * Promise around `on`. `opts.kinds` narrows; `opts.timeoutMs` bounds the wait.
+   * Promise around `on`. `opts.kinds` narrows by name; `opts.where` narrows by a
+   * **field value** of the decoded event (e.g. `e => e.data.pending_bid_amount …`);
+   * `opts.timeoutMs` bounds the wait.
    */
-  nextEvent(opts?: { kinds?: readonly string[]; timeoutMs?: number }): Promise<HistoryEvent>;
-  /** Sugar: `await escrow.next('BidPlaced', { timeoutMs })` — the next event of one kind. */
-  next(kind: string, opts?: { timeoutMs?: number }): Promise<HistoryEvent>;
+  nextEvent(opts?: {
+    kinds?: readonly string[];
+    where?: (event: HistoryEvent) => boolean;
+    timeoutMs?: number;
+  }): Promise<HistoryEvent>;
+  /** Sugar: the next event of one kind, optionally filtered by a field value. */
+  next(
+    kind: string,
+    opts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number },
+  ): Promise<HistoryEvent>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -402,7 +414,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   function onEvents(
     onEvent: (event: HistoryEvent) => void,
-    onOpts?: { kinds?: readonly string[] },
+    onOpts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean },
   ): () => void {
     const grpc = ctx.grpcClient;
     if (grpc == null) {
@@ -417,8 +429,10 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
         });
         for await (const ev of stream) {
           if (controller.signal.aborted) break;
+          const he = toHistoryEvent(ev);
+          if (onOpts?.where && !onOpts.where(he)) continue; // filter by a field value
           try {
-            onEvent(toHistoryEvent(ev));
+            onEvent(he);
           } catch {
             /* a consumer error must not kill the stream */
           }
@@ -434,7 +448,11 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return onEvents(onEvent, { kinds: [kind] });
   }
 
-  function nextEvent(nextOpts?: { kinds?: readonly string[]; timeoutMs?: number }): Promise<HistoryEvent> {
+  function nextEvent(nextOpts?: {
+    kinds?: readonly string[];
+    where?: (event: HistoryEvent) => boolean;
+    timeoutMs?: number;
+  }): Promise<HistoryEvent> {
     return new Promise<HistoryEvent>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stop = onEvents(
@@ -443,7 +461,10 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
           if (timer) clearTimeout(timer);
           resolve(ev);
         },
-        nextOpts?.kinds ? { kinds: nextOpts.kinds } : undefined,
+        {
+          ...(nextOpts?.kinds ? { kinds: nextOpts.kinds } : {}),
+          ...(nextOpts?.where ? { where: nextOpts.where } : {}),
+        },
       );
       if (nextOpts?.timeoutMs !== undefined) {
         timer = setTimeout(() => {
@@ -454,8 +475,15 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     });
   }
 
-  function next(kind: string, nextOpts?: { timeoutMs?: number }): Promise<HistoryEvent> {
-    return nextEvent({ kinds: [kind], ...(nextOpts?.timeoutMs !== undefined ? { timeoutMs: nextOpts.timeoutMs } : {}) });
+  function next(
+    kind: string,
+    nextOpts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number },
+  ): Promise<HistoryEvent> {
+    return nextEvent({
+      kinds: [kind],
+      ...(nextOpts?.where ? { where: nextOpts.where } : {}),
+      ...(nextOpts?.timeoutMs !== undefined ? { timeoutMs: nextOpts.timeoutMs } : {}),
+    });
   }
 
   return {

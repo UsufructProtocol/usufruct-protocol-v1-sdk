@@ -96,6 +96,24 @@ Each kind of subscription comes in two shapes, and they line up:
 
 (`next` is `waitFor` for events — no more wiring a Promise around `on`.)
 
+Filter not just by event *type* but by a **field value** — `where` is a predicate
+on the decoded event:
+
+```ts
+// only a bid above a floor; only a displacement of a specific tenant
+const bid = await escrow.next('BidPlaced', {
+  where: e => BigInt(e.data.pending_bid_amount as string) >= minBid,
+});
+escrow.onEvents(act, {
+  kinds: ['HandoverCompleted'],
+  where: e => e.data.departing_usufructuary_address === target,
+});
+```
+
+gRPC can't filter a payload server-side (the firehose is chain-wide checkpoints),
+but we decode every event to deliver it typed anyway — so `where` is free, the same
+client-side step that already drops other escrows and other kinds.
+
 The state watch is decode-free (the firehose signals only `object_id`+`version`;
 we re-resolve the decode-free handle). The event watch decodes each event with the
 same registry History uses. Push is the SDK default — a `SuiGrpcClient` is stood up

@@ -80,23 +80,35 @@ async function main() {
   await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('② Bob rented — occupied\n');
 
-  // ③ NEXT — the keeper awaits the next typed BidPlaced (one-shot, no plumbing)
-  console.log("③ keeper: await escrow.next('BidPlaced')  (typed event push over gRPC)");
-  const bidSeen = (await withRetry(() => a.escrow(escrow.id))).next('BidPlaced', { timeoutMs: 120_000 });
+  const handle = await withRetry(() => a.escrow(escrow.id));
+
+  // ③ NEXT — keeper A awaits the next BidPlaced (any), one-shot, no plumbing
+  console.log("③ keeper A: await escrow.next('BidPlaced')  (any bid)");
+  const anyBid = handle.next('BidPlaced', { timeoutMs: 120_000 });
+
+  // ③b WHERE — keeper B awaits a BidPlaced whose bidder is Carol: filter by a
+  //   FIELD VALUE of the decoded event, not just its type. A bid from anyone else
+  //   is skipped (the firehose carries it; the predicate drops it).
+  console.log("③b keeper B: escrow.next('BidPlaced', { where: e => e.data.pending_usufructuary_address === Carol })");
+  const carolBid = handle.next('BidPlaced', {
+    where: (e) => e.data['pending_usufructuary_address'] === carol.toSuiAddress(),
+    timeoutMs: 120_000,
+  });
 
   // ④ CHALLENGE — Carol bids
   const uc = usufruct({ network: 'testnet', client, signer: carol });
   await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('④ Carol bid on the occupied escrow\n');
 
-  // ⑤ REACT — the typed event resolves the promise, with its data
-  const bid = await bidSeen;
+  // ⑤ REACT — both promises resolve; keeper B matched on the FIELD VALUE
+  const [bid, byCarol] = await Promise.all([anyBid, carolBid]);
   const d = bid.data as Record<string, unknown>;
   const bidderIsCarol = String(d['pending_usufructuary_address']) === carol.toSuiAddress();
-  console.log(`⑤ keeper got a typed ${bid.kind} by ${String(bid.by).slice(0, 8)}:`);
+  const whereMatched = String(byCarol.data['pending_usufructuary_address']) === carol.toSuiAddress();
+  console.log(`⑤ keeper A got a typed ${bid.kind} by ${String(bid.by).slice(0, 8)}:`);
   console.log(`   bidder = ${bidderIsCarol ? 'Carol' : d['pending_usufructuary_address']}`);
   console.log(`   pending_bid_amount = ${d['pending_bid_amount']} · floor_price = ${d['floor_price']}`);
-  console.log(`   handover_countdown_expiry = ${d['handover_countdown_expiry']}`);
+  console.log(`   keeper B (where bidder === Carol) resolved on the matching value: ${whereMatched ? '✓' : '✗'}`);
   console.log('   acting: settling the handover…');
   const challenged = await withRetry(() => a.escrow(escrow.id));
   await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
@@ -104,8 +116,8 @@ async function main() {
   const after = await withRetry(() => a.escrow(escrow.id));
   console.log(`   settled — status=${after.status}`);
   console.log(
-    after.status === 'occupied' && bidderIsCarol
-      ? '\nALL PASS — keeper reacted to the typed BidPlaced and settled.'
+    after.status === 'occupied' && bidderIsCarol && whereMatched
+      ? '\nALL PASS — keeper reacted to the typed BidPlaced (and the where-filtered one) and settled.'
       : '\nUNEXPECTED',
   );
   process.exit(0);
