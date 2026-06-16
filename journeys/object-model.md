@@ -332,3 +332,32 @@ the handle, and possession *is* the authority. The old `Governor` bundle was a
 residual role-centric assumption (one entity owns cap + inbox) that snuck back in
 — this removes it. The kernel was object-centric all along (the Move fns take the
 objects independently); only Layer 2 had bundled them.
+
+## The three axes — state, writes, events
+
+Everything above composes into three axes, and that's the whole surface:
+
+1. **State** — *the chain as it is now.* The `Escrow` handle (a coherent snapshot)
+   and `escrow.reader` (live drift-free views). `u.escrow(id)`, `escrow.status`,
+   `escrow.floorPrice`, the possession getters.
+2. **Writes** — *change it.* The capability handles' methods, each on the object
+   that authorizes it: `escrow.rent`, `usufructCap.borrow`, `governanceCap.updateMarket`,
+   `inbox.collect`, `transfer`. Authority is possession; nothing is hidden.
+3. **Events** — *what happened, and what happens.* Discovery (find escrows by
+   relationship), History (an escrow's lifecycle), Watch (react live).
+
+The events axis is itself split by delivery, over the **same typed events**:
+
+| | Pull | Push |
+|---|---|---|
+| Find | `escrowsGovernedBy` / `escrowsByAssetType` … (GraphQL) | — |
+| Lifecycle | `escrow.history()` (GraphQL, paginated) | `escrow.on('BidPlaced', …)` / `onEvents` (gRPC firehose) |
+| State change | re-`u.escrow(id)` | `escrow.watch` / `waitFor` (gRPC firehose) |
+
+**`escrow.on` is the piece that closes the three axes**: it's *the same typed
+events of `history()`, but pushed live over the firehose.* History reads them in
+pull (paginated GraphQL); `escrow.on` streams them in push (gRPC checkpoints) —
+one decoder, one set of events, two deliveries. With it the loop is whole: you can
+**read** the chain (state), **change** it (writes), **learn** what it did (history,
+pull), and **react** to what it does (watch + on, push) — every one keyed on the
+objects, decode-free, the object answering for itself.
