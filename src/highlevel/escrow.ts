@@ -12,12 +12,15 @@ import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
+import { escrowEventStream, escrowVersionChanges } from '../primitives/grpc-source.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
-import { NotConnected, mapAbort } from './errors.js';
+import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { toHistoryEvent, type HistoryEvent } from './history.js';
+import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType, execute } from './send.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
@@ -90,6 +93,83 @@ export interface Escrow {
    * Rarely called by hand; the next interaction (e.g. a rent) applies them anyway.
    */
   applyPendingTransitionStates(): Promise<{ digest: string }>;
+
+  /**
+   * The roster of every `UsufructCap` this escrow has minted (active, pending, or
+   * long-burned) — object-centric, the escrow answering for itself, from
+   * `UsufructCapMinted` events. (The reverse, cap→escrow, is on-chain: a
+   * `UsufructCap` stores its `escrow_identity`, so `usufructCap.escrow()` needs no
+   * events.) Decode-free records. Needs `graphql`.
+   */
+  usufructCaps(): Promise<UsufructCapRecord[]>;
+
+  /**
+   * This escrow's lifecycle as a time-ordered list of typed `HistoryEvent`s —
+   * integration, policy, rentals, bids, displacements, settlements, governance,
+   * teardown. Built on the indexer's escrow timeline (every escrow-keyed event,
+   * decoded and merged).
+   *
+   * The timeline scans each event type and filters by escrow (GraphQL can't match
+   * a payload field), so on a busy/long-lived package the public endpoint may choke
+   * — **bound it** with `afterCheckpoint` (the escrow's events all postdate its
+   * integration). `sender` narrows to one actor. Needs `graphql`.
+   */
+  history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]>;
+
+  /**
+   * React to this escrow's changes live: `onChange` runs with a **fresh snapshot**
+   * each time the on-chain object changes, then a `stop()`. **Server-push** over
+   * gRPC when available (the checkpoint firehose signals the version change —
+   * decode-free, just `object_id`+`version` — and we re-resolve the decode-free
+   * handle); falls back to version-polling (`intervalMs`, default 3s) only when no
+   * gRPC client is configured. The basis for keepers — settle on expiry,
+   * counter-bid on a challenge.
+   */
+  watch(onChange: (escrow: Escrow) => void, opts?: { intervalMs?: number }): () => void;
+  /**
+   * Resolve once a snapshot satisfies `predicate` — *wait for an event* expressed
+   * as the state it produces, e.g. a challenger: `escrow.waitFor(e => e.isChallenged)`.
+   * Checks the current state first, then on each change. Optional `timeoutMs`.
+   */
+  waitFor(
+    predicate: (escrow: Escrow) => boolean,
+    opts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<Escrow>;
+
+  /**
+   * Live, **typed** events for this escrow — the push twin of `history()`. Each
+   * `HistoryEvent` is decoded off the gRPC checkpoint firehose (no asset schema)
+   * and filtered to this escrow (`opts.kinds` narrows by name, e.g. `'BidPlaced'`).
+   * Returns a `stop()`. Needs a gRPC client (the SDK's default). React to *the
+   * event you choose*, with its data: `escrow.onEvents(e => …, { kinds: ['BidPlaced'] })`.
+   */
+  onEvents(
+    onEvent: (event: HistoryEvent) => void,
+    opts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean },
+  ): () => void;
+  /** Sugar: react to one event kind. `escrow.on('BidPlaced', e => counterBid(e.data))`. */
+  on(kind: string, onEvent: (event: HistoryEvent) => void): () => void;
+  /**
+   * Resolve with the **next** typed event (one-shot, auto-unsubscribed) — the
+   * event twin of `waitFor`. `await escrow.next('BidPlaced')` instead of wiring a
+   * Promise around `on`. `opts.kinds` narrows by name; `opts.where` narrows by a
+   * **field value** of the decoded event (e.g. `e => e.data.pending_bid_amount …`);
+   * `opts.timeoutMs` bounds the wait.
+   */
+  nextEvent(opts?: {
+    kinds?: readonly string[];
+    where?: (event: HistoryEvent) => boolean;
+    timeoutMs?: number;
+  }): Promise<HistoryEvent>;
+  /** Sugar: the next event of one kind, optionally filtered by a field value. */
+  next(
+    kind: string,
+    opts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number },
+  ): Promise<HistoryEvent>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -207,6 +287,205 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     });
   }
 
+  async function usufructCaps(): Promise<UsufructCapRecord[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('usufructCaps requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const type = `${packageId}::usufruct_cap::UsufructCapMinted`;
+    const out: UsufructCapRecord[] = [];
+    const seen = new Set<string>();
+    for await (const ev of ctx.indexer.events({ type })) {
+      if (ev.escrowId !== idStr) continue;
+      const capId = String(ev.json['usufruct_cap_id']);
+      if (seen.has(capId)) continue;
+      seen.add(capId);
+      out.push({
+        usufructCapId: capId,
+        escrowId: idStr,
+        usufructuary: String(ev.json['usufructuary_address']),
+        mintedAt: ev.timestamp ? new Date(ev.timestamp) : null,
+      });
+    }
+    return out;
+  }
+
+  async function history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('history requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const events = await ctx.indexer.escrowTimeline(escrowId, {
+      ...(opts?.sender !== undefined ? { sender: opts.sender } : {}),
+      ...(opts?.afterCheckpoint !== undefined ? { afterCheckpoint: opts.afterCheckpoint } : {}),
+      ...(opts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: opts.beforeCheckpoint } : {}),
+    });
+    return events.map(toHistoryEvent);
+  }
+
+  function watch(onChange: (e: Escrow) => void, watchOpts?: { intervalMs?: number }): () => void {
+    let stopped = false;
+    // Re-resolve the decode-free handle and hand it to the callback. A transient
+    // read flake (truncated devInspect) skips this tick — it must NOT end the
+    // watch, or a `waitFor` would hang forever.
+    const emit = async () => {
+      try {
+        const snap = await createEscrow(ctx, idStr);
+        if (!stopped) onChange(snap);
+      } catch {
+        /* transient resolve flake — skip, keep watching */
+      }
+    };
+
+    // PUSH: a gRPC client streams the escrow's version changes (decode-free — just
+    // object_id + version off the checkpoint firehose). On each, re-resolve the
+    // decode-free handle. No asset schema, no polling latency.
+    const grpc = ctx.grpcClient;
+    if (grpc) {
+      const controller = new AbortController();
+      void (async () => {
+        try {
+          await emit(); // initial snapshot, so waitFor can match the current state
+          const changes = escrowVersionChanges(grpc, escrowId, controller.signal)[Symbol.asyncIterator]();
+          while (!stopped) {
+            if ((await changes.next()).done) break;
+            await emit();
+          }
+        } catch {
+          /* aborted or stream error */
+        }
+      })();
+      return () => {
+        stopped = true;
+        controller.abort();
+      };
+    }
+
+    // POLL fallback (no gRPC available): version-poll the object.
+    const intervalMs = watchOpts?.intervalMs ?? 3000;
+    let lastVersion: string | null = null;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    void (async () => {
+      while (!stopped) {
+        try {
+          const { object } = await client.core.getObject({ objectId: escrowId });
+          const v = String(object.version);
+          if (v !== lastVersion) {
+            lastVersion = v;
+            await emit();
+          }
+        } catch {
+          /* transient read error — keep polling */
+        }
+        if (!stopped) await sleep(intervalMs);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }
+
+  function waitFor(
+    predicate: (e: Escrow) => boolean,
+    waitOpts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<Escrow> {
+    return new Promise<Escrow>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = watch(
+        (e) => {
+          if (predicate(e)) {
+            stop();
+            if (timer) clearTimeout(timer);
+            resolve(e);
+          }
+        },
+        waitOpts?.intervalMs !== undefined ? { intervalMs: waitOpts.intervalMs } : undefined,
+      );
+      if (waitOpts?.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          stop();
+          reject(new Error(`waitFor timed out after ${waitOpts.timeoutMs}ms`));
+        }, waitOpts.timeoutMs);
+      }
+    });
+  }
+
+  function onEvents(
+    onEvent: (event: HistoryEvent) => void,
+    onOpts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean },
+  ): () => void {
+    const grpc = ctx.grpcClient;
+    if (grpc == null) {
+      throw new UsufructError('onEvents requires a gRPC client (live event push) — the SDK default');
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const stream = escrowEventStream(grpc, escrowId, packageId, {
+          signal: controller.signal,
+          ...(onOpts?.kinds ? { kinds: onOpts.kinds } : {}),
+        });
+        for await (const ev of stream) {
+          if (controller.signal.aborted) break;
+          const he = toHistoryEvent(ev);
+          if (onOpts?.where && !onOpts.where(he)) continue; // filter by a field value
+          try {
+            onEvent(he);
+          } catch {
+            /* a consumer error must not kill the stream */
+          }
+        }
+      } catch {
+        /* aborted or stream error */
+      }
+    })();
+    return () => controller.abort();
+  }
+
+  function on(kind: string, onEvent: (event: HistoryEvent) => void): () => void {
+    return onEvents(onEvent, { kinds: [kind] });
+  }
+
+  function nextEvent(nextOpts?: {
+    kinds?: readonly string[];
+    where?: (event: HistoryEvent) => boolean;
+    timeoutMs?: number;
+  }): Promise<HistoryEvent> {
+    return new Promise<HistoryEvent>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = onEvents(
+        (ev) => {
+          stop();
+          if (timer) clearTimeout(timer);
+          resolve(ev);
+        },
+        {
+          ...(nextOpts?.kinds ? { kinds: nextOpts.kinds } : {}),
+          ...(nextOpts?.where ? { where: nextOpts.where } : {}),
+        },
+      );
+      if (nextOpts?.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          stop();
+          reject(new Error(`next event timed out after ${nextOpts.timeoutMs}ms`));
+        }, nextOpts.timeoutMs);
+      }
+    });
+  }
+
+  function next(
+    kind: string,
+    nextOpts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number },
+  ): Promise<HistoryEvent> {
+    return nextEvent({
+      kinds: [kind],
+      ...(nextOpts?.where ? { where: nextOpts.where } : {}),
+      ...(nextOpts?.timeoutMs !== undefined ? { timeoutMs: nextOpts.timeoutMs } : {}),
+    });
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -233,6 +512,14 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     earningsInbox,
     rent,
     applyPendingTransitionStates: applyPending,
+    usufructCaps,
+    history,
+    watch,
+    waitFor,
+    onEvents,
+    on,
+    nextEvent,
+    next,
     reader,
   };
 }

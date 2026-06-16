@@ -28,6 +28,12 @@ import type { Id } from './brand.js';
 import { decodeEscrowState } from './state.js';
 import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
 import {
+  eventKey,
+  normEscrowId,
+  typedEventFromBytes,
+  type TypedEvent,
+} from '../indexer/events.js';
+import {
   chainSource,
   channel,
   sleep,
@@ -97,6 +103,154 @@ function* scanChanged(checkpoint: unknown): Generator<{ objectId: string; versio
 
 /** Reconnect backoff schedule (ms): the stream is resumable without gaps. */
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 5000] as const;
+
+const EVENT_READ_MASK = {
+  paths: [
+    'transactions.timestamp',
+    'transactions.events.events.event_type',
+    'transactions.events.events.sender',
+    'transactions.events.events.contents',
+  ],
+};
+
+/** A protobuf Timestamp `{ seconds, nanos }` as an ISO-8601 string, or `null`. */
+function isoTime(ts: unknown): string | null {
+  const t = ts as { seconds?: bigint | string | number; nanos?: number } | undefined;
+  if (t?.seconds == null) return null;
+  return new Date(Number(t.seconds) * 1000 + (t.nanos ?? 0) / 1e6).toISOString();
+}
+
+/** Every event in a checkpoint as raw parts (the timestamp is the tx's). */
+function* scanEvents(
+  checkpoint: unknown,
+): Generator<{ type: string; sender: string | null; timestamp: string | null; bytes: Uint8Array | null }> {
+  const txs = (checkpoint as { transactions?: unknown[] })?.transactions ?? [];
+  for (const tx of txs) {
+    const t = tx as { timestamp?: unknown; events?: { events?: unknown[] } };
+    const timestamp = isoTime(t.timestamp);
+    for (const ev of t.events?.events ?? []) {
+      const e = ev as { eventType?: string; sender?: string; contents?: { value?: Uint8Array } };
+      if (e.eventType == null) continue;
+      yield {
+        type: e.eventType,
+        sender: e.sender ?? null,
+        timestamp,
+        bytes: e.contents?.value ?? null,
+      };
+    }
+  }
+}
+
+/**
+ * A **server-push** stream of one escrow's typed events over the gRPC checkpoint
+ * firehose. Widens the mask to carry events, decodes each with the same registry
+ * as the indexer (no asset schema — events are self-contained codegen structs),
+ * and keeps those whose payload `escrow_id` matches (and, if given, whose name is
+ * in `kinds`). This is `escrow.history()` (pull) turned into a live feed (push).
+ */
+export async function* escrowEventStream(
+  client: SuiGrpcClient,
+  escrowId: Id<'Escrow'> | string,
+  packageId: string,
+  opts?: { signal?: AbortSignal; kinds?: readonly string[] },
+): AsyncGenerator<TypedEvent> {
+  const signal = opts?.signal;
+  const want = normEscrowId(String(escrowId));
+  const kinds = opts?.kinds ? new Set(opts.kinds) : null;
+  let attempt = 0;
+  while (!signal?.aborted) {
+    const call = client.subscriptionService.subscribeCheckpoints(
+      { readMask: EVENT_READ_MASK },
+      signal ? { abort: signal } : {},
+    );
+    try {
+      for await (const res of call.responses) {
+        if (signal?.aborted) return;
+        for (const part of scanEvents(res.checkpoint)) {
+          // Cheap package filter before any decode (the firehose is chain-wide).
+          if (!part.type.startsWith(packageId)) continue;
+          const ev = typedEventFromBytes(part);
+          if (ev.escrowId !== want) continue;
+          if (kinds && !kinds.has(ev.name) && !kinds.has(eventKey(ev.type))) continue;
+          yield ev;
+        }
+      }
+      attempt = 0;
+    } catch {
+      if (signal?.aborted) return;
+      const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+      attempt += 1;
+      await sleep(wait, signal);
+    }
+  }
+}
+
+const VERSION_READ_MASK = {
+  paths: [
+    'transactions.effects.changed_objects.object_id',
+    'transactions.effects.changed_objects.output_version',
+  ],
+};
+
+/**
+ * A **decode-free** server-push signal: yields one escrow's new object version on
+ * each on-chain change, via the checkpoint firehose. It reads only `object_id` +
+ * `output_version` from checkpoint effects — no content fetch, no BCS, no asset
+ * schema. The high-level `escrow.watch` consumes this and re-resolves its own
+ * decode-free handle, so it gets push latency without decoding `EscrowState`
+ * (which the full `subscribe` does, and which would need an asset schema).
+ * Resumable: re-opens with bounded backoff; the per-version dedupe absorbs replays.
+ */
+export async function* escrowVersionChanges(
+  client: SuiGrpcClient,
+  escrowId: Id<'Escrow'> | string,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const core = client as unknown as ClientWithCoreApi;
+  const target = normId(escrowId);
+  let lastVersion: string | null = null;
+  let primed = false;
+  let attempt = 0;
+  while (!signal?.aborted) {
+    const call = client.subscriptionService.subscribeCheckpoints(
+      { readMask: VERSION_READ_MASK },
+      signal ? { abort: signal } : {},
+    );
+    try {
+      for await (const res of call.responses) {
+        if (signal?.aborted) return;
+        // First checkpoint = the stream is live. Yield the current version once,
+        // so the consumer captures any change that landed during subscribe setup
+        // (a pure delta stream would miss a change in that gap forever).
+        if (!primed) {
+          primed = true;
+          try {
+            const { object } = await core.core.getObject({ objectId: escrowId });
+            const v = String(object.version);
+            if (v !== lastVersion) {
+              lastVersion = v;
+              yield v;
+            }
+          } catch {
+            /* best-effort prime */
+          }
+        }
+        for (const { objectId, version } of scanChanged(res.checkpoint)) {
+          if (normId(objectId) === target && version !== lastVersion) {
+            lastVersion = version;
+            yield version;
+          }
+        }
+      }
+      attempt = 0; // clean completion → re-open from the latest checkpoint
+    } catch {
+      if (signal?.aborted) return;
+      const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+      attempt += 1;
+      await sleep(wait, signal);
+    }
+  }
+}
 
 /**
  * Live-chain `Source` over gRPC whose `subscribe` is server-push, plus

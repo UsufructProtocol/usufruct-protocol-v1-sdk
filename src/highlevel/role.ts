@@ -23,7 +23,7 @@ export interface RoleResolution {
 const NO_ROLE: RoleResolution = { capId: null, governs: false, holdsEarnings: false };
 
 /** Collect the ids of `owner`'s objects of a given Move type (paginated). */
-async function ownedIds(
+export async function ownedIds(
   client: ClientWithCoreApi,
   owner: string,
   type: string,

@@ -5,6 +5,7 @@
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { IndexerSource } from '../indexer/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 
@@ -19,4 +20,6 @@ export interface HandleCtx {
   readonly assetSchema?: AssetSchema;
   /** GraphQL-backed discovery (for `governor.escrows()` byGovernor); optional. */
   readonly indexer?: IndexerSource;
+  /** gRPC client for server-push subscriptions (`escrow.watch`); optional. */
+  readonly grpcClient?: SuiGrpcClient;
 }

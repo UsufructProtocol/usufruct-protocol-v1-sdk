@@ -122,6 +122,108 @@ picks the default destination; the primitives hand you the value and let you
 decide. Rule #5 again — the object is explicit, and someone (you, or the SDK on
 your behalf) always says where it goes.
 
+## Discovery is object-centric — you govern by the cap, not by an address
+
+Finding "the escrows I govern" is not an address query. Governance is possession
+of the `GovernanceCap`, and that cap is `key + store` — transferable. So the
+governor of an escrow is *whoever holds its cap now*, which may differ from the
+address that integrated it.
+
+And there is a sharp on-chain fact behind this: **the `GovernanceCap` does not
+store which escrows it governs.** Its Move struct is just `{ id }`. That cap→escrow
+link is **not on-chain at all** — it lives only in the event log
+(`AssetIntegrated` carries both `governance_cap_id` and `escrow_id`). So the two
+ways to discover escrows are genuinely different:
+
+| Door | Means | Source |
+|---|---|---|
+| `u.escrowsIntegratedBy(addr)` | who *brought it into being* (history) | `AssetIntegrated.governor_address == addr` |
+| `u.escrowsGovernedByCap(capId)` | what *this cap* governs (its portfolio) | `AssetIntegrated.governance_cap_id == capId` |
+| `u.escrowsGovernedBy(addr)` | what *addr* governs now (possession) | `addr`'s owned `GovernanceCap`s ∩ the event log |
+
+`escrowsGovernedByCap(capId)` is the **purest** object-centric query: the cap *is*
+the governor, so you ask the cap what it governs — keyed on the object, not a
+holder. It's also a method on the handle: `governanceCap.escrows()` (the cap
+answering for itself). One cap can govern a whole **portfolio** — every escrow
+under it is returned.
+
+`escrowsGovernedBy(addr)` is the holder-convenience built on it: it lists the caps
+`addr` owns *right now* and unions their escrows (intersecting `AssetIntegrated`
+events — the only place the cap→escrow link exists). It **follows the cap** — it
+includes escrows whose cap was transferred *to* `addr`, and excludes ones whose
+cap they gave *away*.
+
+The same object-centric move extends to the **inboxes** — `AssetIntegrated` also
+sets `earnings_inbox_id` and `fee_inbox_id`, so an inbox can answer which escrows
+feed it: `earningsInbox.escrowsPushingMessages()` is the governor's portfolio
+paying into that inbox; on the `ProtocolFeeInbox` (the deployment singleton) it's
+every escrow of the protocol. Same pattern every time — the object holds an id in
+the event log, so the object answers for itself.
+
+The `UsufructCap` is the one **asymmetric** case, and it's instructive. Unlike the
+`GovernanceCap` (`{ id }`), the cap *stores* its escrow on-chain:
+
+```move
+public struct UsufructCap has key, store { id: UID, escrow_identity: EscrowIdentity }
+```
+
+(It must — `borrow` proves the cap belongs to the escrow.) So cap→escrow needs no
+events: `usufructCap.escrow()` reads it off the object, and `u.escrowsRentedBy(addr)`
+just decodes `addr`'s owned caps. The reverse — every cap an escrow ever minted —
+is *not* on the cap or the escrow; it lives in `UsufructCapMinted` events, so the
+escrow answers from there: `escrow.usufructCaps()` (the roster of renters and
+bidders, active / pending / long-burned).
+
+The rule, stated once: **a relationship is queryable from whichever object stores
+the link** — on-chain when an object holds the id (the cap's escrow), in the event
+log otherwise (everything keyed by `AssetIntegrated` / `UsufructCapMinted`). The
+high-level just puts the question on the object that can answer it.
+
+And the per-escrow *timeline* is the same axis turned sideways: `escrow.history()`
+returns the escrow's whole lifecycle as ordered, typed `HistoryEvent`s (integration,
+policy, rentals, bids, displacements, settlements, governance, teardown) — every
+escrow-keyed event, decoded and merged. Because GraphQL can't filter by a payload
+field, it scans each event type and keeps this escrow's; on a busy package, bound it
+with `afterCheckpoint` (the escrow's events all postdate its integration).
+
+Finally, to *act* on what happens, `escrow.watch(onChange)` runs a callback with a
+fresh snapshot on every on-chain change, and `escrow.waitFor(e => e.isChallenged)`
+resolves the moment a state arrives — *waiting for an event* expressed as the state
+it produces. That's the keeper loop: wait for a challenge and settle the handover,
+wait for expiry and apply, counter-bid on displacement.
+
+It's **server-push, not polling** — and still decode-free. The trick is to split
+the gRPC checkpoint firehose from the decode: the firehose signals only
+`object_id` + `version` (no content, no BCS, no asset schema), and on each version
+change we re-resolve the *decode-free* handle. So you get push latency without the
+`EscrowState` decode that the raw `source.subscribe` does (which would need a
+schema). The stream primes off its first live checkpoint to close the
+subscribe-setup gap, and falls back to version-polling only when no gRPC client is
+configured.
+
+And to react to a *specific event* with its data, `escrow.on('BidPlaced', e => …)`
+(or `escrow.onEvents`) is the push twin of `history()`: the same checkpoint
+firehose, but with events in the mask — each one decoded by the **same registry**
+History uses (events are self-contained structs, no asset schema) and filtered to
+this escrow. `history()` reads the typed events in *pull*; `escrow.on` delivers the
+same typed events in *push*. That closes the loop — state and events, snapshot and
+stream, all object-centric.
+
+Both watches come in two shapes — a continuous callback and a one-shot promise —
+and they line up: `watch`/`waitFor` for state, `on`/`next` for events. So
+`await escrow.next('BidPlaced')` is `waitFor` for events — no Promise to wire by
+hand around `on`.
+
+The difference is real and observable: on testnet our address had **integrated
+224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
+transferred away (the secondary-market flow). Governance left with the object.
+
+Both doors return decode-free `EscrowListing`s (every field straight from the
+event — no per-escrow fetch), each with an `.escrow()` back-edge to the full
+handle. This is the third read axis — state (handles + `Reader`), and now events —
+sitting on the indexer's typed event stream, same primitives/high-level line as
+everything else.
+
 ## The Escrow: identities (data) vs holdings (what *I* hold)
 
 The escrow knows, as plain data, **which objects relate to it** — regardless of
@@ -235,3 +337,34 @@ the handle, and possession *is* the authority. The old `Governor` bundle was a
 residual role-centric assumption (one entity owns cap + inbox) that snuck back in
 — this removes it. The kernel was object-centric all along (the Move fns take the
 objects independently); only Layer 2 had bundled them.
+
+## The three axes — state, writes, events
+
+Everything above composes into three axes, and that's the whole surface. (For the
+developer-facing framing as four verbs — **read · write · inspect · react** — see
+[Read · Write · Inspect · React](./read-write-inspect-react.md).)
+
+1. **State** — *the chain as it is now.* The `Escrow` handle (a coherent snapshot)
+   and `escrow.reader` (live drift-free views). `u.escrow(id)`, `escrow.status`,
+   `escrow.floorPrice`, the possession getters.
+2. **Writes** — *change it.* The capability handles' methods, each on the object
+   that authorizes it: `escrow.rent`, `usufructCap.borrow`, `governanceCap.updateMarket`,
+   `inbox.collect`, `transfer`. Authority is possession; nothing is hidden.
+3. **Events** — *what happened, and what happens.* Discovery (find escrows by
+   relationship), History (an escrow's lifecycle), Watch (react live).
+
+The events axis is itself split by delivery, over the **same typed events**:
+
+| | Pull | Push |
+|---|---|---|
+| Find | `escrowsGovernedBy` / `escrowsByAssetType` … (GraphQL) | — |
+| Lifecycle | `escrow.history()` (GraphQL, paginated) | `escrow.on('BidPlaced', …)` / `onEvents` (gRPC firehose) |
+| State change | re-`u.escrow(id)` | `escrow.watch` / `waitFor` (gRPC firehose) |
+
+**`escrow.on` is the piece that closes the three axes**: it's *the same typed
+events of `history()`, but pushed live over the firehose.* History reads them in
+pull (paginated GraphQL); `escrow.on` streams them in push (gRPC checkpoints) —
+one decoder, one set of events, two deliveries. With it the loop is whole: you can
+**read** the chain (state), **write** to it (the actions), **inspect** what it did
+(history, pull), and **react** to what it does (watch + on, push) — every one keyed
+on the objects, decode-free, the object answering for itself.

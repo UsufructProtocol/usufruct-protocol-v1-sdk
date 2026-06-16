@@ -27,6 +27,7 @@ import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
+import { discoverIntegrated, type EscrowListing } from './listings.js';
 import type { CoinTag } from './value.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType, execute } from './send.js';
@@ -68,6 +69,13 @@ export interface GovernanceCap {
     market: Market,
     opts: { earningsInbox: string },
   ): Promise<Escrow>;
+
+  /**
+   * The escrows THIS cap governs — its **portfolio**, as decode-free
+   * `EscrowListing`s. The cap *is* the governor, so it answers for itself. (The
+   * cap→escrow link lives only in the event log, not on the cap.) Needs `graphql`.
+   */
+  escrows(): Promise<EscrowListing[]>;
 }
 
 interface RefInfo {
@@ -201,6 +209,10 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       const escrowId = createdIdByType(res, '::escrow::Escrow');
       if (escrowId == null) throw new UsufructError(`integrateIntoPortfolio: no Escrow created (digest ${res.digest})`);
       return createEscrow(ctx, escrowId);
+    },
+
+    escrows() {
+      return discoverIntegrated(ctx, { governanceCapId: capId });
     },
   };
 }
