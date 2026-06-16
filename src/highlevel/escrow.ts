@@ -150,6 +150,14 @@ export interface Escrow {
   onEvents(onEvent: (event: HistoryEvent) => void, opts?: { kinds?: readonly string[] }): () => void;
   /** Sugar: react to one event kind. `escrow.on('BidPlaced', e => counterBid(e.data))`. */
   on(kind: string, onEvent: (event: HistoryEvent) => void): () => void;
+  /**
+   * Resolve with the **next** typed event (one-shot, auto-unsubscribed) — the
+   * event twin of `waitFor`. `await escrow.next('BidPlaced')` instead of wiring a
+   * Promise around `on`. `opts.kinds` narrows; `opts.timeoutMs` bounds the wait.
+   */
+  nextEvent(opts?: { kinds?: readonly string[]; timeoutMs?: number }): Promise<HistoryEvent>;
+  /** Sugar: `await escrow.next('BidPlaced', { timeoutMs })` — the next event of one kind. */
+  next(kind: string, opts?: { timeoutMs?: number }): Promise<HistoryEvent>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -426,6 +434,30 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return onEvents(onEvent, { kinds: [kind] });
   }
 
+  function nextEvent(nextOpts?: { kinds?: readonly string[]; timeoutMs?: number }): Promise<HistoryEvent> {
+    return new Promise<HistoryEvent>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = onEvents(
+        (ev) => {
+          stop();
+          if (timer) clearTimeout(timer);
+          resolve(ev);
+        },
+        nextOpts?.kinds ? { kinds: nextOpts.kinds } : undefined,
+      );
+      if (nextOpts?.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          stop();
+          reject(new Error(`next event timed out after ${nextOpts.timeoutMs}ms`));
+        }, nextOpts.timeoutMs);
+      }
+    });
+  }
+
+  function next(kind: string, nextOpts?: { timeoutMs?: number }): Promise<HistoryEvent> {
+    return nextEvent({ kinds: [kind], ...(nextOpts?.timeoutMs !== undefined ? { timeoutMs: nextOpts.timeoutMs } : {}) });
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -458,6 +490,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     waitFor,
     onEvents,
     on,
+    nextEvent,
+    next,
     reader,
   };
 }

@@ -209,6 +209,11 @@ this escrow. `history()` reads the typed events in *pull*; `escrow.on` delivers 
 same typed events in *push*. That closes the loop — state and events, snapshot and
 stream, all object-centric.
 
+Both watches come in two shapes — a continuous callback and a one-shot promise —
+and they line up: `watch`/`waitFor` for state, `on`/`next` for events. So
+`await escrow.next('BidPlaced')` is `waitFor` for events — no Promise to wire by
+hand around `on`.
+
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
 transferred away (the secondary-market flow). Governance left with the object.

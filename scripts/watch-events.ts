@@ -14,7 +14,7 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct, type HistoryEvent, type Market } from '../src/index.js';
+import { coinTag, usufruct, type Market } from '../src/index.js';
 import { createdId, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
@@ -80,20 +80,17 @@ async function main() {
   await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('② Bob rented — occupied\n');
 
-  // ③ ON — the keeper subscribes to the typed BidPlaced event
-  console.log("③ keeper: escrow.on('BidPlaced', …)  (typed event push over gRPC)");
-  let resolveBid!: (ev: HistoryEvent) => void;
-  const bidSeen = new Promise<HistoryEvent>((r) => (resolveBid = r));
-  const stop = (await withRetry(() => a.escrow(escrow.id))).on('BidPlaced', (ev) => resolveBid(ev));
+  // ③ NEXT — the keeper awaits the next typed BidPlaced (one-shot, no plumbing)
+  console.log("③ keeper: await escrow.next('BidPlaced')  (typed event push over gRPC)");
+  const bidSeen = (await withRetry(() => a.escrow(escrow.id))).next('BidPlaced', { timeoutMs: 120_000 });
 
   // ④ CHALLENGE — Carol bids
   const uc = usufruct({ network: 'testnet', client, signer: carol });
   await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('④ Carol bid on the occupied escrow\n');
 
-  // ⑤ REACT — the typed event arrives with its data
+  // ⑤ REACT — the typed event resolves the promise, with its data
   const bid = await bidSeen;
-  stop();
   const d = bid.data as Record<string, unknown>;
   const bidderIsCarol = String(d['pending_usufructuary_address']) === carol.toSuiAddress();
   console.log(`⑤ keeper got a typed ${bid.kind} by ${String(bid.by).slice(0, 8)}:`);

@@ -78,14 +78,23 @@ Don't poll — subscribe. Two flavors, both server-push over the gRPC checkpoint
 firehose: react to a **state** arriving, or to a **typed event** with its data.
 
 ```ts
-// react to a state — "wait for an event" as the state it produces
-await escrow.waitFor(e => e.isChallenged);          // resolves when a bid lands
+// continuous (callback) — fires on every change / matching event
 const stop = escrow.watch(e => render(e));          // each on-chain change → fresh snapshot
-
-// react to a specific typed event, with its fields
 escrow.on('BidPlaced', ev => counterBid(ev.data.pending_bid_amount));
-escrow.onEvents(ev => log(ev), { kinds: ['HandoverCompleted', 'TenureExpired'] });
+
+// one-shot (promise) — resolves once, auto-unsubscribed
+await escrow.waitFor(e => e.isChallenged);          // the next state that matches
+const bid = await escrow.next('BidPlaced', { timeoutMs: 120_000 });  // the next typed event
 ```
+
+Each kind of subscription comes in two shapes, and they line up:
+
+|        | continuous (callback) | one-shot (promise) |
+|--------|---|---|
+| **state** | `escrow.watch(cb)` | `escrow.waitFor(pred)` |
+| **events** | `escrow.on(kind, cb)` / `onEvents` | `escrow.next(kind)` / `nextEvent` |
+
+(`next` is `waitFor` for events — no more wiring a Promise around `on`.)
 
 The state watch is decode-free (the firehose signals only `object_id`+`version`;
 we re-resolve the decode-free handle). The event watch decodes each event with the
