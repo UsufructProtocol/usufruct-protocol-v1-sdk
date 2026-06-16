@@ -18,6 +18,7 @@ import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox } from './inbox.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType, execute } from './send.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
@@ -100,6 +101,23 @@ export interface Escrow {
    * events.) Decode-free records. Needs `graphql`.
    */
   usufructCaps(): Promise<UsufructCapRecord[]>;
+
+  /**
+   * This escrow's lifecycle as a time-ordered list of typed `HistoryEvent`s —
+   * integration, policy, rentals, bids, displacements, settlements, governance,
+   * teardown. Built on the indexer's escrow timeline (every escrow-keyed event,
+   * decoded and merged).
+   *
+   * The timeline scans each event type and filters by escrow (GraphQL can't match
+   * a payload field), so on a busy/long-lived package the public endpoint may choke
+   * — **bound it** with `afterCheckpoint` (the escrow's events all postdate its
+   * integration). `sender` narrows to one actor. Needs `graphql`.
+   */
+  history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -239,6 +257,22 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return out;
   }
 
+  async function history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('history requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const events = await ctx.indexer.escrowTimeline(escrowId, {
+      ...(opts?.sender !== undefined ? { sender: opts.sender } : {}),
+      ...(opts?.afterCheckpoint !== undefined ? { afterCheckpoint: opts.afterCheckpoint } : {}),
+      ...(opts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: opts.beforeCheckpoint } : {}),
+    });
+    return events.map(toHistoryEvent);
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -266,6 +300,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     rent,
     applyPendingTransitionStates: applyPending,
     usufructCaps,
+    history,
     reader,
   };
 }

@@ -179,6 +179,13 @@ the link** — on-chain when an object holds the id (the cap's escrow), in the e
 log otherwise (everything keyed by `AssetIntegrated` / `UsufructCapMinted`). The
 high-level just puts the question on the object that can answer it.
 
+And the per-escrow *timeline* is the same axis turned sideways: `escrow.history()`
+returns the escrow's whole lifecycle as ordered, typed `HistoryEvent`s (integration,
+policy, rentals, bids, displacements, settlements, governance, teardown) — every
+escrow-keyed event, decoded and merged. Because GraphQL can't filter by a payload
+field, it scans each event type and keeps this escrow's; on a busy package, bound it
+with `afterCheckpoint` (the escrow's events all postdate its integration).
+
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
 transferred away (the secondary-market flow). Governance left with the object.
