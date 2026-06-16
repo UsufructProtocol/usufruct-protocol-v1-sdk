@@ -82,13 +82,46 @@ const REGISTRY: Readonly<Record<string, EventDecoder>> = {
  * structs may not round-trip) — the json fallback covers those.
  */
 export function decodeEvent(type: string, contentsBcs: string): Record<string, unknown> | null {
+  return decodeEventBytes(type, fromBase64(contentsBcs));
+}
+
+/**
+ * Like {@link decodeEvent} but from raw BCS bytes (gRPC `contents.value` is a
+ * `Uint8Array`, not base64). Same registry, same fallback semantics.
+ */
+export function decodeEventBytes(type: string, bytes: Uint8Array): Record<string, unknown> | null {
   const dec = REGISTRY[eventKey(type)];
   if (!dec) return null;
   try {
-    return dec.parse(fromBase64(contentsBcs)) as Record<string, unknown>;
+    return dec.parse(bytes) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+/**
+ * Assemble a {@link TypedEvent} from raw parts — the gRPC firehose path (event
+ * bytes, no json envelope). Mirror of {@link toTypedEvent}; our events always
+ * decode, so `json` is left empty.
+ */
+export function typedEventFromBytes(node: {
+  type: string;
+  sender: string | null;
+  timestamp: string | null;
+  bytes: Uint8Array | null;
+}): TypedEvent {
+  const key = eventKey(node.type);
+  const decoded = node.bytes ? decodeEventBytes(node.type, node.bytes) : null;
+  return {
+    type: node.type,
+    module: key.split('::')[0]!,
+    name: key.split('::')[1] ?? key,
+    sender: node.sender,
+    timestamp: node.timestamp,
+    escrowId: escrowIdOf(decoded),
+    data: decoded ?? {},
+    json: {},
+  };
 }
 
 /**

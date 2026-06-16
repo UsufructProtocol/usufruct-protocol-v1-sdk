@@ -201,6 +201,14 @@ schema). The stream primes off its first live checkpoint to close the
 subscribe-setup gap, and falls back to version-polling only when no gRPC client is
 configured.
 
+And to react to a *specific event* with its data, `escrow.on('BidPlaced', e => …)`
+(or `escrow.onEvents`) is the push twin of `history()`: the same checkpoint
+firehose, but with events in the mask — each one decoded by the **same registry**
+History uses (events are self-contained structs, no asset schema) and filtered to
+this escrow. `history()` reads the typed events in *pull*; `escrow.on` delivers the
+same typed events in *push*. That closes the loop — state and events, snapshot and
+stream, all object-centric.
+
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
 transferred away (the secondary-market flow). Governance left with the object.

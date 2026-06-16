@@ -28,6 +28,12 @@ import type { Id } from './brand.js';
 import { decodeEscrowState } from './state.js';
 import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
 import {
+  eventKey,
+  normEscrowId,
+  typedEventFromBytes,
+  type TypedEvent,
+} from '../indexer/events.js';
+import {
   chainSource,
   channel,
   sleep,
@@ -97,6 +103,87 @@ function* scanChanged(checkpoint: unknown): Generator<{ objectId: string; versio
 
 /** Reconnect backoff schedule (ms): the stream is resumable without gaps. */
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 5000] as const;
+
+const EVENT_READ_MASK = {
+  paths: [
+    'transactions.timestamp',
+    'transactions.events.events.event_type',
+    'transactions.events.events.sender',
+    'transactions.events.events.contents',
+  ],
+};
+
+/** A protobuf Timestamp `{ seconds, nanos }` as an ISO-8601 string, or `null`. */
+function isoTime(ts: unknown): string | null {
+  const t = ts as { seconds?: bigint | string | number; nanos?: number } | undefined;
+  if (t?.seconds == null) return null;
+  return new Date(Number(t.seconds) * 1000 + (t.nanos ?? 0) / 1e6).toISOString();
+}
+
+/** Every event in a checkpoint as raw parts (the timestamp is the tx's). */
+function* scanEvents(
+  checkpoint: unknown,
+): Generator<{ type: string; sender: string | null; timestamp: string | null; bytes: Uint8Array | null }> {
+  const txs = (checkpoint as { transactions?: unknown[] })?.transactions ?? [];
+  for (const tx of txs) {
+    const t = tx as { timestamp?: unknown; events?: { events?: unknown[] } };
+    const timestamp = isoTime(t.timestamp);
+    for (const ev of t.events?.events ?? []) {
+      const e = ev as { eventType?: string; sender?: string; contents?: { value?: Uint8Array } };
+      if (e.eventType == null) continue;
+      yield {
+        type: e.eventType,
+        sender: e.sender ?? null,
+        timestamp,
+        bytes: e.contents?.value ?? null,
+      };
+    }
+  }
+}
+
+/**
+ * A **server-push** stream of one escrow's typed events over the gRPC checkpoint
+ * firehose. Widens the mask to carry events, decodes each with the same registry
+ * as the indexer (no asset schema — events are self-contained codegen structs),
+ * and keeps those whose payload `escrow_id` matches (and, if given, whose name is
+ * in `kinds`). This is `escrow.history()` (pull) turned into a live feed (push).
+ */
+export async function* escrowEventStream(
+  client: SuiGrpcClient,
+  escrowId: Id<'Escrow'> | string,
+  packageId: string,
+  opts?: { signal?: AbortSignal; kinds?: readonly string[] },
+): AsyncGenerator<TypedEvent> {
+  const signal = opts?.signal;
+  const want = normEscrowId(String(escrowId));
+  const kinds = opts?.kinds ? new Set(opts.kinds) : null;
+  let attempt = 0;
+  while (!signal?.aborted) {
+    const call = client.subscriptionService.subscribeCheckpoints(
+      { readMask: EVENT_READ_MASK },
+      signal ? { abort: signal } : {},
+    );
+    try {
+      for await (const res of call.responses) {
+        if (signal?.aborted) return;
+        for (const part of scanEvents(res.checkpoint)) {
+          // Cheap package filter before any decode (the firehose is chain-wide).
+          if (!part.type.startsWith(packageId)) continue;
+          const ev = typedEventFromBytes(part);
+          if (ev.escrowId !== want) continue;
+          if (kinds && !kinds.has(ev.name) && !kinds.has(eventKey(ev.type))) continue;
+          yield ev;
+        }
+      }
+      attempt = 0;
+    } catch {
+      if (signal?.aborted) return;
+      const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+      attempt += 1;
+      await sleep(wait, signal);
+    }
+  }
+}
 
 const VERSION_READ_MASK = {
   paths: [

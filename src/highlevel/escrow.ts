@@ -12,7 +12,7 @@ import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
-import { escrowVersionChanges } from '../primitives/grpc-source.js';
+import { escrowEventStream, escrowVersionChanges } from '../primitives/grpc-source.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
@@ -139,6 +139,17 @@ export interface Escrow {
     predicate: (escrow: Escrow) => boolean,
     opts?: { intervalMs?: number; timeoutMs?: number },
   ): Promise<Escrow>;
+
+  /**
+   * Live, **typed** events for this escrow — the push twin of `history()`. Each
+   * `HistoryEvent` is decoded off the gRPC checkpoint firehose (no asset schema)
+   * and filtered to this escrow (`opts.kinds` narrows by name, e.g. `'BidPlaced'`).
+   * Returns a `stop()`. Needs a gRPC client (the SDK's default). React to *the
+   * event you choose*, with its data: `escrow.onEvents(e => …, { kinds: ['BidPlaced'] })`.
+   */
+  onEvents(onEvent: (event: HistoryEvent) => void, opts?: { kinds?: readonly string[] }): () => void;
+  /** Sugar: react to one event kind. `escrow.on('BidPlaced', e => counterBid(e.data))`. */
+  on(kind: string, onEvent: (event: HistoryEvent) => void): () => void;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -381,6 +392,40 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     });
   }
 
+  function onEvents(
+    onEvent: (event: HistoryEvent) => void,
+    onOpts?: { kinds?: readonly string[] },
+  ): () => void {
+    const grpc = ctx.grpcClient;
+    if (grpc == null) {
+      throw new UsufructError('onEvents requires a gRPC client (live event push) — the SDK default');
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const stream = escrowEventStream(grpc, escrowId, packageId, {
+          signal: controller.signal,
+          ...(onOpts?.kinds ? { kinds: onOpts.kinds } : {}),
+        });
+        for await (const ev of stream) {
+          if (controller.signal.aborted) break;
+          try {
+            onEvent(toHistoryEvent(ev));
+          } catch {
+            /* a consumer error must not kill the stream */
+          }
+        }
+      } catch {
+        /* aborted or stream error */
+      }
+    })();
+    return () => controller.abort();
+  }
+
+  function on(kind: string, onEvent: (event: HistoryEvent) => void): () => void {
+    return onEvents(onEvent, { kinds: [kind] });
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -411,6 +456,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     history,
     watch,
     waitFor,
+    onEvents,
+    on,
     reader,
   };
 }
