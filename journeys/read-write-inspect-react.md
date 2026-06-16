@@ -1,6 +1,6 @@
-# Read · Change · Inspect · React — the shape of the high-level SDK
+# Read · Write · Inspect · React — the shape of the high-level SDK
 
-> Four verbs cover the whole surface. You **read** the chain, **change** it,
+> Four verbs cover the whole surface. You **read** the chain, **write** to it,
 > **inspect** what it did, and **react** to what it does. Every one is
 > object-centric (you ask the object, it answers) and decode-free (no asset
 > schema). This is the mental model — start here, then see
@@ -9,7 +9,7 @@
 | Verb | What | Delivery | Door |
 |---|---|---|---|
 | **Read** | the chain *as it is now* | a fetch | `u.escrow(id)` → handle + `escrow.reader` |
-| **Change** | make it *different* | a transaction | the capability methods — `rent`, `borrow`, `updateMarket`, `collect`, `transfer` |
+| **Write** | make it *different* | a transaction | the capability methods — `rent`, `borrow`, `updateMarket`, `collect`, `transfer` |
 | **Inspect** | what *happened* | pull (GraphQL) | discovery (`escrowsGovernedBy`…) + `escrow.history()` |
 | **React** | what *happens* | push (gRPC) | `escrow.watch` / `waitFor` + `escrow.on` / `onEvents` |
 
@@ -36,7 +36,7 @@ The handle is a **coherent photograph** (every field at the same `t`); the reade
 is a **live probe**. Render from the handle; observe a write's effect through the
 reader. ([Reads: handle-snapshot vs reader-live](./object-model.md).)
 
-## Change — make it different
+## Write — make it different
 
 Each write lives on the **object that authorizes it** — authority is possession,
 nothing is hidden. The only decision `rent` asks is the amount (floor, or overpay).
@@ -96,15 +96,15 @@ for you; it degrades to polling only if you pass a non-gRPC client *and* no netw
 
 `escrow.history()` and `escrow.on(...)` decode the **same typed events** — one
 paginated over GraphQL, one streamed over the gRPC firehose. **Inspect** reads the
-log; **React** subscribes to it. That symmetry is the point: learn what the chain
+log; **React** subscribes to it. That symmetry is the point: inspect what the chain
 did and react to what it does with one event model.
 
 ```
 read    → state, now            (u.escrow, escrow.reader)
-change  → a transaction         (rent, borrow, updateMarket, collect, transfer)
+write   → a transaction         (rent, borrow, updateMarket, collect, transfer)
 inspect → events, pull          (escrowsGovernedBy…, escrow.history)
 react   → events, push          (escrow.watch/waitFor, escrow.on/onEvents)
 ```
 
-Read the chain, change it, learn what it did, react to what it does — all keyed on
-the objects, the object answering for itself.
+Read the chain, write to it, inspect what it did, react to what it does — all keyed
+on the objects, the object answering for itself.

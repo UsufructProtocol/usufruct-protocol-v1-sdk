@@ -336,8 +336,8 @@ objects independently); only Layer 2 had bundled them.
 ## The three axes — state, writes, events
 
 Everything above composes into three axes, and that's the whole surface. (For the
-developer-facing framing as four verbs — **read · change · inspect · react** — see
-[Read · Change · Inspect · React](./read-change-inspect-react.md).)
+developer-facing framing as four verbs — **read · write · inspect · react** — see
+[Read · Write · Inspect · React](./read-write-inspect-react.md).)
 
 1. **State** — *the chain as it is now.* The `Escrow` handle (a coherent snapshot)
    and `escrow.reader` (live drift-free views). `u.escrow(id)`, `escrow.status`,
@@ -360,6 +360,6 @@ The events axis is itself split by delivery, over the **same typed events**:
 events of `history()`, but pushed live over the firehose.* History reads them in
 pull (paginated GraphQL); `escrow.on` streams them in push (gRPC checkpoints) —
 one decoder, one set of events, two deliveries. With it the loop is whole: you can
-**read** the chain (state), **change** it (writes), **inspect** what it did (history,
-pull), and **react** to what it does (watch + on, push) — every one keyed on the
-objects, decode-free, the object answering for itself.
+**read** the chain (state), **write** to it (the actions), **inspect** what it did
+(history, pull), and **react** to what it does (watch + on, push) — every one keyed
+on the objects, decode-free, the object answering for itself.
