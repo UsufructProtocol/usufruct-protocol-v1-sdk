@@ -8,6 +8,7 @@ import type { Signer } from '@mysten/sui/cryptography';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { IndexerSource } from '../indexer/source.js';
 import type { AssetSchema } from '../primitives/state.js';
+import type { RetryOptions } from './retry.js';
 
 export interface HandleCtx {
   readonly client: ClientWithCoreApi;
@@ -22,4 +23,10 @@ export interface HandleCtx {
   readonly indexer?: IndexerSource;
   /** gRPC client for server-push subscriptions (`escrow.watch`); optional. */
   readonly grpcClient?: SuiGrpcClient;
+  /**
+   * Retry policy for transient reads. When present, the handle's `reader` is
+   * wrapped to retry the truncated-`simulateTransaction` shape (the `client` is
+   * already retry-wrapped for transient status). Omitted when retry is disabled.
+   */
+  readonly retry?: RetryOptions;
 }

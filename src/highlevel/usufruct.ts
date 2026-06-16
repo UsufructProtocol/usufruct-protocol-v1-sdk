@@ -31,6 +31,7 @@ import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { ownedIds } from './role.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
+import { retryingClient, retryingGraphqlClient, retryingReader, type RetryOptions } from './retry.js';
 import { createdIdByType, execute } from './send.js';
 import type { CoinTag } from './value.js';
 
@@ -61,6 +62,12 @@ export interface UsufructConfig {
   readonly assetSchema?: AssetSchema;
   /** GraphQL endpoint (URL or client) — enables discovery (`governor.escrows()`). */
   readonly graphql?: string | SuiGraphQLClient;
+  /**
+   * Retry policy for transient public-fullnode faults (429/502/503 and truncated
+   * reads). On by default — reads ride through flakiness; execution never retries.
+   * Pass an object to tune (`attempts`, `baseMs`), or `false` to disable.
+   */
+  readonly retry?: { attempts?: number; baseMs?: number } | false;
 }
 
 /** The raw kernel, one property away (escape hatch — SPEC rule #2). */
@@ -164,10 +171,19 @@ function resolveClient(config: UsufructConfig): ClientWithCoreApi {
   return new SuiGrpcClient({ network, baseUrl: GRPC_URL[network] });
 }
 
+/** Normalize `config.retry` to options (default on), or `null` when disabled. */
+function resolveRetry(config: UsufructConfig): RetryOptions | null {
+  if (config.retry === false) return null;
+  return config.retry ?? {};
+}
+
 
 /** Construct the entry handle. */
 export function usufruct(config: UsufructConfig = {}): Usufruct {
-  const client = resolveClient(config);
+  const rawClient = resolveClient(config);
+  const retry = resolveRetry(config);
+  // Reads ride through transient faults (429/502/503); execution never retries.
+  const client = retry ? retryingClient(rawClient, retry) : rawClient;
   const packageId = config.packageId ?? TESTNET.packageId;
   const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
   const assetSchema = config.assetSchema;
@@ -175,28 +191,34 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
   const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
 
-  const graphqlClient =
+  const rawGraphql =
     config.graphql == null
       ? null
       : typeof config.graphql === 'string'
         ? new SuiGraphQLClient({ url: config.graphql, network: config.network ?? 'testnet' })
         : config.graphql;
+  // Discovery/history (paginated GraphQL) get the same transient-status retry.
+  const graphqlClient = rawGraphql && retry ? retryingGraphqlClient(rawGraphql, retry) : rawGraphql;
   const indexer: IndexerSource | null = graphqlClient
     ? indexerSource(graphqlClient, { packageId, ...(assetSchema ? { assetSchema } : {}) })
     : null;
 
   // A gRPC client for server-push subscriptions (`escrow.watch`): reuse the
   // configured client if it's already gRPC, else stand one up from the network.
+  // Derived from the raw client (push isn't a retryable request/response).
   const grpcClient: SuiGrpcClient | null =
-    'subscriptionService' in (client as object)
-      ? (client as unknown as SuiGrpcClient)
+    'subscriptionService' in (rawClient as object)
+      ? (rawClient as unknown as SuiGrpcClient)
       : config.network
         ? new SuiGrpcClient({ network: config.network, baseUrl: GRPC_URL[config.network] })
         : null;
 
   const primitives: Primitives = {
     source,
-    reader: (target) => createReader(client, target),
+    reader: (target) => {
+      const r = createReader(client, target);
+      return retry ? retryingReader(r, retry) : r;
+    },
   };
 
   const ctx = (): HandleCtx => ({
@@ -207,6 +229,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
     ...(grpcClient ? { grpcClient } : {}),
+    ...(retry ? { retry } : {}),
   });
 
   return {

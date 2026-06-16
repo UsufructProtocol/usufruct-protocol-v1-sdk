@@ -26,6 +26,19 @@ export type { EscrowListing, UsufructCapRecord } from './listings.js';
 export type { HistoryEvent } from './history.js';
 
 export {
+  withRetry,
+  retryingClient,
+  retryingReader,
+  retryingGraphqlClient,
+  isTransientStatus,
+  isTransientNetwork,
+  isTransientRequest,
+  isTruncatedRead,
+  isTransientRead,
+} from './retry.js';
+export type { RetryOptions } from './retry.js';
+
+export {
   UsufructError,
   InsufficientBalance,
   InsufficientPayment,

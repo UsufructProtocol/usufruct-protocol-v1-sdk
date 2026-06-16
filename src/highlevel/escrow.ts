@@ -10,6 +10,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
+import { retryingReader } from './retry.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
 import { escrowEventStream, escrowVersionChanges } from '../primitives/grpc-source.js';
@@ -191,19 +192,22 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
-  const { client, packageId, signer, assetSchema } = ctx;
+  const { client, packageId, signer, assetSchema, retry } = ctx;
   const owner = signer?.toSuiAddress() ?? null;
   const escrowId = toId<'Escrow'>(idStr);
 
   // Type args come from the object's type string — no decode, no asset schema.
   const [[assetType, coinType], t] = await Promise.all([fetchTypeArgs(client, escrowId), resolveWhen(client, at)]);
 
-  const reader = createReader(client, {
+  const kernelReader = createReader(client, {
     packageId,
     escrowId,
     typeArguments: [assetType, coinType],
     ...(assetSchema ? { assetSchema } : {}),
   });
+  // Retry the truncated-`simulateTransaction` shape the client proxy can't see
+  // (it throws inside the reader's own parse). Status is handled by the client.
+  const reader = retry ? retryingReader(kernelReader, retry) : kernelReader;
 
   const [floorMist, status, expiryMs, activeCapId, govCapId, inboxId, feeInboxId] = await Promise.all([
     reader.floorPriceMist(t),

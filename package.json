@@ -54,7 +54,8 @@
     "watch:events": "tsx scripts/watch-events.ts",
     "asset": "tsx scripts/asset-agnostic.ts",
     "earnings": "tsx scripts/earnings-collect.ts",
-    "compose": "tsx scripts/reader-compose.ts"
+    "compose": "tsx scripts/reader-compose.ts",
+    "retry": "tsx scripts/retry-live.ts"
   },
   "keywords": [
     "sui",
