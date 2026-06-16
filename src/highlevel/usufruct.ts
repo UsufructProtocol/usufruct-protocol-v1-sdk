@@ -185,6 +185,15 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     ? indexerSource(graphqlClient, { packageId, ...(assetSchema ? { assetSchema } : {}) })
     : null;
 
+  // A gRPC client for server-push subscriptions (`escrow.watch`): reuse the
+  // configured client if it's already gRPC, else stand one up from the network.
+  const grpcClient: SuiGrpcClient | null =
+    'subscriptionService' in (client as object)
+      ? (client as unknown as SuiGrpcClient)
+      : config.network
+        ? new SuiGrpcClient({ network: config.network, baseUrl: GRPC_URL[config.network] })
+        : null;
+
   const primitives: Primitives = {
     source,
     reader: (target) => createReader(client, target),
@@ -197,6 +206,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     signer,
     ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
+    ...(grpcClient ? { grpcClient } : {}),
   });
 
   return {

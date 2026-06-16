@@ -98,6 +98,73 @@ function* scanChanged(checkpoint: unknown): Generator<{ objectId: string; versio
 /** Reconnect backoff schedule (ms): the stream is resumable without gaps. */
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 5000] as const;
 
+const VERSION_READ_MASK = {
+  paths: [
+    'transactions.effects.changed_objects.object_id',
+    'transactions.effects.changed_objects.output_version',
+  ],
+};
+
+/**
+ * A **decode-free** server-push signal: yields one escrow's new object version on
+ * each on-chain change, via the checkpoint firehose. It reads only `object_id` +
+ * `output_version` from checkpoint effects — no content fetch, no BCS, no asset
+ * schema. The high-level `escrow.watch` consumes this and re-resolves its own
+ * decode-free handle, so it gets push latency without decoding `EscrowState`
+ * (which the full `subscribe` does, and which would need an asset schema).
+ * Resumable: re-opens with bounded backoff; the per-version dedupe absorbs replays.
+ */
+export async function* escrowVersionChanges(
+  client: SuiGrpcClient,
+  escrowId: Id<'Escrow'> | string,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const core = client as unknown as ClientWithCoreApi;
+  const target = normId(escrowId);
+  let lastVersion: string | null = null;
+  let primed = false;
+  let attempt = 0;
+  while (!signal?.aborted) {
+    const call = client.subscriptionService.subscribeCheckpoints(
+      { readMask: VERSION_READ_MASK },
+      signal ? { abort: signal } : {},
+    );
+    try {
+      for await (const res of call.responses) {
+        if (signal?.aborted) return;
+        // First checkpoint = the stream is live. Yield the current version once,
+        // so the consumer captures any change that landed during subscribe setup
+        // (a pure delta stream would miss a change in that gap forever).
+        if (!primed) {
+          primed = true;
+          try {
+            const { object } = await core.core.getObject({ objectId: escrowId });
+            const v = String(object.version);
+            if (v !== lastVersion) {
+              lastVersion = v;
+              yield v;
+            }
+          } catch {
+            /* best-effort prime */
+          }
+        }
+        for (const { objectId, version } of scanChanged(res.checkpoint)) {
+          if (normId(objectId) === target && version !== lastVersion) {
+            lastVersion = version;
+            yield version;
+          }
+        }
+      }
+      attempt = 0; // clean completion → re-open from the latest checkpoint
+    } catch {
+      if (signal?.aborted) return;
+      const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+      attempt += 1;
+      await sleep(wait, signal);
+    }
+  }
+}
+
 /**
  * Live-chain `Source` over gRPC whose `subscribe` is server-push, plus
  * `subscribeMany` for watching many escrows over one stream. `fetch`, `query`,

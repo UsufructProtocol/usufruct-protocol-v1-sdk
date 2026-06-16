@@ -27,6 +27,19 @@ const client = rateLimited(makeClient());
 const ALICE = loadSigner();
 const me = ALICE.toSuiAddress();
 
+/** Retry the public-fullnode read flake (truncated devInspect surfaces as either). */
+async function withRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const transient = /no results|devInspect|returnValues|Cannot read properties|429|fetch failed/i.test(String(e));
+      if (!transient || i >= tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
+    }
+  }
+}
+
 async function newRenter(): Promise<Ed25519Keypair> {
   const kp = Ed25519Keypair.generate();
   const tx = new Transaction();
@@ -67,18 +80,18 @@ async function main() {
 
   // ② RENT — Bob occupies
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
+  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('② Bob rented — occupied\n');
 
   // ③ WATCH — the keeper starts waiting for a challenge (do NOT await yet)
   console.log('③ keeper watching for a challenge (escrow.waitFor(e => e.isChallenged))…');
-  const keeper = a.escrow(escrow.id).then((e) =>
-    e.waitFor((s) => s.isChallenged, { intervalMs: 2000, timeoutMs: 120_000 }),
+  const keeper = withRetry(() => a.escrow(escrow.id)).then((e) =>
+    e.waitFor((s) => s.isChallenged, { timeoutMs: 120_000 }),
   );
 
   // ④ CHALLENGE — Carol bids on the occupied escrow
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await (await uc.escrow(escrow.id)).rent({ tenures: 1 });
+  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }));
   console.log('④ Carol bid on the occupied escrow (the challenge)\n');
 
   // ⑤ REACT — the keeper's wait resolves the moment the state turns to demand
@@ -88,7 +101,7 @@ async function main() {
   console.log(`   acting: waiting out the handover (until ${challenged.handoverExpiresAt?.toISOString()}), then settling…`);
   await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
   await challenged.applyPendingTransitionStates();
-  const after = await a.escrow(escrow.id);
+  const after = await withRetry(() => a.escrow(escrow.id));
   console.log(`   settled — status=${after.status}; active cap = ${after.activeUsufructCapId?.slice(0, 12)}…`);
   console.log(after.status === 'occupied' ? '\nALL PASS — keeper waited, reacted, settled.' : '\nUNEXPECTED');
   process.exit(0);

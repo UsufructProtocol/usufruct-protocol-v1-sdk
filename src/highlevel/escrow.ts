@@ -12,6 +12,7 @@ import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
+import { escrowVersionChanges } from '../primitives/grpc-source.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
@@ -121,10 +122,12 @@ export interface Escrow {
 
   /**
    * React to this escrow's changes live: `onChange` runs with a **fresh snapshot**
-   * each time the on-chain object changes (polled by object version, re-resolved
-   * decode-free). Returns a `stop()`. The basis for keepers — settle on expiry,
-   * counter-bid on a challenge, etc. (The primitive `u.primitives.source.subscribe`
-   * is server-push for those who supply an asset schema.)
+   * each time the on-chain object changes, then a `stop()`. **Server-push** over
+   * gRPC when available (the checkpoint firehose signals the version change —
+   * decode-free, just `object_id`+`version` — and we re-resolve the decode-free
+   * handle); falls back to version-polling (`intervalMs`, default 3s) only when no
+   * gRPC client is configured. The basis for keepers — settle on expiry,
+   * counter-bid on a challenge.
    */
   watch(onChange: (escrow: Escrow) => void, opts?: { intervalMs?: number }): () => void;
   /**
@@ -292,8 +295,45 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   }
 
   function watch(onChange: (e: Escrow) => void, watchOpts?: { intervalMs?: number }): () => void {
-    const intervalMs = watchOpts?.intervalMs ?? 3000;
     let stopped = false;
+    // Re-resolve the decode-free handle and hand it to the callback. A transient
+    // read flake (truncated devInspect) skips this tick — it must NOT end the
+    // watch, or a `waitFor` would hang forever.
+    const emit = async () => {
+      try {
+        const snap = await createEscrow(ctx, idStr);
+        if (!stopped) onChange(snap);
+      } catch {
+        /* transient resolve flake — skip, keep watching */
+      }
+    };
+
+    // PUSH: a gRPC client streams the escrow's version changes (decode-free — just
+    // object_id + version off the checkpoint firehose). On each, re-resolve the
+    // decode-free handle. No asset schema, no polling latency.
+    const grpc = ctx.grpcClient;
+    if (grpc) {
+      const controller = new AbortController();
+      void (async () => {
+        try {
+          await emit(); // initial snapshot, so waitFor can match the current state
+          const changes = escrowVersionChanges(grpc, escrowId, controller.signal)[Symbol.asyncIterator]();
+          while (!stopped) {
+            if ((await changes.next()).done) break;
+            await emit();
+          }
+        } catch {
+          /* aborted or stream error */
+        }
+      })();
+      return () => {
+        stopped = true;
+        controller.abort();
+      };
+    }
+
+    // POLL fallback (no gRPC available): version-poll the object.
+    const intervalMs = watchOpts?.intervalMs ?? 3000;
     let lastVersion: string | null = null;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     void (async () => {
@@ -303,8 +343,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
           const v = String(object.version);
           if (v !== lastVersion) {
             lastVersion = v;
-            const snap = await createEscrow(ctx, idStr);
-            if (!stopped) onChange(snap);
+            await emit();
           }
         } catch {
           /* transient read error — keep polling */

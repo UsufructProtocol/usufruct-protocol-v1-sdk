@@ -187,12 +187,19 @@ field, it scans each event type and keeps this escrow's; on a busy package, boun
 with `afterCheckpoint` (the escrow's events all postdate its integration).
 
 Finally, to *act* on what happens, `escrow.watch(onChange)` runs a callback with a
-fresh snapshot on every on-chain change (polled by object version, re-resolved
-decode-free), and `escrow.waitFor(e => e.isChallenged)` resolves the moment a state
-arrives — *waiting for an event* expressed as the state it produces. That's the
-keeper loop: wait for a challenge and settle the handover, wait for expiry and
-apply, counter-bid on displacement. (The primitive `source.subscribe` is gRPC
-server-push for those who supply an asset schema.)
+fresh snapshot on every on-chain change, and `escrow.waitFor(e => e.isChallenged)`
+resolves the moment a state arrives — *waiting for an event* expressed as the state
+it produces. That's the keeper loop: wait for a challenge and settle the handover,
+wait for expiry and apply, counter-bid on displacement.
+
+It's **server-push, not polling** — and still decode-free. The trick is to split
+the gRPC checkpoint firehose from the decode: the firehose signals only
+`object_id` + `version` (no content, no BCS, no asset schema), and on each version
+change we re-resolve the *decode-free* handle. So you get push latency without the
+`EscrowState` decode that the raw `source.subscribe` does (which would need a
+schema). The stream primes off its first live checkpoint to close the
+subscribe-setup gap, and falls back to version-polling only when no gRPC client is
+configured.
 
 The difference is real and observable: on testnet our address had **integrated
 224** escrows but **governs 196** — the 28-escrow gap is exactly the caps it
