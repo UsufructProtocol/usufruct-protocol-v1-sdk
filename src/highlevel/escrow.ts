@@ -119,6 +119,24 @@ export interface Escrow {
     beforeCheckpoint?: number;
   }): Promise<HistoryEvent[]>;
 
+  /**
+   * React to this escrow's changes live: `onChange` runs with a **fresh snapshot**
+   * each time the on-chain object changes (polled by object version, re-resolved
+   * decode-free). Returns a `stop()`. The basis for keepers — settle on expiry,
+   * counter-bid on a challenge, etc. (The primitive `u.primitives.source.subscribe`
+   * is server-push for those who supply an asset schema.)
+   */
+  watch(onChange: (escrow: Escrow) => void, opts?: { intervalMs?: number }): () => void;
+  /**
+   * Resolve once a snapshot satisfies `predicate` — *wait for an event* expressed
+   * as the state it produces, e.g. a challenger: `escrow.waitFor(e => e.isChallenged)`.
+   * Checks the current state first, then on each change. Optional `timeoutMs`.
+   */
+  waitFor(
+    predicate: (escrow: Escrow) => boolean,
+    opts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<Escrow>;
+
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
 }
@@ -273,6 +291,57 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return events.map(toHistoryEvent);
   }
 
+  function watch(onChange: (e: Escrow) => void, watchOpts?: { intervalMs?: number }): () => void {
+    const intervalMs = watchOpts?.intervalMs ?? 3000;
+    let stopped = false;
+    let lastVersion: string | null = null;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    void (async () => {
+      while (!stopped) {
+        try {
+          const { object } = await client.core.getObject({ objectId: escrowId });
+          const v = String(object.version);
+          if (v !== lastVersion) {
+            lastVersion = v;
+            const snap = await createEscrow(ctx, idStr);
+            if (!stopped) onChange(snap);
+          }
+        } catch {
+          /* transient read error — keep polling */
+        }
+        if (!stopped) await sleep(intervalMs);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }
+
+  function waitFor(
+    predicate: (e: Escrow) => boolean,
+    waitOpts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<Escrow> {
+    return new Promise<Escrow>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = watch(
+        (e) => {
+          if (predicate(e)) {
+            stop();
+            if (timer) clearTimeout(timer);
+            resolve(e);
+          }
+        },
+        waitOpts?.intervalMs !== undefined ? { intervalMs: waitOpts.intervalMs } : undefined,
+      );
+      if (waitOpts?.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          stop();
+          reject(new Error(`waitFor timed out after ${waitOpts.timeoutMs}ms`));
+        }, waitOpts.timeoutMs);
+      }
+    });
+  }
+
   return {
     id: idStr,
     assetType: assetType,
@@ -301,6 +370,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     applyPendingTransitionStates: applyPending,
     usufructCaps,
     history,
+    watch,
+    waitFor,
     reader,
   };
 }
