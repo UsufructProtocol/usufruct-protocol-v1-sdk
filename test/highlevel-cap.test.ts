@@ -13,9 +13,13 @@ const ARGS = {
   typeArguments: [`${hex('aa')}::a::A`, '0x2::sui::SUI'] as [string, string],
   receipt: null,
 };
+// No identity, no executor — a read-only/anonymous context.
 const ctx: HandleCtx = {
   client: {} as ClientWithCoreApi,
   packageId: PKG,
+  feeRefId: '',
+  account: null,
+  defaultExecutor: null,
   signer: null,
 };
 
@@ -27,12 +31,14 @@ describe('highlevel/cap — UsufructCap handle', () => {
     expect(cap.receipt).toBeNull();
     expect(typeof cap.escrow).toBe('function');
     expect(typeof cap.borrow).toBe('function');
-    expect(typeof cap.borrow.into).toBe('function');
   });
 
-  it('borrow without a signer throws NotConnected', () => {
+  it('borrow builds a Plan; .send() without an executor rejects NotConnected', async () => {
     const cap = createCap(ctx, ARGS);
-    expect(() => cap.borrow(() => {})).toThrow(NotConnected);
+    const plan = cap.borrow(() => {});
+    expect(typeof plan.send).toBe('function');
+    expect(typeof plan.build).toBe('function');
+    await expect(plan.send()).rejects.toBeInstanceOf(NotConnected);
   });
 
   it('exposes the cap-holder write surface (object, not role)', () => {
@@ -42,24 +48,24 @@ describe('highlevel/cap — UsufructCap handle', () => {
     }
   });
 
-  it('cap-holder writes need a signer (you must hold the cap)', async () => {
+  it('cap-holder write Plans need an executor (you must hold the cap)', async () => {
     const cap = createCap(ctx, ARGS);
-    await expect(cap.burnIfStale()).rejects.toBeInstanceOf(NotConnected);
-    await expect(cap.burn()).rejects.toBeInstanceOf(NotConnected);
-    await expect(cap.updateRefundAddress(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
-    await expect(cap.transfer(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.burn().send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.updateRefundAddress(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(cap.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
   });
 
-  it('borrow.into appends a borrow→return bracket into a caller-driven PTB', () => {
+  it('borrow(...).build appends a borrow→return bracket into a caller-driven PTB', async () => {
     const cap = createCap(ctx, ARGS);
     const tx = new Transaction();
     let sawAsset = false;
-    cap.borrow.into(tx, (asset) => {
-      sawAsset = asset != null; // the user's middle receives the asset handle
-    });
+    await cap
+      .borrow((asset) => {
+        sawAsset = asset != null; // the user's middle receives the asset handle
+      })
+      .build(tx, hex('cc'));
     expect(sawAsset).toBe(true);
     // borrow + return are both appended (plus whatever the middle adds — none here).
-    const commands = tx.getData().commands;
-    expect(commands.length).toBeGreaterThanOrEqual(2);
+    expect(tx.getData().commands.length).toBeGreaterThanOrEqual(2);
   });
 });

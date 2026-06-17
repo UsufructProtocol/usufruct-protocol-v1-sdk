@@ -8,7 +8,7 @@
  * middle away.
  */
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
-import { digestPlan, type Plan } from './plan.js';
+import { digestPlan, makePlan, type Plan } from './plan.js';
 import { withBorrowedAsset } from '../actions/borrow.js';
 import {
   burnStaleUsufructCap,
@@ -24,10 +24,9 @@ import { retryingReader } from './retry.js';
 import { subscribeEscrowVersion } from './watch.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { UsufructError } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import { normEscrowId } from '../indexer/events.js';
-import { execute } from './send.js';
 import { price, type Price } from './value.js';
 import type { When } from './usufruct.js';
 
@@ -56,21 +55,19 @@ const compose =
     for (const use of uses) use(asset, tx);
   };
 
-/** Outcome of a self-driven `borrow` (sign + send). */
+/** Outcome of a borrow once executed (the asset was returned in the same PTB). */
 export interface BorrowReceipt {
   readonly digest: string;
   readonly returned: true;
 }
 
-export interface BorrowMethod {
-  /**
-   * borrow → your calls → return, signed & sent. Pass one `Use`, or several —
-   * they compose in order inside the single bracket (no separate composer).
-   */
-  (...uses: Use[]): Promise<BorrowReceipt>;
-  /** Drop the bracket into a PTB you drive (sponsorship / batching). */
-  into(tx: Transaction, ...uses: Use[]): void;
-}
+/**
+ * borrow → your calls → return, as a `Plan`. Pass one `Use`, or several — they
+ * compose in order inside the single bracket. `.send()` signs & sends;
+ * `.build(tx, sender)` drops the bracket into a PTB you drive (sponsorship /
+ * batching / multiple brackets); `.toTransaction()` hands you the PTB.
+ */
+export type BorrowMethod = (...uses: Use[]) => Plan<BorrowReceipt>;
 
 /** This cap's relationship to its escrow's seats, by possession of the seat. */
 export type UsufructCapRole = 'active' | 'pending' | 'stale' | 'unknown';
@@ -168,7 +165,7 @@ export interface CapArgs {
 
 /** Build a `UsufructCap` handle bound to its escrow's type args. */
 export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
-  const { client, packageId, signer, retry } = ctx;
+  const { client, packageId, retry } = ctx;
   const ptbArgs = {
     pkg: { packageId },
     escrowId: toId<'Escrow'>(args.escrowId),
@@ -176,20 +173,14 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     typeArguments: args.typeArguments,
   };
 
-  const borrow = ((...uses: Use[]): Promise<BorrowReceipt> => {
-    if (signer == null) {
-      throw new NotConnected('borrow requires a signer; pass one to usufruct() or u.connect()');
-    }
-    const tx = new Transaction();
-    withBorrowedAsset(tx, ptbArgs, compose(uses));
-    return execute(client, tx, signer)
-      .then((res) => ({ digest: res.digest, returned: true as const }))
-      .catch(mapAbort);
-  }) as BorrowMethod;
-
-  borrow.into = (tx: Transaction, ...uses: Use[]): void => {
-    withBorrowedAsset(tx, ptbArgs, compose(uses));
-  };
+  const borrow: BorrowMethod = (...uses: Use[]) =>
+    makePlan({
+      defaultExecutor: () => ctx.defaultExecutor,
+      build: async (tx) => {
+        withBorrowedAsset(tx, ptbArgs, compose(uses));
+      },
+      decode: async (res) => ({ digest: res.digest, returned: true as const }),
+    });
 
   const capPtbArgs = {
     pkg: { packageId },
@@ -340,14 +331,14 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     });
   }
 
+  // A read-then-maybe-write convenience (not a Plan): it only sends when stale.
   async function burnIfStale(): Promise<{ burned: boolean; digest: string | null }> {
-    if (signer == null) throw new NotConnected('burnIfStale requires a signer (it submits a tx)');
-    const reader = mkReader();
-    if (!(await reader.usufructCapIsStale(args.capId))) return { burned: false, digest: null };
-    const tx = new Transaction();
-    burnStaleUsufructCap({ usufructCapId: args.capId }).toPtb(tx, capPtbArgs);
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    return { burned: true, digest: res.digest };
+    if (!(await mkReader().usufructCapIsStale(args.capId))) return { burned: false, digest: null };
+    const { digest } = await digestPlan(
+      () => ctx.defaultExecutor,
+      (tx) => burnStaleUsufructCap({ usufructCapId: args.capId }).toPtb(tx, capPtbArgs),
+    ).send();
+    return { burned: true, digest };
   }
 
   const burn = (): Plan<{ digest: string }> =>
