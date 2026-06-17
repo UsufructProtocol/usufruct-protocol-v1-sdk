@@ -56,7 +56,8 @@
     "earnings": "tsx scripts/earnings-collect.ts",
     "compose": "tsx scripts/reader-compose.ts",
     "retry": "tsx scripts/retry-live.ts",
-    "watch:many": "tsx scripts/watch-many.ts"
+    "watch:many": "tsx scripts/watch-many.ts",
+    "reads": "tsx scripts/handle-reads.ts"
   },
   "keywords": [
     "sui",

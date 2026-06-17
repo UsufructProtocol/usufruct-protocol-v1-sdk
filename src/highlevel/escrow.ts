@@ -48,6 +48,13 @@ export interface Escrow {
   readonly floorPrice: Price;
   readonly accruedCredit: Price;
   readonly expiresAt: Date | null;
+  /** The sitting tenant's staked balance (their prepaid credit pool). Rented only. */
+  readonly activeStake: Price | null;
+  /** The pending challenger's staked balance. Non-null only in `demand`. */
+  readonly pendingStake: Price | null;
+  /** Ms the sitting tenant has left at the snapshot's `t` (the authoritative view,
+   *  not just `expiresAt − t`). Rented only; else null. */
+  readonly timeRemainingMs: number | null;
 
   // identities — which objects relate to this escrow (data, any holder)
   readonly governanceCapId: string;
@@ -87,6 +94,20 @@ export interface Escrow {
    *   escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
    */
   rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap>;
+
+  /**
+   * Preview the floor a bid would establish: what the next floor price becomes if
+   * someone commits `totalBid` over `tenures`. A parameterized what-if (so a
+   * method, not a snapshot getter), read live. Useful before challenging an
+   * occupied escrow — the bid must clear the ascending floor.
+   */
+  nextFloorPrice(totalBid: Price, tenures: number): Promise<Price>;
+  /** When the retire commitment unlocks (governance can then retire). Read live;
+   *  ≈ now for an `immediate` commitment. */
+  retireUnlocksAt(): Promise<Date>;
+  /** When the ensemble (market-change) commitment unlocks. Read live; ≈ now for
+   *  an `immediate` commitment. */
+  ensembleUnlocksAt(): Promise<Date>;
 
   /**
    * Permissionless keeper: materialize the pending lazy transitions (tenure
@@ -223,13 +244,18 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // The demand-state views (pending challenger + handover) only exist in `demand`.
   const rented = status === 'occupied' || status === 'demand';
   const challenged = status === 'demand';
-  const [accruedMist, role, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
-    rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
-    resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
-    challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
-    challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
-    challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
-  ]);
+  const [accruedMist, role, pendingCapId, pendingAddr, handoverMs, activeStakeMist, pendingStakeMist, timeLeftMs] =
+    await Promise.all([
+      rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
+      resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
+      challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
+      challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
+      challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
+      // stake + time-remaining are meaningful only while rented (gated, like accrued)
+      rented ? reader.activeStakeBalanceMist() : Promise.resolve(null),
+      challenged ? reader.pendingStakeBalanceMist() : Promise.resolve(null),
+      rented ? reader.activeUsufructuaryTimeRemainingMs(t) : Promise.resolve(null),
+    ]);
 
   // Real decimals/symbol from CoinMetadata (cached) — assuming 9 renders any
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
@@ -242,6 +268,16 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     const res = await execute(client, tx, signer).catch(mapAbort);
     return { digest: res.digest };
   }
+
+  // Live reader wrappers (zero cost unless called), typed in the escrow's coin / as Dates.
+  async function nextFloorPrice(totalBid: Price, tenures: number): Promise<Price> {
+    const next = await reader.nextFloorPriceMist(mist(totalBid.mist), tenureCount(BigInt(tenures)));
+    return price(next, coin);
+  }
+  const retireUnlocksAt = async (): Promise<Date> =>
+    new Date(Number(await reader.retireCommitmentUnlocksAtMs()));
+  const ensembleUnlocksAt = async (): Promise<Date> =>
+    new Date(Number(await reader.ensembleCommitmentUnlocksAtMs()));
 
   const usufructCap: UsufructCap | null = role.capId
     ? createCap(ctx, {
@@ -500,6 +536,9 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     floorPrice: price(floorMist, coin),
     accruedCredit: price(accruedMist, coin),
     expiresAt: expiryMs == null ? null : new Date(Number(expiryMs)),
+    activeStake: activeStakeMist == null ? null : price(activeStakeMist, coin),
+    pendingStake: pendingStakeMist == null ? null : price(pendingStakeMist, coin),
+    timeRemainingMs: timeLeftMs == null ? null : Number(timeLeftMs),
     governanceCapId: govCapId,
     earningsInboxId: inboxId,
     feeInboxId,
@@ -515,6 +554,9 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     governanceCap,
     earningsInbox,
     rent,
+    nextFloorPrice,
+    retireUnlocksAt,
+    ensembleUnlocksAt,
     applyPendingTransitionStates: applyPending,
     usufructCaps,
     history,
