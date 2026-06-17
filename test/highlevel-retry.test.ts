@@ -171,6 +171,28 @@ describe('highlevel/retry — retryingClient (reads retry, execution never)', ()
     ).rejects.toMatchObject({ status: 429 });
     expect(execCalls).toBe(1); // not retried — a retried submit could double-execute
   });
+
+  it('preserves `this` for methods using private fields (retried AND pass-through)', async () => {
+    // The real gRPC core uses private `#client` fields; a proxy that returns
+    // bare functions breaks them (this=proxy). Bind to the real target instead.
+    class FakeCore {
+      readonly #secret = 'bound';
+      async getObject() {
+        return { object: { id: this.#secret } }; // read — retried branch
+      }
+      async signAndExecuteTransaction() {
+        return { digest: this.#secret }; // execution — pass-through branch
+      }
+    }
+    const client = { core: new FakeCore() } as unknown as ClientWithCoreApi;
+    const wrapped = retryingClient(client, { sleep: noSleep, baseMs: 1 });
+    const read = (await wrapped.core.getObject({ objectId: '0x1' } as never)) as { object: { id: string } };
+    expect(read.object.id).toBe('bound'); // private field reached → this bound
+    const exec = await (
+      wrapped.core as unknown as { signAndExecuteTransaction: () => Promise<{ digest: string }> }
+    ).signAndExecuteTransaction();
+    expect(exec.digest).toBe('bound'); // pass-through also bound (this is the live bug)
+  });
 });
 
 describe('highlevel/retry — retryingReader (truncated reads retry, aborts do not)', () => {

@@ -32,6 +32,7 @@ import { ownedIds } from './role.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { retryingClient, retryingGraphqlClient, retryingReader, type RetryOptions } from './retry.js';
+import { watchMany, type PortfolioWatch } from './watch-many.js';
 import { createdIdByType, execute } from './send.js';
 import type { CoinTag } from './value.js';
 
@@ -85,6 +86,20 @@ export interface Usufruct {
 
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+
+  /**
+   * React to changes across *many* escrows over **one** gRPC firehose. `onChange`
+   * fires with a re-resolved handle for each escrow's current state, then on every
+   * on-chain change. The returned `PortfolioWatch` grows/shrinks the set in flight
+   * (`add`/`remove`) and ends with `stop()`. Decode-free (asset-agnostic);
+   * degrades to polling only when no gRPC client is available. See also
+   * `governanceCap.watch()` to watch a whole portfolio by possession.
+   */
+  watchMany(
+    escrowIds: string[],
+    onChange: (e: Escrow) => void,
+    opts?: { intervalMs?: number },
+  ): PortfolioWatch;
 
   /**
    * Genesis: wrap an owned `asset` into a rental market priced in `coin`. Mints
@@ -242,6 +257,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
     escrow(idStr, opts) {
       return createEscrow(ctx(), idStr, opts?.at);
+    },
+
+    watchMany(escrowIds, onChange, opts) {
+      return watchMany(ctx(), escrowIds, onChange, opts);
     },
 
     async integrate({ asset, coin, market }) {

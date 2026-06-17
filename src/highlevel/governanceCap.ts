@@ -28,6 +28,7 @@ import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
+import { watchMany, type PortfolioWatch } from './watch-many.js';
 import type { CoinTag } from './value.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType, execute } from './send.js';
@@ -76,6 +77,18 @@ export interface GovernanceCap {
    * cap→escrow link lives only in the event log, not on the cap.) Needs `graphql`.
    */
   escrows(): Promise<EscrowListing[]>;
+
+  /**
+   * React to changes across this cap's **whole portfolio** over one gRPC
+   * firehose: resolves `escrows()` and `watchMany`s them. `onChange` fires with a
+   * handle per escrow's current state, then on every change. Grow/shrink and end
+   * via the returned `PortfolioWatch`. Needs `graphql` (for the portfolio
+   * discovery); the watch itself is gRPC-push, polling-fallback.
+   */
+  watch(
+    onChange: (e: Escrow) => void,
+    opts?: { intervalMs?: number },
+  ): Promise<PortfolioWatch>;
 }
 
 interface RefInfo {
@@ -213,6 +226,12 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     escrows() {
       return discoverIntegrated(ctx, { governanceCapId: capId });
+    },
+
+    async watch(onChange, watchOpts) {
+      const listings = await discoverIntegrated(ctx, { governanceCapId: capId });
+      const ids = listings.map((l) => l.escrowId);
+      return watchMany(ctx, ids, onChange, watchOpts);
     },
   };
 }

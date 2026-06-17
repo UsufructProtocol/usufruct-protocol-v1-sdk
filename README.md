@@ -37,7 +37,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 const u = usufruct({
   network: 'testnet',
   signer: Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!),
-  graphql: 'https://sui-testnet.mystenlabs.com/graphql',
+  graphql: 'https://graphql.testnet.sui.io/graphql',
 });
 
 const escrow = await u.escrow('0x…');  // one fetch: state @ now + "what can I do here?"

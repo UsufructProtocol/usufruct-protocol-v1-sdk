@@ -139,15 +139,21 @@ export function retryingClient(client: ClientWithCoreApi, opts: RetryOptions = {
   const wrappedCore = new Proxy(core, {
     get(target, prop) {
       const v = target[prop as string];
-      if (typeof v !== 'function' || NON_RETRYABLE_METHODS.has(prop as string)) return v;
+      if (typeof v !== 'function') return v;
       const fn = v as (...a: unknown[]) => unknown;
+      // Bind to the real core (methods use private `this` fields). Execution
+      // methods are bound but NOT retried — a retried submit could double-execute.
+      if (NON_RETRYABLE_METHODS.has(prop as string)) {
+        return (...args: unknown[]) => fn.apply(target, args);
+      }
       return (...args: unknown[]) => withRetry(() => fn.apply(target, args) as Promise<unknown>, retry);
     },
   });
   return new Proxy(client, {
     get(target, prop) {
       if (prop === 'core') return wrappedCore;
-      return (target as unknown as Record<string, unknown>)[prop as string];
+      const v = (target as unknown as Record<string, unknown>)[prop as string];
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
     },
   }) as ClientWithCoreApi;
 }
@@ -186,11 +192,12 @@ export function retryingGraphqlClient(gql: SuiGraphQLClient, opts: RetryOptions 
     get(target, prop) {
       if (prop === 'core') return coreWrapped.core;
       const v = (target as unknown as Record<string, unknown>)[prop as string];
-      if (prop === 'query' && typeof v === 'function') {
-        const fn = v as (...a: unknown[]) => unknown;
+      if (typeof v !== 'function') return v;
+      const fn = v as (...a: unknown[]) => unknown;
+      if (prop === 'query') {
         return (...args: unknown[]) => withRetry(() => fn.apply(target, args) as Promise<unknown>, retry);
       }
-      return v;
+      return fn.bind(target); // bind others to the real client (private `this`)
     },
   }) as SuiGraphQLClient;
 }

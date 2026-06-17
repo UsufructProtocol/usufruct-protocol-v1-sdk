@@ -252,6 +252,115 @@ export async function* escrowVersionChanges(
   }
 }
 
+/** A tagged version signal — which escrow changed, and its new post-tx version. */
+export interface VersionUpdate {
+  readonly escrowId: Id<'Escrow'>;
+  readonly version: string;
+}
+
+/**
+ * A live multiplexed **version** subscription — the decode-free, many-id twin of
+ * {@link escrowVersionChanges}, mirroring `subscribeMany`'s editable handle.
+ * Iterate it for `{ escrowId, version }` signals; grow/shrink the set in flight.
+ * `add` emits the new escrow's initial version; `remove` stops it; `close` (or
+ * `opts.signal`) ends iteration. No content fetch on deltas, no asset schema.
+ */
+export interface ManyVersions extends AsyncIterable<VersionUpdate> {
+  add(escrowId: Id<'Escrow'> | string): Promise<void>;
+  remove(escrowId: Id<'Escrow'> | string): void;
+  close(): void;
+}
+
+/**
+ * Watch many escrows' version changes over **one** gRPC firehose, decode-free.
+ * Same demux as `subscribeMany`, but it emits versions (not decoded state): the
+ * high-level portfolio watch re-resolves its own decode-free handles from the
+ * signal, so this stays asset-agnostic. `add(id)` primes one `getObject` and
+ * emits the initial; deltas read the version straight off checkpoint effects (no
+ * refetch). Resumable: re-opens with bounded backoff; per-version dedupe absorbs
+ * replays.
+ */
+export function escrowVersionChangesMany(
+  client: SuiGrpcClient,
+  escrowIds: readonly (Id<'Escrow'> | string)[],
+  signal?: AbortSignal,
+): ManyVersions {
+  const core = client as unknown as ClientWithCoreApi;
+  const watched = new Map<string, Id<'Escrow'>>(); // normId → branded id
+  const seen = new Map<string, string>(); // normId → last post-tx version
+  const out = channel<VersionUpdate>();
+  const ac = new AbortController(); // stops the firehose on close
+
+  const add = async (escrowId: Id<'Escrow'> | string): Promise<void> => {
+    const n = normId(escrowId);
+    if (watched.has(n)) return; // already watching
+    const branded = escrowId as Id<'Escrow'>;
+    watched.set(n, branded);
+    try {
+      const { object } = await core.core.getObject({ objectId: escrowId });
+      if (!watched.has(n)) return; // removed during the fetch
+      const version = String(object.version);
+      seen.set(n, version);
+      out.push({ escrowId: branded, version });
+    } catch {
+      /* best-effort prime — a delta will still emit on the next change */
+    }
+  };
+
+  const remove = (escrowId: Id<'Escrow'> | string): void => {
+    const n = normId(escrowId);
+    watched.delete(n);
+    seen.delete(n);
+  };
+
+  const close = (): void => {
+    signal?.removeEventListener('abort', close);
+    ac.abort();
+    out.close();
+  };
+  signal?.addEventListener('abort', close, { once: true });
+
+  // Background: seed the initial ids, then demux the shared firehose. Deltas read
+  // the version off the effects directly (no refetch); `seen` gates double-emits.
+  void (async () => {
+    await Promise.all(escrowIds.map(add));
+    let attempt = 0;
+    while (!ac.signal.aborted) {
+      const call = client.subscriptionService.subscribeCheckpoints(
+        { readMask: VERSION_READ_MASK },
+        { abort: ac.signal },
+      );
+      try {
+        for await (const res of call.responses) {
+          if (ac.signal.aborted) break;
+          for (const { objectId, version } of scanChanged(res.checkpoint)) {
+            const n = normId(objectId);
+            const branded = watched.get(n);
+            if (branded && version !== seen.get(n)) {
+              seen.set(n, version);
+              out.push({ escrowId: branded, version });
+            }
+          }
+        }
+        attempt = 0; // clean completion → re-open from the latest checkpoint
+      } catch {
+        if (ac.signal.aborted) break;
+        const wait = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]!;
+        attempt += 1;
+        await sleep(wait, ac.signal);
+      }
+    }
+    out.close();
+  })();
+
+  return {
+    add,
+    remove,
+    close,
+    [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](),
+  };
+}
+
 /**
  * Live-chain `Source` over gRPC whose `subscribe` is server-push, plus
  * `subscribeMany` for watching many escrows over one stream. `fetch`, `query`,
