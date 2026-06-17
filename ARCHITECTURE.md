@@ -30,6 +30,16 @@ The SDK is split along a single seam: **the core cannot drift; the mirror can.**
   time. The mirror takes drift risk and is therefore golden-tested against the
   Reader, its oracle (SPEC §8); the dependency is one-way (`sim → sdk`).
 
+**Why this is possible at all.** A drift-zero core is not a free choice — it is
+a property the *protocol* earned. `usufruct` exposes its **entire runtime** as
+~124 pure, total, `&Clock`-free view functions (every time-dependent view takes
+`now_ms: u64`; SPEC §2.1). That exhaustive read surface is what lets the core
+answer *every* effective value on-chain, at any time `t`, with drift zero. A
+protocol whose state hides behind dynamic fields, oracles, or cross-object reads
+**could not** offer a drift-zero core: its client would have to re-derive read
+logic locally, making the mirror the default and drift unavoidable. The split
+documented here is downstream of that single enabling fact.
+
 Why purist (the core reads *everything* effective through the Reader, never
 locally) rather than reading "simple" fields off a fetched `EscrowState`: the
 protocol's transitions are **lazy**, so a stored field and its effective value
