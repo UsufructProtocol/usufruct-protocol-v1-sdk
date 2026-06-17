@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ms } from '../src/primitives/brand.js';
-import * as views from '../src/views/index.js';
+import { ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import * as views from '@usufruct-protocol/sim/views/index.js';
 import {
   ASSET_ID,
   GOV_CAP_ID,

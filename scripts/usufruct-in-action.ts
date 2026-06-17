@@ -12,7 +12,7 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct } from '../src/index.js';
+import { coinTag, usufruct } from '@usufruct-protocol/sdk';
 import { createdId, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
 // dummy axes (free mint) — stands in for "Alice's asset" and "the payment coin"

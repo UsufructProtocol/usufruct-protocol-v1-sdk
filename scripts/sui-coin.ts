@@ -13,7 +13,7 @@
  * Run: `npm run sui`.
  */
 import { Transaction } from '@mysten/sui/transactions';
-import { usufruct } from '../src/index.js';
+import { usufruct } from '@usufruct-protocol/sdk';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';

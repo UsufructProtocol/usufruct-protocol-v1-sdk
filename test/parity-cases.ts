@@ -4,13 +4,13 @@
  * to reproduce it. The on-chain side IS the product; this file is the test
  * that keeps the mirror honest (SPEC §8). One table, two consumers.
  */
-import type { Ms } from '../src/primitives/brand.js';
-import type { AssetSchema, EscrowState } from '../src/primitives/state.js';
-import { VIEW_SPECS, type ReadCtx, type ViewSpec } from '../src/read/spec.js';
-import * as views from '../src/views/index.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import { VIEW_SPECS, type ReadCtx, type ViewSpec } from '@usufruct-protocol/sdk/read/spec.js';
+import * as views from '@usufruct-protocol/sim/views/index.js';
 
-export { stable, parityEqual } from '../src/read/spec.js';
-export type { ReadCtx as ParityCtx } from '../src/read/spec.js';
+export { stable, parityEqual } from '@usufruct-protocol/sdk/read/spec.js';
+export type { ReadCtx as ParityCtx } from '@usufruct-protocol/sdk/read/spec.js';
 
 type LocalFn = (state: EscrowState<AssetSchema>, t: Ms, ctx: ReadCtx) => unknown;
 

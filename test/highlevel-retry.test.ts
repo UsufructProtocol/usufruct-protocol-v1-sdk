@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
-import type { Reader } from '../src/read/reader.js';
+import type { Reader } from '@usufruct-protocol/sdk/read/reader.js';
 import {
   isTransientNetwork,
   isTransientRead,
@@ -10,7 +10,7 @@ import {
   retryingClient,
   retryingReader,
   withRetry,
-} from '../src/highlevel/retry.js';
+} from '@usufruct-protocol/sdk/highlevel/retry.js';
 
 // Instant sleep — keeps the tests off the wall clock entirely.
 const noSleep = () => Promise.resolve();

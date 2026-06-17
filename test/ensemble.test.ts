@@ -1,8 +1,8 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { ensembleToPtb } from '../src/config/ensemble.js';
-import { TESTNET } from '../src/config/network.js';
-import { bps, mist, ms } from '../src/primitives/brand.js';
+import { ensembleToPtb } from '@usufruct-protocol/sdk/config/ensemble.js';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { bps, mist, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 
 function targets(tx: Transaction): string[] {
   return tx.getData().commands.map((c) => {

@@ -1,7 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { collectMessages, type MessageRef } from '../src/actions/collect.js';
-import { TESTNET } from '../src/config/network.js';
+import { collectMessages, type MessageRef } from '@usufruct-protocol/sdk/actions/collect.js';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
 
 const INBOX = '0x' + '88'.repeat(32);
 const DCOIN = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN';

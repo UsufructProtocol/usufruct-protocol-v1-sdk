@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CurveShapePolicy } from '../src/codegen/usufruct/curve_shape_policy.js';
-import { PolicyEnsemble } from '../src/codegen/usufruct/policy_ensemble.js';
+import { CurveShapePolicy } from '@usufruct-protocol/sdk/codegen/usufruct/curve_shape_policy.js';
+import { PolicyEnsemble } from '@usufruct-protocol/sdk/codegen/usufruct/policy_ensemble.js';
 
 describe('codegen BCS substrate', () => {
   it('round-trips an enum with payload', () => {

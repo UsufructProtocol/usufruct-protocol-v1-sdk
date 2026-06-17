@@ -5,11 +5,11 @@
  * subscribe.
  */
 import { describe, expect, it } from 'vitest';
-import * as actions from '../src/actions/index.js';
-import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
-import { memorySource } from '../src/primitives/memory-source.js';
-import { isMissingObject } from '../src/primitives/source.js';
-import * as views from '../src/views/index.js';
+import * as actions from '@usufruct-protocol/sim/sim/actions/index.js';
+import { id, mist, ms, tenureCount } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { memorySource } from '@usufruct-protocol/sim/primitives/memory-source.js';
+import { isMissingObject } from '@usufruct-protocol/sdk/primitives/source.js';
+import * as views from '@usufruct-protocol/sim/views/index.js';
 import { ESCROW_ID, TENANT, idleState, occupiedState, retiredState } from './synthetic.js';
 
 const escrowId = id<'Escrow'>(ESCROW_ID);

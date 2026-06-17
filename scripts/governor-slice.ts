@@ -10,10 +10,10 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import * as actions from '../src/actions/index.js';
-import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
-import { id } from '../src/primitives/brand.js';
-import { CommittedEnsemble, coinTag, usufruct, type Market } from '../src/index.js';
+import * as actions from '@usufruct-protocol/sdk/actions/index.js';
+import { GRAPHQL_TESTNET, TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { CommittedEnsemble, coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
 import {
   check,
   createdId,

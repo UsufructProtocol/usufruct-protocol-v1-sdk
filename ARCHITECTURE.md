@@ -7,6 +7,53 @@ relate, and what composability emerges from combining them.
 
 ---
 
+## Drift-zero core, opt-in mirror
+
+The SDK is split along a single seam: **the core cannot drift; the mirror can.**
+
+- **`@usufruct-protocol/sdk` (core) is drift-zero by construction.** It only
+  ever (a) decodes BCS, (b) does IO through `Source`, (c) reads *effective*
+  values through the on-chain `Reader` (which evaluates the deployed Move views
+  via `simulateTransaction` — so every read is the bytecode's own answer), and
+  (d) builds PTBs through an action's `toPtb`. The core never re-derives the
+  contract's math in TypeScript. Its only failure surface is the BCS decode,
+  guarded by the re-serialize invariant (`serialize(parse(bytes))`, SPEC §10).
+  The high-level Layer 2 API (`usufruct()`, `Market`, `escrow.*`) lives here and
+  reads everything through the `Reader`, so it inherits drift-zero unchanged.
+
+- **`@usufruct-protocol/sim` (the mirror) is the opt-in tier that *re-derives*
+  the protocol off-chain** — `Action.step`, the pure compute `View<T>`
+  functions, the fixed-point curve math, and `MemorySource`/`memoryInbox`. This
+  is what enables forward simulation across time, what-if analysis, and the
+  fully-offline testbed — things the on-chain `Reader` *cannot* do because the
+  mutating Move entries read the real `&Clock` (0x6), not a caller-supplied
+  time. The mirror takes drift risk and is therefore golden-tested against the
+  Reader, its oracle (SPEC §8); the dependency is one-way (`sim → sdk`).
+
+**Why this is possible at all.** A drift-zero core is not a free choice — it is
+a property the *protocol* earned. `usufruct` exposes its **entire runtime** as
+~124 pure, total, `&Clock`-free view functions (every time-dependent view takes
+`now_ms: u64`; SPEC §2.1). That exhaustive read surface is what lets the core
+answer *every* effective value on-chain, at any time `t`, with drift zero. A
+protocol whose state hides behind dynamic fields, oracles, or cross-object reads
+**could not** offer a drift-zero core: its client would have to re-derive read
+logic locally, making the mirror the default and drift unavoidable. The split
+documented here is downstream of that single enabling fact.
+
+Why purist (the core reads *everything* effective through the Reader, never
+locally) rather than reading "simple" fields off a fetched `EscrowState`: the
+protocol's transitions are **lazy**, so a stored field and its effective value
+at time `t` diverge (an expired tenancy is still stored `Occupied`). Computing
+the effective value is exactly the mirror. `Reader.snapshot({ t })` batches the
+whole view table into a few `simulateTransaction` calls, so reading everything
+on-chain stays cheap — without the stale-state footgun.
+
+The four primitives below describe the **mirror kernel** (`EscrowState` is the
+shared decode target; `View`/`Action.step` and `MemorySource` are the mirror).
+The core is `EscrowState` + `Source` + the `Reader` + `Action.toPtb`.
+
+---
+
 ## The four primitives
 
 ```
@@ -80,14 +127,18 @@ special setup.
 
 ### `Action<R>` — write
 
-An `Action` is a **value** that carries two interpretations of the same
-semantic operation:
+An `Action` carries two interpretations of the same semantic operation, split
+across the two packages:
 
-- **`step`** — the off-chain pure interpretation. Given current state and time,
-  returns the next state and result. Used by the simulator, testbed, and
-  calendar.
-- **`toPtb`** — the on-chain interpretation. Appends the corresponding Move
-  call to a `Transaction`. Used for live execution.
+- **`toPtb`** — the on-chain interpretation (in the **core**). Appends the
+  corresponding Move call to a `Transaction`. Used for live execution. In the
+  core an action is *only* its `toPtb` (the `PtbAction` type); this is what
+  keeps the core drift-free.
+- **`step`** — the off-chain pure interpretation (in the **`sim`** mirror).
+  Given current state and time, re-derives the next state and result. Used by
+  the simulator, testbed, and calendar. The mirror composes a full
+  `Origin/Transition/Terminal` action by pairing a `step` with the core's
+  `toPtb` builder — one `toPtb` implementation, never duplicated.
 
 Actions are classified by their lifecycle role:
 
@@ -119,11 +170,11 @@ has been given.
 
 Three implementations ship with the core:
 
-| Implementation       | Transport       | Best for                                    |
-| -------------------- | --------------- | ------------------------------------------- |
-| `ChainSource(client)`| gRPC / JSON-RPC | Object fetches, event streaming             |
-| `IndexerSource(url)` | GraphQL         | Filtered queries, cursor-paginated history  |
-| `MemorySource()`     | In-memory store | Off-chain testbed; updated by `Action.step` |
+| Implementation       | Transport       | Best for                                    | Package |
+| -------------------- | --------------- | ------------------------------------------- | ------- |
+| `ChainSource(client)`| gRPC / JSON-RPC | Object fetches, event streaming             | core    |
+| `IndexerSource(url)` | GraphQL         | Filtered queries, cursor-paginated history  | core    |
+| `MemorySource()`     | In-memory store | Off-chain testbed; updated by `Action.step` | `sim`   |
 
 ---
 
@@ -157,8 +208,15 @@ Source.fetch(id)
 
 ### Emergent capabilities
 
-None of the following are implemented as core code. Each falls out of composing
-the four primitives:
+None of the following are implemented as bespoke code — each falls out of
+composition. They split by package along the drift-zero seam: the **reactive
+UI**, **settler bot**, and **asset-agnostic marketplace** compose only
+`Source` + `Reader` + `toPtb`, so they live in the drift-zero **core**. The
+**simulator / time-travel**, **off-chain testbed**, and **calendar / agenda**
+fold `Action.step` forward across time and so belong to the **`sim`** mirror —
+the one thing the on-chain `Reader` cannot do (its mutating entries read the
+real `&Clock`, not an arbitrary future `t`). The examples below use the mirror
+factory (`sim.actions.*`) where `step` appears:
 
 **Simulator / time-travel**
 ```ts

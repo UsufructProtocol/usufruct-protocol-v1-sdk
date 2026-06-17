@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { duration, toEnsembleConfig, type Market } from '../src/highlevel/market.js';
-import { SUI, price } from '../src/highlevel/value.js';
+import { duration, toEnsembleConfig, type Market } from '@usufruct-protocol/sdk/highlevel/market.js';
+import { SUI, price } from '@usufruct-protocol/sdk/highlevel/value.js';
 
 describe('highlevel/market — duration parser', () => {
   it('parses every unit', () => {

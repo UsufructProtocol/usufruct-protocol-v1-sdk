@@ -2,9 +2,9 @@ import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { sourceCoin } from '../src/highlevel/coins.js';
-import { InsufficientBalance, InsufficientPayment, mapAbort } from '../src/highlevel/errors.js';
-import { SUI } from '../src/highlevel/value.js';
+import { sourceCoin } from '@usufruct-protocol/sdk/highlevel/coins.js';
+import { InsufficientBalance, InsufficientPayment, mapAbort } from '@usufruct-protocol/sdk/highlevel/errors.js';
+import { SUI } from '@usufruct-protocol/sdk/highlevel/value.js';
 
 const DUMMY_T = '0xd::dummy_coin::DUMMY_COIN';
 const COIN = bcs.struct('Coin', { id: bcs.Address, balance: bcs.u64() });

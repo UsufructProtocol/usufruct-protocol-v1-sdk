@@ -5,8 +5,8 @@
  *   2. Resolve a real escrow handle end-to-end via `usufruct()` (retry on).
  */
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import { retryingClient } from '../src/highlevel/retry.js';
-import { usufruct } from '../src/highlevel/index.js';
+import { retryingClient } from '@usufruct-protocol/sdk/highlevel/retry.js';
+import { usufruct } from '@usufruct-protocol/sdk/highlevel/index.js';
 import { check, finish, step } from './lib.js';
 
 const RPC_URL = 'https://fullnode.testnet.sui.io:443';

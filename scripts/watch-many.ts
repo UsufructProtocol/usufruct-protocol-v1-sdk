@@ -15,8 +15,8 @@
  * with `npm run clean`. Run: `npm run watch:many`.
  */
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct, type Escrow, type Market } from '../src/index.js';
-import { GRAPHQL_TESTNET } from '../src/config/network.js';
+import { coinTag, usufruct, type Escrow, type Market } from '@usufruct-protocol/sdk';
+import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
 import { check, finish, loadSigner, makeClient, rateLimited, send, sleep, step } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';

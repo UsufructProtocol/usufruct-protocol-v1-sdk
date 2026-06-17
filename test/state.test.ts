@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { describe, expect, it } from 'vitest';
-import { Escrow } from '../src/codegen/usufruct/escrow.js';
+import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
 import {
   EscrowDecodeError,
   decodeEscrowState,
   escrowTypeArgs,
   uidAssetSchema,
-} from '../src/primitives/state.js';
+} from '@usufruct-protocol/sdk/primitives/state.js';
 
 const ESCROW_ID = '0x' + 'ab'.repeat(32);
 const ASSET_ID = '0x' + 'cd'.repeat(32);

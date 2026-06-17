@@ -1,9 +1,9 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { createCap } from '../src/highlevel/cap.js';
-import type { HandleCtx } from '../src/highlevel/ctx.js';
-import { NotConnected } from '../src/highlevel/errors.js';
+import { createCap } from '@usufruct-protocol/sdk/highlevel/cap.js';
+import type { HandleCtx } from '@usufruct-protocol/sdk/highlevel/ctx.js';
+import { NotConnected } from '@usufruct-protocol/sdk/highlevel/errors.js';
 
 const hex = (b: string) => '0x' + b.repeat(32);
 const PKG = hex('33');

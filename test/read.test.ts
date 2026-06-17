@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createReader } from '../src/read/reader.js';
-import { SPEC_BY_NAME, VIEW_SPECS } from '../src/read/spec.js';
-import { id } from '../src/primitives/brand.js';
+import { createReader } from '@usufruct-protocol/sdk/read/reader.js';
+import { SPEC_BY_NAME, VIEW_SPECS } from '@usufruct-protocol/sdk/read/spec.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
 
 describe('read tier — spec table integrity', () => {
   it('spec names are unique', () => {

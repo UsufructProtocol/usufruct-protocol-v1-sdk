@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SUI, coinInfo, coinTag, price } from '../src/highlevel/value.js';
+import { SUI, coinInfo, coinTag, price } from '@usufruct-protocol/sdk/highlevel/value.js';
 
 describe('highlevel/value — Price', () => {
   it('renders mist in coin units and stays exact', () => {
