@@ -1,10 +1,17 @@
 # Read · Write · Inspect · React — the shape of the SDK
 
 > The whole SDK is **four verbs on a handful of objects**, over a **drift-zero
-> core**. You **read** the chain and **write** to it (on-chain state), then
-> **inspect** what happened (events, pull) and **react** to what happens (events,
-> push). Every verb is *object-centric* — you ask the object you hold, it answers —
-> and *decode-free* (no asset schema). This is the mental model; see
+> core**. One way to remember them — what each verb asks of the chain:
+>
+> - **read** → what *is*
+> - **write** → what I *change*
+> - **inspect** → what *happened*
+> - **react** → what *happens*
+>
+> The first two are on-chain **state** (read it / change it with a tx); the last
+> two are the **event log** (pull what happened / push what happens). Every verb is
+> *object-centric* — you ask the object you hold, it answers — and *decode-free*
+> (no asset schema). This is the mental model; see
 > [the object model](./object-model.md) for *why* possession is the role.
 
 ## The four verbs
