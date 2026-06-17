@@ -23,7 +23,9 @@ import { retryingReader } from './retry.js';
 import { subscribeEscrowVersion } from './watch.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
-import { NotConnected, mapAbort } from './errors.js';
+import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { toHistoryEvent, type HistoryEvent } from './history.js';
+import { normEscrowId } from '../indexer/events.js';
 import { execute } from './send.js';
 import { price, type Price } from './value.js';
 import type { When } from './usufruct.js';
@@ -113,6 +115,16 @@ export interface UsufructCap {
     predicate: (s: UsufructCapState) => boolean,
     opts?: { intervalMs?: number; timeoutMs?: number },
   ): Promise<UsufructCapState>;
+  /**
+   * This cap's slice of the escrow's timeline — the typed events that mention it
+   * (mint, borrow/return, refund-address updates, the rent/bid/handover that
+   * involve it, burn). The cap's `inspect`, the pull twin of `watch`. Needs `graphql`.
+   */
+  history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]>;
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
@@ -264,6 +276,28 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       watchOpts,
     );
   }
+  async function history(opts?: {
+    sender?: string;
+    afterCheckpoint?: number;
+    beforeCheckpoint?: number;
+  }): Promise<HistoryEvent[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('history requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const events = await ctx.indexer.escrowTimeline(toId<'Escrow'>(args.escrowId), {
+      ...(opts?.sender !== undefined ? { sender: opts.sender } : {}),
+      ...(opts?.afterCheckpoint !== undefined ? { afterCheckpoint: opts.afterCheckpoint } : {}),
+      ...(opts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: opts.beforeCheckpoint } : {}),
+    });
+    // Keep the events that name THIS cap in any id field (mint/borrow/handover/…).
+    const want = normEscrowId(args.capId);
+    const mentions = (data: Record<string, unknown>): boolean =>
+      Object.values(data).some(
+        (v) => typeof v === 'string' && v.startsWith('0x') && !v.includes('::') && normEscrowId(v) === want,
+      );
+    return events.map(toHistoryEvent).filter((he) => mentions(he.data));
+  }
+
   function waitFor(
     predicate: (s: UsufructCapState) => boolean,
     waitOpts?: { intervalMs?: number; timeoutMs?: number },
@@ -325,6 +359,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     isStale,
     watch,
     waitFor,
+    history,
     borrow,
     transfer: transferOf(ctx, args.capId, 'cap'),
     burnIfStale,

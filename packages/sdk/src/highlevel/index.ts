@@ -35,7 +35,7 @@ export type {
   Use,
 } from './cap.js';
 export type { GovernanceCap, EscrowRef } from './governanceCap.js';
-export type { Inbox, EarningsInbox, ProtocolFeeInbox } from './inbox.js';
+export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage } from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';
 export type { HistoryEvent } from './history.js';
 export type { PortfolioWatch } from './watch-many.js';

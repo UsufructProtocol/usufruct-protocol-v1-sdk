@@ -1,45 +1,76 @@
-# Read · Write · Inspect · React — the shape of the high-level SDK
+# Read · Write · Inspect · React — the shape of the SDK
 
-> Four verbs cover the whole surface. You **read** the chain, **write** to it,
-> **inspect** what it did, and **react** to what it does. Every one is
-> object-centric (you ask the object, it answers) and decode-free (no asset
-> schema). This is the mental model — start here, then see
-> [the object model](./object-model.md) for *why* it's object-centric.
+> The whole SDK is **four verbs on a handful of objects**, over a **drift-zero
+> core**. You **read** the chain and **write** to it (on-chain state), then
+> **inspect** what happened (events, pull) and **react** to what happens (events,
+> push). Every verb is *object-centric* — you ask the object you hold, it answers —
+> and *decode-free* (no asset schema). This is the mental model; see
+> [the object model](./object-model.md) for *why* possession is the role.
 
-| Verb | What | Delivery | Door |
+## The four verbs
+
+| Verb | What | Delivery | Primitive |
 |---|---|---|---|
-| **Read** | the chain *as it is now* | a fetch | `u.escrow(id)` → handle + `escrow.reader` |
-| **Write** | make it *different* | a transaction | the capability methods — `rent`, `borrow`, `updateMarket`, `collect`, `transfer` |
-| **Inspect** | what *happened* | pull (GraphQL) | discovery (`escrowsGovernedBy`…) + `escrow.history()` |
-| **React** | what *happens* | push (gRPC) | `escrow.watch` / `waitFor` + `escrow.on` / `onEvents` |
+| **Read** | the chain *as it is now* | a fetch / `simulateTransaction` | `Source.fetch` + the `Reader` |
+| **Write** | make it *different* | a transaction | `Action.toPtb` |
+| **Inspect** | what *happened* | pull (GraphQL) | `Source.query` / `events` |
+| **React** | what *happens* | push (gRPC firehose) | `Source.subscribe` |
+
+## The objects
+
+Authority is **possession** of a bearer object, so every verb lives on the object
+whose data or right it concerns. Five capability objects:
+
+- **`Escrow`** — the shared market (the hub; everything is keyed to it).
+- **`UsufructCap`** — the right of use (the renter's seat).
+- **`GovernanceCap`** — governance over a *portfolio* of escrows.
+- **`EarningsInbox`** — the governor's income mailbox.
+- **`ProtocolFeeInbox`** — the deployer's fee pool (same shape as `EarningsInbox`).
+
+## The grid — four verbs on every object
+
+This is the vision: pick the object you hold, then read / write / inspect / react
+*on it*. You never reach back to a factory for an object's own verbs (`u` only
+**resolves** the first handle — `u.escrow(id)`, `u.usufructCap(id)`, `u.integrate()`).
+
+| | **read** | **write** | **inspect** (pull) | **react** (push) |
+|---|---|---|---|---|
+| **Escrow** | `status`, `market()`, `floorPrice`, `cycle()`, `tenureSettlement()`… | `rent()`, `applyPendingTransitionStates()` | `history()`, `usufructCaps()` | `watch()`/`waitFor()`, `on()`/`next()` |
+| **UsufructCap** | `state()`, `isActive/isPending/isStale()` | `borrow()`, `burn()`, `updateRefundAddress()`, `transfer()` | `history()` | `watch()`, `waitFor()` |
+| **GovernanceCap** | `governs(escrow)` | `updateMarket()`, `retire()`, `claim()`, `extend…()`, `renounce()`, `transfer()`, `integrateIntoPortfolio()` | `escrows()` (its portfolio) | `watch()` (portfolio) |
+| **EarningsInbox** / **ProtocolFeeInbox** | `balance()` | `collect()`, `transfer()` | `escrowsPushingMessages()` | `watch()` (new income) |
+
+Two notes on the shape:
+- The **escrow is the eager entry handle** — `u.escrow(id)` does the one fetch, so
+  its reads are sync getters (a coherent photo at `t`). Every other handle is a
+  lightweight **reference** built with no IO, so its reads are on demand
+  (`await cap.state()`, `await inbox.balance()`). Both are "ask the object."
+- **Possession is a boolean axis**, not a gate on the handles: from an escrow,
+  `activeCap` / `governanceCap` / `earningsInbox` / `feeInbox` are *always* present
+  to read; `canBorrow` / `canGovern` / `holdsEarnings` say whether a **write** on
+  them will succeed.
 
 ---
 
 ## Read — the chain as it is now
 
-One fetch resolves the state snapshot *and* the signer's role here, so the getters
-are synchronous. For live, drift-free values, drop to `escrow.reader` (the ~80
-kernel views).
-
 ```ts
 const escrow = await u.escrow(id);   // state @ t + "what can I do here?", one fetch
 escrow.status;          // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
 escrow.floorPrice;      // a Price, rendered in the escrow's own coin
-escrow.coin;            // the payment coin tag (decimals/symbol from chain)
-escrow.canGovern;       // do I hold this escrow's GovernanceCap? (possession = role)
-escrow.usufructCap;     // the active cap handle, if I hold it (else null)
+await escrow.market();  // the full policy (rest price, tenure, handover, curves…)
 
-await escrow.reader.accruedCreditMist(now);   // live, exact, any of the ~80 views
+await escrow.activeCap?.state();   // the current seat — ask the cap about itself
+await escrow.reader.accruedCreditMist(now);  // escape hatch: any of the ~80 kernel views
 ```
 
-The handle is a **coherent photograph** (every field at the same `t`); the reader
-is a **live probe**. Render from the handle; observe a write's effect through the
-reader. ([Reads: handle-snapshot vs reader-live](./object-model.md).)
+**Drift-zero:** every read is the deployed bytecode's own answer
+(`simulateTransaction` over the on-chain views), so the SDK can't drift from the
+contract. The handle just renders it (`Mist→Price`, `Ms→Date`). For off-chain
+re-derivation (simulation, what-if), reach for `@usufruct-protocol/sim` — the
+opt-in mirror, golden-tested against this core.
 
 ## Write — make it different
-
-Each write lives on the **object that authorizes it** — authority is possession,
-nothing is hidden. The only decision `rent` asks is the amount (floor, or overpay).
 
 ```ts
 await escrow.rent({ tenures: 1 });                  // pay the floor; `pay` to overpay → stake
@@ -49,89 +80,61 @@ await earningsInbox.collect();                      // 90% governor cut, partiti
 await governanceCap.transfer(treasury);             // move the object → move the role
 ```
 
-`integrate` mints three independent bearer objects and hands them back; from there
-they diverge. Moving any of them moves the role.
-([transfer is first-class](./object-model.md).)
+Each write lives on the object that authorizes it. `transfer` is first-class on
+every bearer — moving the object moves the role.
 
 ## Inspect — what happened (pull)
 
-Two questions: *which escrows relate to an object* (discovery), and *what happened
-to one escrow* (history). Both read the event log, decode-free, paginated over
-GraphQL.
+Every object answers two questions: *which escrows relate to me* (discovery) and
+*what happened* (history). Same typed event log, decode-free, over GraphQL.
 
 ```ts
-// discovery — each object answers for its relationships
-await u.escrowsGovernedBy(me);            // escrows whose GovernanceCap I hold (possession)
-await governanceCap.escrows();            // what THIS cap governs (its portfolio)
-await earningsInbox.escrowsPushingMessages();  // escrows paying into THIS inbox
-await u.escrowsByCoinType(USDC.type);     // escrows priced in USDC
-await escrow.usufructCaps();              // every cap this escrow ever minted
-
-// history — one escrow's whole lifecycle, typed and time-ordered
-const events = await escrow.history();    // [{ kind:'RentStarted', at, by, data }, …]
-//   integrated → policy → rented → bid → displaced → settled → retired
+await governanceCap.escrows();             // discovery: this cap's portfolio
+await earningsInbox.escrowsPushingMessages();  // who pays into this inbox
+const tx = await escrow.history();         // the escrow's whole lifecycle, time-ordered
+const mine = await usufructCap.history();  // just the events that mention this cap
 ```
+
+`escrow.history()` walks the escrow's own transactions (`affectedObject`) — O(its
+lifecycle), not O(package history).
 
 ## React — what happens (push)
 
-Don't poll — subscribe. Two flavors, both server-push over the gRPC checkpoint
-firehose: react to a **state** arriving, or to a **typed event** with its data.
+Don't poll — subscribe over the gRPC checkpoint firehose. React to a **state**
+arriving or a **typed event** with its data, continuously or one-shot:
 
 ```ts
-// continuous (callback) — fires on every change / matching event
-const stop = escrow.watch(e => render(e));          // each on-chain change → fresh snapshot
-escrow.on('BidPlaced', ev => counterBid(ev.data.pending_bid_amount));
+const stop = escrow.watch(e => render(e));          // state: each change → fresh snapshot
+escrow.on('BidPlaced', ev => counterBid(ev.data));  // events: typed, by kind
+await escrow.waitFor(e => e.isChallenged);          // one-shot state
+await escrow.next('BidPlaced', { timeoutMs: 120_000 });  // one-shot event
 
-// one-shot (promise) — resolves once, auto-unsubscribed
-await escrow.waitFor(e => e.isChallenged);          // the next state that matches
-const bid = await escrow.next('BidPlaced', { timeoutMs: 120_000 });  // the next typed event
+usufructCap.watch(seat => render(seat));            // the renter watches THEIR seat
+earningsInbox.watch(m => credit(m.amount));         // income lands → react
 ```
-
-Each kind of subscription comes in two shapes, and they line up:
 
 |        | continuous (callback) | one-shot (promise) |
 |--------|---|---|
-| **state** | `escrow.watch(cb)` | `escrow.waitFor(pred)` |
-| **events** | `escrow.on(kind, cb)` / `onEvents` | `escrow.next(kind)` / `nextEvent` |
-
-(`next` is `waitFor` for events — no more wiring a Promise around `on`.)
+| **state** | `escrow.watch(cb)` / `usufructCap.watch(cb)` | `escrow.waitFor(pred)` / `usufructCap.waitFor(pred)` |
+| **events** | `escrow.on(kind, cb)` / `onEvents`, `inbox.watch(cb)` | `escrow.next(kind)` / `nextEvent` |
 
 Filter not just by event *type* but by a **field value** — `where` is a predicate
-on the decoded event:
-
-```ts
-// only a bid above a floor; only a displacement of a specific tenant
-const bid = await escrow.next('BidPlaced', {
-  where: e => BigInt(e.data.pending_bid_amount as string) >= minBid,
-});
-escrow.onEvents(act, {
-  kinds: ['HandoverCompleted'],
-  where: e => e.data.departing_usufructuary_address === target,
-});
-```
-
-gRPC can't filter a payload server-side (the firehose is chain-wide checkpoints),
-but we decode every event to deliver it typed anyway — so `where` is free, the same
-client-side step that already drops other escrows and other kinds.
-
-The state watch is decode-free (the firehose signals only `object_id`+`version`;
-we re-resolve the decode-free handle). The event watch decodes each event with the
-same registry History uses. Push is the SDK default — a `SuiGrpcClient` is stood up
-for you; it degrades to polling only if you pass a non-gRPC client *and* no network.
+on the decoded event (`escrow.onEvents(act, { kinds: ['HandoverCompleted'], where:
+e => e.data.departing_usufructuary_address === target })`). gRPC can't filter a
+payload server-side, but we decode every event anyway, so `where` is free.
 
 ## Inspect and react are the same events
 
 `escrow.history()` and `escrow.on(...)` decode the **same typed events** — one
-paginated over GraphQL, one streamed over the gRPC firehose. **Inspect** reads the
-log; **React** subscribes to it. That symmetry is the point: inspect what the chain
-did and react to what it does with one event model.
+paginated over GraphQL (pull), one streamed over the gRPC firehose (push). Inspect
+reads the log; react subscribes to it. One event model, two deliveries.
 
 ```
-read    → state, now            (u.escrow, escrow.reader)
-write   → a transaction         (rent, borrow, updateMarket, collect, transfer)
-inspect → events, pull          (escrowsGovernedBy…, escrow.history)
-react   → events, push          (escrow.watch/waitFor, escrow.on/onEvents)
+read    → state, now      · Reader (drift-zero)     · escrow.* / cap.state() / inbox.balance()
+write   → a transaction   · Action.toPtb            · rent / borrow / updateMarket / collect / transfer
+inspect → events, pull    · Source.query/events     · escrow.history / cap.history / governanceCap.escrows
+react   → events, push    · Source.subscribe (gRPC) · escrow.watch/on · cap.watch · inbox.watch
 ```
 
-Read the chain, write to it, inspect what it did, react to what it does — all keyed
-on the objects, the object answering for itself.
+Four verbs, on the object you hold, over a core that cannot drift. That's the whole
+SDK.

@@ -154,9 +154,29 @@ export async function* escrowEventStream(
   packageId: string,
   opts?: { signal?: AbortSignal; kinds?: readonly string[] },
 ): AsyncGenerator<TypedEvent> {
-  const signal = opts?.signal;
   const want = normEscrowId(String(escrowId));
+  yield* packageEventStream(client, packageId, {
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+    ...(opts?.kinds ? { kinds: opts.kinds } : {}),
+    where: (ev) => ev.escrowId === want,
+  });
+}
+
+/**
+ * The general typed-event firehose for a package — server-push over the gRPC
+ * checkpoint stream, decoded with the codegen registry (no asset schema). Filters
+ * by `kinds` (event name) and an optional `where` predicate on the decoded event.
+ * `escrowEventStream` is this scoped to one escrow; `inbox.watch` scopes it to an
+ * inbox id. Resumable: re-opens with bounded backoff.
+ */
+export async function* packageEventStream(
+  client: SuiGrpcClient,
+  packageId: string,
+  opts?: { signal?: AbortSignal; kinds?: readonly string[]; where?: (ev: TypedEvent) => boolean },
+): AsyncGenerator<TypedEvent> {
+  const signal = opts?.signal;
   const kinds = opts?.kinds ? new Set(opts.kinds) : null;
+  const where = opts?.where;
   let attempt = 0;
   while (!signal?.aborted) {
     const call = client.subscriptionService.subscribeCheckpoints(
@@ -170,8 +190,8 @@ export async function* escrowEventStream(
           // Cheap package filter before any decode (the firehose is chain-wide).
           if (!part.type.startsWith(packageId)) continue;
           const ev = typedEventFromBytes(part);
-          if (ev.escrowId !== want) continue;
           if (kinds && !kinds.has(ev.name) && !kinds.has(eventKey(ev.type))) continue;
+          if (where && !where(ev)) continue;
           yield ev;
         }
       }

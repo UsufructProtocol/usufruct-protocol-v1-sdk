@@ -10,8 +10,9 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
-import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, step } from './lib.js';
+import { coinTag, usufruct, type InboxMessage, type Market } from '@usufruct-protocol/sdk';
+import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, sleep, step, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
 const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
@@ -63,7 +64,7 @@ const market: Market = {
 };
 
 async function main(): Promise<void> {
-  const a = usufruct({ network: 'testnet', client, signer: ALICE });
+  const a = usufruct({ network: 'testnet', client, signer: ALICE, graphql: GRAPHQL_TESTNET });
 
   step('setup — integrate + rent (Bob) + challenge (Carol) → demand');
   const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
@@ -127,9 +128,27 @@ async function main(): Promise<void> {
   step('⑨ react on the seat — usufructCap.watch() (the renter watches their own seat)');
   const seen: string[] = [];
   const stop = e.activeCap!.watch((s) => seen.push(s.role));
-  await new Promise((r) => setTimeout(r, 4000)); // let the initial state land
+  await sleep(4000); // let the initial state land
   stop();
   check('cap.watch emitted the seat state', seen.length >= 1, `roles=${seen.join(',')}`);
+
+  step('⑩ inspect the cap — usufructCap.history() (its slice of the timeline)');
+  // The indexer trails the fullnode; poll briefly for the fresh cap's events.
+  let capEvents = await e.activeCap!.history();
+  for (let i = 0; i < 8 && capEvents.length === 0; i++) {
+    await sleep(5000);
+    capEvents = await e.activeCap!.history();
+  }
+  check('cap.history includes UsufructCapMinted', capEvents.some((h) => h.kind === 'UsufructCapMinted'), capEvents.map((h) => h.kind).join(','));
+
+  step('⑪ react on income — earningsInbox.watch() catches a settlement (handover → EarningsMessagePosted)');
+  const income: InboxMessage[] = [];
+  const stopInbox = e.earningsInbox.watch((m) => income.push(m));
+  await waitForChainTime(client, BigInt(e.handoverExpiresAt!.getTime())); // wait out the handover
+  await e.applyPendingTransitionStates(); // settle → Bob displaced, 90% posts to earnings
+  await sleep(6000); // let the firehose deliver the EarningsMessagePosted
+  stopInbox();
+  check('earningsInbox.watch caught income', income.length >= 1, income.map((m) => m.amount.format()).join(','));
 
   step('— ceremony report —');
   console.log(`  reader-drops needed: ${ceremony.length} (was 16)`);
