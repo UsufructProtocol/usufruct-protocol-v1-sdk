@@ -32,6 +32,7 @@
     "sui": "tsx scripts/sui-coin.ts",
     "pricing": "tsx scripts/rent-pricing.ts",
     "clean": "tsx scripts/clean.ts",
+    "reclaim": "tsx scripts/reclaim.ts",
     "watch": "tsx scripts/watch-flow.ts",
     "watch:events": "tsx scripts/watch-events.ts",
     "asset": "tsx scripts/asset-agnostic.ts",
