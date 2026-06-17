@@ -9,6 +9,8 @@
  */
 import { id as toId, mist, tenureCount, type Mist, type Ms } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
+import { SPEC_BY_NAME, runSpecsMulti, type ReadCtx } from '../read/spec.js';
+import { escrowTypeArgs } from '../primitives/state.js';
 import { retryingReader } from './retry.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
@@ -24,12 +26,12 @@ import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType } from './send.js';
 import { makePlan, digestPlan, type Plan } from './plan.js';
-import { coinTag, price, type CoinTag, type Price } from './value.js';
+import { coinTag, price, type CoinTag, type CoinInfo, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { readMarket } from './marketReadback.js';
 import type { Market } from './market.js';
-import { resolveRole } from './role.js';
+import { resolveRole, ownedIds, type RoleResolution } from './role.js';
 import { fetchTypeArgs } from './typeargs.js';
 import type { When } from './usufruct.js';
 
@@ -262,14 +264,61 @@ export interface Escrow {
   readonly reader: Reader;
 }
 
-/** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
-export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
+/** The unconditional snapshot views — status booleans + floor + the four ids — read in one batch. */
+const SNAPSHOT_VIEWS: readonly string[] = [
+  'floorPriceMist', 'isRetired', 'isOccupied', 'isDemand', 'isDescending',
+  'tenureExpiryMs', 'activeUsufructCapId', 'governanceCapId', 'earningsInboxId', 'feeInboxId',
+];
+
+/** Derive the status from the snapshot booleans. */
+function statusOf(rec: Record<string, unknown>): EscrowStatus {
+  return (rec['isRetired'] as boolean)
+    ? 'retired'
+    : (rec['isOccupied'] as boolean)
+      ? 'occupied'
+      : (rec['isDemand'] as boolean)
+        ? 'demand'
+        : (rec['isDescending'] as boolean)
+          ? 'descent'
+          : 'idle';
+}
+
+/** The state-conditional views valid for `status` (an aborting view would fail the batch). */
+function conditionalViews(status: EscrowStatus): string[] {
+  const rented = status === 'occupied' || status === 'demand';
+  const challenged = status === 'demand';
+  return [
+    ...(rented ? ['activeUsufructuaryAddr'] : []),
+    ...(challenged ? ['pendingUsufructCapId', 'pendingUsufructuaryAddr', 'handoverExpiryMs'] : []),
+  ];
+}
+
+/** Everything `createEscrow` resolves — supplied by `createEscrowMany` to skip per-escrow IO. */
+export interface ResolvedEscrow {
+  readonly typeArguments: [string, string];
+  readonly t: Ms;
+  readonly b1: Record<string, unknown>;
+  readonly b2: Record<string, unknown>;
+  readonly role: RoleResolution;
+  readonly coin: CoinInfo;
+}
+
+/** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched.
+ *  `pre` (from `createEscrowMany`) supplies the resolved reads to skip all per-escrow IO. */
+export async function createEscrow(
+  ctx: HandleCtx,
+  idStr: string,
+  at?: When,
+  pre?: ResolvedEscrow,
+): Promise<Escrow> {
   const { client, packageId, account, defaultExecutor, assetSchema, retry } = ctx;
   const owner = account; // identity for role resolution + the build-time sender
   const escrowId = toId<'Escrow'>(idStr);
 
   // Type args come from the object's type string — no decode, no asset schema.
-  const [[assetType, coinType], t] = await Promise.all([fetchTypeArgs(client, escrowId), resolveWhen(client, at)]);
+  const [[assetType, coinType], t] = pre
+    ? [pre.typeArguments, pre.t]
+    : await Promise.all([fetchTypeArgs(client, escrowId), resolveWhen(client, at)]);
 
   const kernelReader = createReader(client, {
     packageId,
@@ -283,13 +332,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   // One batched simulation for the unconditional snapshot (+ status booleans) —
   // every view evaluated against a single chain state, coherent at `t`.
-  const b1 = await reader.batch(
-    [
-      'floorPriceMist', 'isRetired', 'isOccupied', 'isDemand', 'isDescending',
-      'tenureExpiryMs', 'activeUsufructCapId', 'governanceCapId', 'earningsInboxId', 'feeInboxId',
-    ],
-    { t },
-  );
+  const b1 = pre?.b1 ?? (await reader.batch(SNAPSHOT_VIEWS, { t }));
   const v = <T>(k: string): T => b1[k] as T;
   const floorMist = v<Mist>('floorPriceMist');
   const expiryMs = v<Ms | null>('tenureExpiryMs');
@@ -297,15 +340,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   const govCapId = v<string>('governanceCapId');
   const inboxId = v<string>('earningsInboxId');
   const feeInboxId = v<string>('feeInboxId');
-  const status: EscrowStatus = v<boolean>('isRetired')
-    ? 'retired'
-    : v<boolean>('isOccupied')
-      ? 'occupied'
-      : v<boolean>('isDemand')
-        ? 'demand'
-        : v<boolean>('isDescending')
-          ? 'descent'
-          : 'idle';
+  const status: EscrowStatus = statusOf(b1);
 
   // Conditional views — pending challenger + handover only exist in `demand`, the
   // active usufructuary addr only when rented. Batch exactly the views valid now
@@ -313,13 +348,10 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // cap's `state()`, object-centric, not here.
   const rented = status === 'occupied' || status === 'demand';
   const challenged = status === 'demand';
-  const condNames = [
-    ...(rented ? ['activeUsufructuaryAddr'] : []),
-    ...(challenged ? ['pendingUsufructCapId', 'pendingUsufructuaryAddr', 'handoverExpiryMs'] : []),
-  ];
+  const condNames = conditionalViews(status);
   const [role, b2] = await Promise.all([
-    resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
-    condNames.length ? reader.batch(condNames, { t }) : Promise.resolve({} as Record<string, unknown>),
+    pre?.role ?? resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
+    pre?.b2 ?? (condNames.length ? reader.batch(condNames, { t }) : Promise.resolve({} as Record<string, unknown>)),
   ]);
   const activeAddr = rented ? ((b2['activeUsufructuaryAddr'] as string | null) ?? null) : null;
   const pendingCapId = challenged ? ((b2['pendingUsufructCapId'] as string | null) ?? null) : null;
@@ -328,7 +360,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
 
   // Real decimals/symbol from CoinMetadata (cached) — assuming 9 renders any
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
-  const coin = await resolveCoinInfo(client, coinType);
+  const coin = pre?.coin ?? (await resolveCoinInfo(client, coinType));
   const typeArguments: [string, string] = [assetType, coinType];
   const applyPending = (): Plan<{ digest: string }> =>
     digestPlan(
@@ -649,4 +681,95 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     next,
     reader,
   };
+}
+
+/**
+ * Resolve MANY escrow handles in a few round-trips instead of one set per escrow.
+ * The cross-escrow twin of a single `u.escrow(id)`: one `getObjects` for all type
+ * args, two `runSpecsMulti` rounds (the snapshot, then each escrow's conditional
+ * views interleaved into one sim), role deduped to 3 `ownedIds` for the whole set,
+ * coin metadata fetched once per coin type. Each handle is then assembled offline
+ * from the resolved reads (no further IO). Per-escrow snapshots stay coherent.
+ */
+export async function createEscrowMany(ctx: HandleCtx, idStrs: string[], at?: When): Promise<Escrow[]> {
+  if (idStrs.length === 0) return [];
+  const { client, packageId, account } = ctx;
+
+  // 1. Type args for all escrows (one getObjects) + the chain clock (once).
+  const [objsRes, t] = await Promise.all([
+    client.core.getObjects({ objectIds: idStrs }),
+    resolveWhen(client, at),
+  ]);
+  const typeArgs: [string, string][] = objsRes.objects.map((o) => {
+    if (o instanceof Error) throw o;
+    return escrowTypeArgs(o.type);
+  });
+  const ctxFor = (i: number): ReadCtx => ({
+    packageId,
+    escrowId: toId<'Escrow'>(idStrs[i]!),
+    typeArguments: typeArgs[i]!,
+    nowMs: t,
+  });
+
+  // 2. Round 1 — the unconditional snapshot for every escrow, interleaved into chunked sims.
+  const snapSpecs = SNAPSHOT_VIEWS.map((n) => SPEC_BY_NAME.get(n)!);
+  const r1 = await runSpecsMulti(client, idStrs.map((_, i) => ({ ctx: ctxFor(i), specs: snapSpecs })));
+  const b1s = idStrs.map((_, i) => Object.fromEntries(r1.get(i)!));
+  const statuses = b1s.map(statusOf);
+
+  // 3. Round 2 — each escrow's conditional views, gated by its own status.
+  const condJobs = idStrs
+    .map((_, i) => ({ i, names: conditionalViews(statuses[i]!) }))
+    .filter((j) => j.names.length > 0);
+  const b2s: Record<string, unknown>[] = idStrs.map(() => ({}));
+  if (condJobs.length) {
+    const r2 = await runSpecsMulti(
+      client,
+      condJobs.map((j) => ({ ctx: ctxFor(j.i), specs: j.names.map((n) => SPEC_BY_NAME.get(n)!) })),
+    );
+    condJobs.forEach((j, k) => {
+      b2s[j.i] = Object.fromEntries(r2.get(k)!);
+    });
+  }
+
+  // 4. Role — deduped: the owner's caps/govs/inboxes fetched once for the whole set.
+  const empty = new Set<string>();
+  const [usufructCaps, govCaps, inboxes] = account
+    ? await Promise.all([
+        ownedIds(client, account, `${packageId}::usufruct_cap::UsufructCap`),
+        ownedIds(client, account, `${packageId}::governance_cap::GovernanceCap`),
+        ownedIds(client, account, `${packageId}::earnings_inbox::EarningsInbox`),
+      ])
+    : [empty, empty, empty];
+  const roleFor = (b1: Record<string, unknown>): RoleResolution => {
+    if (account == null) return { capId: null, governs: false, holdsEarnings: false };
+    const activeCapId = b1['activeUsufructCapId'] as string | null;
+    return {
+      capId: activeCapId != null && usufructCaps.has(activeCapId) ? activeCapId : null,
+      governs: govCaps.has(b1['governanceCapId'] as string),
+      holdsEarnings: inboxes.has(b1['earningsInboxId'] as string),
+    };
+  };
+
+  // 5. Coin metadata — once per distinct coin type.
+  const coinByType = new Map<string, CoinInfo>();
+  await Promise.all(
+    [...new Set(typeArgs.map(([, c]) => c))].map(async (c) =>
+      coinByType.set(c, await resolveCoinInfo(client, c)),
+    ),
+  );
+
+  // 6. Assemble each handle offline from the resolved reads (no further IO).
+  return Promise.all(
+    idStrs.map((idStr, i) =>
+      createEscrow(ctx, idStr, at, {
+        typeArguments: typeArgs[i]!,
+        t,
+        b1: b1s[i]!,
+        b2: b2s[i]!,
+        role: roleFor(b1s[i]!),
+        coin: coinByType.get(typeArgs[i]![1])!,
+      }),
+    ),
+  );
 }

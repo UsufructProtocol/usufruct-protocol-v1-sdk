@@ -1,16 +1,12 @@
 /**
- * Read-batching benchmark — counts network round-trips per handle read.
+ * Cross-escrow read benchmark — round-trips to resolve M escrow handles.
  *
- * Wraps the client so every `client.core.simulateTransaction` / `getObject` /
- * `listOwnedObjects` is counted, then measures two hot reads:
- *   • `u.escrow(id)`   — resolving an (occupied) escrow handle
- *   • `cap.state()`    — resolving the active seat
+ * Counts client.core.simulateTransaction / getObject / getObjects /
+ * listOwnedObjects, then resolves the SAME M escrows two ways:
+ *   • loop:     for (id of ids) await u.escrow(id)   — one set of reads per escrow
+ *   • batched:  await u.escrows(ids)                 — interleaved, deduped
  *
- * Run the SAME script before and after the batching refactor to compare. The
- * `simulateTransaction` count is the metric (each view read = one sim today).
- * `retry: false` so counts are logical reads, not retry inflation.
- *
- * Run: `npm run bench:reads`.
+ * `retry: false` so counts are logical reads. Run: `npm run bench:reads`.
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
@@ -27,20 +23,20 @@ const DUMMY = coinTag({ type: `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`, decim
 interface Counts {
   simulateTransaction: number;
   getObject: number;
+  getObjects: number;
   listOwnedObjects: number;
 }
+const zero = (): Counts => ({ simulateTransaction: 0, getObject: 0, getObjects: 0, listOwnedObjects: 0 });
 
 /** A client whose `core` calls are counted by kind. */
 function counting(client: ClientWithCoreApi): { client: ClientWithCoreApi; counts: Counts; reset: () => void } {
-  const counts: Counts = { simulateTransaction: 0, getObject: 0, listOwnedObjects: 0 };
+  const counts = zero();
   const core = new Proxy(client.core as object, {
     get(target, prop, recv) {
       const orig = Reflect.get(target, prop, recv);
       if (typeof orig !== 'function') return orig;
       return (...args: unknown[]) => {
-        if (prop === 'simulateTransaction') counts.simulateTransaction++;
-        else if (prop === 'getObject') counts.getObject++;
-        else if (prop === 'listOwnedObjects') counts.listOwnedObjects++;
+        if (prop in counts) (counts as Record<string, number>)[prop as string]++;
         return (orig as (...a: unknown[]) => unknown).apply(target, args);
       };
     },
@@ -48,81 +44,83 @@ function counting(client: ClientWithCoreApi): { client: ClientWithCoreApi; count
   const wrapped = new Proxy(client, {
     get: (target, prop, recv) => (prop === 'core' ? core : Reflect.get(target, prop, recv)),
   });
-  return {
-    client: wrapped as ClientWithCoreApi,
-    counts,
-    reset: () => {
-      counts.simulateTransaction = 0;
-      counts.getObject = 0;
-      counts.listOwnedObjects = 0;
-    },
-  };
+  return { client: wrapped as ClientWithCoreApi, counts, reset: () => Object.assign(counts, zero()) };
 }
 
 const fmt = (c: Counts) =>
-  `simulateTransaction=${c.simulateTransaction}  getObject=${c.getObject}  listOwnedObjects=${c.listOwnedObjects}`;
+  `simulateTransaction=${c.simulateTransaction}  getObject=${c.getObject}  getObjects=${c.getObjects}  listOwnedObjects=${c.listOwnedObjects}`;
 
 const ALICE = loadSigner();
 const BOB = Ed25519Keypair.generate();
+const MARKET = {
+  restPrice: DUMMY(0.01),
+  tenure: '180s',
+  multiTenure: false,
+  creditShape: 'linear',
+  auctionShape: 'smoothstep',
+  descent: '10s',
+  handover: '5s',
+  escalation: { fixed: DUMMY(0.001) },
+  retireCommitment: 'immediate',
+  ensembleCommitment: 'immediate',
+} as const;
 
-async function setup(setupClient: ClientWithCoreApi): Promise<{ escrowId: string; capId: string }> {
-  // mint Alice an asset + fund Bob (gas + DUMMY)
+const N = 3;
+
+async function setup(c: ClientWithCoreApi): Promise<string[]> {
+  // mint Alice N assets + fund Bob (gas + DUMMY)
   const tx = new Transaction();
-  const sword = tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` });
-  tx.transferObjects([sword], ALICE.toSuiAddress());
-  tx.transferObjects([tx.splitCoins(tx.gas, [120_000_000n])[0]!], BOB.toSuiAddress());
+  const assets = Array.from({ length: N }, () => tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` }));
+  tx.transferObjects(assets, ALICE.toSuiAddress());
+  tx.transferObjects([tx.splitCoins(tx.gas, [50_000_000n])[0]!], BOB.toSuiAddress());
   tx.transferObjects(
     [tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`, arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000_000_000n)] })],
     BOB.toSuiAddress(),
   );
-  const assetId = createdId(await send(setupClient, tx, ALICE), '::dummy_asset::DummyAsset');
+  const res = await send(c, tx, ALICE);
+  const assetIds = res
+    .effects!.changedObjects!.filter(
+      (o) => o.idOperation === 'Created' && res.objectTypes?.[o.objectId]?.includes('::dummy_asset::DummyAsset'),
+    )
+    .map((o) => o.objectId);
 
-  const alice = usufruct({ network: 'testnet', client: setupClient, signer: ALICE });
-  const { escrow } = await alice
-    .integrate({
-      asset: assetId,
-      coin: DUMMY,
-      market: {
-        restPrice: DUMMY(0.01),
-        tenure: '120s',
-        multiTenure: false,
-        creditShape: 'linear',
-        auctionShape: 'smoothstep',
-        descent: '10s',
-        handover: '5s',
-        escalation: { fixed: DUMMY(0.001) },
-        retireCommitment: 'immediate',
-        ensembleCommitment: 'immediate',
-      },
-    })
-    .send();
-
-  // rent so the escrow is OCCUPIED and a cap is active (exercises both batches)
-  const bob = usufruct({ network: 'testnet', client: setupClient, signer: BOB });
-  const cap = await (await bob.escrow(escrow.id)).rent({ tenures: 1 }).send();
-  return { escrowId: escrow.id, capId: cap.id };
+  const alice = usufruct({ network: 'testnet', client: c, signer: ALICE });
+  const ids: string[] = [];
+  for (const asset of assetIds) {
+    const { escrow } = await alice.integrate({ asset, coin: DUMMY, market: MARKET }).send();
+    ids.push(escrow.id);
+  }
+  // rent the FIRST so the set is mixed: 1 occupied + (N-1) idle.
+  const bob = usufruct({ network: 'testnet', client: c, signer: BOB });
+  await (await bob.escrow(ids[0]!)).rent({ tenures: 1 }).send();
+  return ids;
 }
 
 async function main() {
-  const { escrowId, capId } = await setup(rateLimited(makeClient()));
+  const ids = await setup(rateLimited(makeClient()));
 
-  // measured client: counted, retry OFF (logical reads only)
   const { client, counts, reset } = counting(makeClient());
   const bob = usufruct({ network: 'testnet', client, signer: BOB, retry: false });
 
-  console.log('Read round-trips (lower is better):\n');
+  console.log(`Resolving ${ids.length} escrows (1 occupied, ${ids.length - 1} idle) — round-trips, lower is better:\n`);
 
   reset();
-  const escrow = await bob.escrow(escrowId);
-  console.log(`u.escrow(id)   [status=${escrow.status}]  → ${fmt(counts)}`);
+  const loop = [];
+  for (const id of ids) loop.push(await bob.escrow(id));
+  console.log(`loop  for(id) u.escrow(id)  → ${fmt(counts)}`);
 
-  const capH = await bob.usufructCap(capId);
   reset();
-  const seat = await capH.state();
-  console.log(`cap.state()    [role=${seat.role}]        → ${fmt(counts)}`);
+  const batched = await bob.escrows(ids);
+  console.log(`batch u.escrows(ids)        → ${fmt(counts)}`);
 
-  // spot-check a couple of values render (behavior must be unchanged across the refactor)
-  console.log(`\nspot-check: escrow.floorPrice=${escrow.floorPrice}  seat.stake=${seat.stake ?? 'null'}`);
+  // spot-check: the two paths resolve identical fields per escrow.
+  const same = ids.every((_, i) => {
+    const a = loop[i]!;
+    const b = batched[i]!;
+    return a.status === b.status && `${a.floorPrice}` === `${b.floorPrice}` && a.activeUsufructCapId === b.activeUsufructCapId && a.canBorrow === b.canBorrow;
+  });
+  console.log(`\nspot-check (status/floor/activeCap/canBorrow match loop↔batch): ${same ? 'OK ✓' : 'MISMATCH ✗'}`);
+  console.log(`statuses: ${batched.map((e) => e.status).join(', ')}`);
 }
 
 main()

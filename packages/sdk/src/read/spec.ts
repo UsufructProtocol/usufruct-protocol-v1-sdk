@@ -431,6 +431,60 @@ export async function runSpecs(
   return out;
 }
 
+/**
+ * Cross-escrow batch: each job is one escrow's `ctx` plus the specs to read for
+ * it. All jobs' calls are interleaved into `chunk`-sized simulations (a spec
+ * never straddles a batch), then demuxed back per job — `spec.decode(rets, ctx)`
+ * runs with *that job's* ctx. Returns `jobIndex → (specName → decoded)`.
+ *
+ * Caller's contract (as for `runSpecs`): only include specs valid in each
+ * escrow's current state — an aborting view fails the whole simulation.
+ */
+export async function runSpecsMulti(
+  client: ClientWithCoreApi,
+  jobs: ReadonlyArray<{ ctx: ReadCtx; specs: readonly ViewSpec[] }>,
+  chunk = 40,
+): Promise<Map<number, Map<string, unknown>>> {
+  // Flatten to a stream of (jobIndex, spec, ctx), preserving order.
+  const units: Array<{ job: number; spec: ViewSpec; ctx: ReadCtx }> = [];
+  jobs.forEach((j, job) => j.specs.forEach((spec) => units.push({ job, spec, ctx: j.ctx })));
+
+  const out = new Map<number, Map<string, unknown>>();
+  jobs.forEach((_, job) => out.set(job, new Map()));
+
+  let i = 0;
+  while (i < units.length) {
+    const batch: typeof units = [];
+    let calls = 0;
+    while (i < units.length && (batch.length === 0 || calls + units[i]!.spec.calls.length <= chunk)) {
+      batch.push(units[i]!);
+      calls += units[i]!.spec.calls.length;
+      i++;
+    }
+    const tx = new Transaction();
+    tx.setSenderIfNotSet(ZERO_SENDER);
+    for (const u of batch) for (const c of u.spec.calls) c(tx, u.ctx);
+    const sim = await client.core.simulateTransaction({
+      transaction: tx,
+      checksEnabled: false,
+      include: { commandResults: true },
+    });
+    if (sim.$kind !== 'Transaction') {
+      throw new Error(
+        `read multi-batch failed: ${sim.FailedTransaction?.status.error?.message ?? 'unknown'}`,
+      );
+    }
+    const crs = sim.commandResults ?? [];
+    let cmd = 0;
+    for (const u of batch) {
+      const { rets, next } = flattenReturns(crs, cmd, u.spec.calls.length);
+      cmd = next;
+      out.get(u.job)!.set(u.spec.name, u.spec.decode(rets, u.ctx));
+    }
+  }
+  return out;
+}
+
 // ── comparison helpers (shared with the parity/golden oracle) ──
 
 /** Key-order-insensitive, bigint-safe canonical form. */
