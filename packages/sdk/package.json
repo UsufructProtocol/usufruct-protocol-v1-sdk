@@ -21,6 +21,7 @@
   "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc -b",
+    "prepack": "tsc -b",
     "codegen": "sui-ts-codegen generate"
   },
   "keywords": ["sui", "usufruct", "sdk"],

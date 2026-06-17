@@ -18,7 +18,8 @@
   },
   "publishConfig": { "access": "public" },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepack": "tsc -b"
   },
   "keywords": ["sui", "usufruct", "sdk", "simulator"],
   "author": "Antonio Jiménez <build@0xkurious.xyz>",
