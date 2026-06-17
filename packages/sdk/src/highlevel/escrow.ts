@@ -23,7 +23,7 @@ import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
-import { createdIdByType, execute, signerExecutor } from './send.js';
+import { createdIdByType, execute } from './send.js';
 import { makePlan, type Plan } from './plan.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
@@ -279,8 +279,8 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
-  const { client, packageId, signer, assetSchema, retry } = ctx;
-  const owner = signer?.toSuiAddress() ?? null;
+  const { client, packageId, signer, account, defaultExecutor, assetSchema, retry } = ctx;
+  const owner = account; // identity for role resolution + the build-time sender
   const escrowId = toId<'Escrow'>(idStr);
 
   // Type args come from the object's type string — no decode, no asset schema.
@@ -407,8 +407,8 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     const paidMist = args.pay ? args.pay.mist : floorMist * count; // floor snapshot @ fetch `t`
 
     return makePlan<UsufructCap>({
-      // default execution = the handle's signer (today's path); null ⇒ read-only.
-      defaultExecutor: () => (signer == null ? null : signerExecutor(client, signer)),
+      // default execution = the handle's configured executor; null ⇒ read-only.
+      defaultExecutor: () => defaultExecutor,
 
       // phase 1 — build: source the payment from `sender`, mint, keep the cap.
       build: async (tx, sender) => {

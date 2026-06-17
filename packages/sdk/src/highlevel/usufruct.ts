@@ -33,8 +33,13 @@ import { NotConnected, mapAbort } from './errors.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { retryingClient, retryingGraphqlClient, retryingReader, type RetryOptions } from './retry.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import { createdIdByType, execute } from './send.js';
+import { createdIdByType, execute, signerExecutor, type Executor } from './send.js';
 import type { CoinTag } from './value.js';
+
+/** Tell a `Signer` from an `Executor` (the latter has `execute`). */
+function isExecutor(x: Signer | Executor): x is Executor {
+  return typeof (x as Executor).execute === 'function';
+}
 
 export type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
 
@@ -53,8 +58,20 @@ export interface UsufructConfig {
   readonly network?: Network;
   /** Bring your own transport (gRPC / JSON-RPC). Overrides `network`. */
   readonly client?: ClientWithCoreApi;
-  /** Required only for writes; reads need none. */
+  /**
+   * Sugar for `account` + `executor`: a held keypair both identifies you and
+   * signs. Required only when you want the SDK to sign; reads need none.
+   */
   readonly signer?: Signer;
+  /**
+   * Identity only — *who I am* (an address). Lets reads resolve roles and writes
+   * build with the right sender, without holding keys (a browser wallet exposes
+   * its address but signs remotely). With `account` but no `executor`/`signer`,
+   * `.send()` requires an explicit `Executor`.
+   */
+  readonly account?: string;
+  /** Default signing for `.send()`. A wallet / Ledger / sponsor adapter. Overridable per `.send(executor)`. */
+  readonly executor?: Executor;
   /** Defaults to the network's deployed package id. */
   readonly packageId?: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
@@ -79,10 +96,10 @@ export interface Primitives {
 }
 
 export interface Usufruct {
-  /** The signer's address, or `null` when read-only. */
+  /** My address (identity), or `null` when anonymous. */
   readonly address: string | null;
-  /** Wire a wallet/keypair after construction (wallet-standard adapter). */
-  connect(signer: Signer): void;
+  /** Wire identity + signing after construction — a held `Signer`, or an `Executor` (wallet/Ledger/sponsor). */
+  connect(signerOrExecutor: Signer | Executor): void;
 
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
@@ -202,7 +219,15 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const packageId = config.packageId ?? TESTNET.packageId;
   const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
   const assetSchema = config.assetSchema;
+  // Identity (account) and signing (executor) are separate axes; `signer` is sugar
+  // for both. All three are mutable via `connect`. `ctx()` resolves them live.
   let signer: Signer | null = config.signer ?? null;
+  let executor: Executor | null = config.executor ?? null;
+  let account: string | null = config.account ?? null;
+  const resolveAccount = (): string | null =>
+    account ?? executor?.address ?? signer?.toSuiAddress() ?? null;
+  const resolveExecutor = (): Executor | null =>
+    executor ?? (signer ? signerExecutor(client, signer) : null);
 
   const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
 
@@ -240,6 +265,8 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     client,
     packageId,
     feeRefId,
+    account: resolveAccount(),
+    defaultExecutor: resolveExecutor(),
     signer,
     ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
@@ -249,10 +276,17 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
   return {
     get address() {
-      return signer?.toSuiAddress() ?? null;
+      return resolveAccount();
     },
     connect(next) {
-      signer = next;
+      if (isExecutor(next)) {
+        executor = next;
+        account = next.address;
+      } else {
+        signer = next;
+        executor = null; // a fresh keypair supersedes a prior executor
+        account = next.toSuiAddress();
+      }
     },
 
     escrow(idStr, opts) {
