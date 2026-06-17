@@ -80,19 +80,24 @@ opt-in mirror, golden-tested against this core.
 ## Write — make it different
 
 ```ts
-await escrow.rent({ tenures: 1 });                  // pay the floor; `pay` to overpay → stake
-await usufructCap.borrow((asset, tx) => { /* your PTB; return is appended */ });
-await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) });
-await earningsInbox.collect();                      // 90% governor cut, partitioned by coin
-await governanceCap.transfer(treasury);             // move the object → move the role
+await escrow.rent({ tenures: 1 }).send();                  // pay the floor; `pay` to overpay → stake
+await usufructCap.borrow((asset, tx) => { /* your PTB; return is appended */ }).send();
+await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+await earningsInbox.collect().send();                      // 90% governor cut, partitioned by coin
+await governanceCap.transfer(treasury).send();             // move the object → move the role
 ```
 
 Each write lives on the object that authorizes it. `transfer` is first-class on
 every bearer — moving the object moves the role.
 
-`borrow` is the one write that hands you the asset mid-PTB to compose with. It is
-variadic — `cap.borrow(a, b, c)` composes recipes in order — and `cap.borrow.into`
-drops the bracket into a PTB you drive. See
+Every write is a **`Plan`**: `.send()` builds, signs, and decodes in one call,
+while `.build(tx, sender)` lets you drive the transaction yourself (compose many
+writes, mix raw commands, sign with a wallet/Ledger/sponsor). Nothing touches the
+chain until `.send()` — reads read, writes wait. See
+[write paths](./write-paths.md) for `send` vs `build` and when to use each.
+
+`borrow` is the write that hands you the asset mid-PTB to compose with — variadic
+(`cap.borrow(a, b, c)` composes recipes in order), and a `Plan` like the rest. See
 [borrow — composing code around the rented asset](./borrow-composition.md).
 
 ## Inspect — what happened (pull)
