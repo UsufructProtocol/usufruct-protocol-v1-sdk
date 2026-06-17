@@ -98,7 +98,7 @@ async function main() {
   check('floorPrice == rest price', sword.floorPrice.mist === REST_PRICE, `${sword.floorPrice}`);
 
   step('3. NEW API — Bob rents 2 tenures (pay defaults to floor×2)');
-  const cap = await sword.rent({ tenures: 2 });
+  const cap = await sword.rent({ tenures: 2 }).send();
   check('cap minted + received', cap.id.length === 66, cap.id);
   check('receipt.paid == floor×2', cap.receipt?.paid.mist === REST_PRICE * 2n, `${cap.receipt?.paid}`);
   check(
@@ -114,7 +114,7 @@ async function main() {
       arguments: [asset],
     });
     tx.transferObjects([coupon], bobAddr);
-  });
+  }).send();
   check('borrow returned the asset (one PTB)', returned === true, digest);
 
   step('5. NEW API — role re-resolves: Bob now holds the active cap');
@@ -127,7 +127,7 @@ async function main() {
   const escrowB = await integrate();
   const swordB = await u.escrow(escrowB);
   const overpayMist = REST_PRICE * 2n + 500n;
-  const capB = await swordB.rent({ tenures: 2, pay: price(mist(overpayMist), DUMMY) });
+  const capB = await swordB.rent({ tenures: 2, pay: price(mist(overpayMist), DUMMY) }).send();
   check('overpay receipt.paid == requested', capB.receipt?.paid.mist === overpayMist, `${capB.receipt?.paid}`);
   const swordB2 = await u.escrow(escrowB);
   const stake = await swordB2.reader.activeStakeBalanceMist();

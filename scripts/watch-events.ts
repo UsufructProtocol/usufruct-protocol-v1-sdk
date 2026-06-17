@@ -73,11 +73,11 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}`);
 
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }));
+  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send());
   console.log('② Bob rented — occupied\n');
 
   const handle = await withRetry(() => a.escrow(escrow.id));
@@ -97,7 +97,7 @@ async function main() {
 
   // ④ CHALLENGE — Carol bids
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }));
+  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send());
   console.log('④ Carol bid on the occupied escrow\n');
 
   // ⑤ REACT — both promises resolve; keeper B matched on the FIELD VALUE
@@ -112,7 +112,7 @@ async function main() {
   console.log('   acting: settling the handover…');
   const challenged = await withRetry(() => a.escrow(escrow.id));
   await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
-  await challenged.applyPendingTransitionStates();
+  await challenged.applyPendingTransitionStates().send();
   const after = await withRetry(() => a.escrow(escrow.id));
   console.log(`   settled — status=${after.status}`);
   console.log(

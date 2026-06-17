@@ -67,10 +67,10 @@ async function main(): Promise<void> {
     asset: await mintAsset(),
     coin: DUMMY,
     market: market(0.01),
-  });
+  }).send();
   const b = await gov.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
     earningsInbox: earningsInbox.inboxId,
-  });
+  }).send();
   console.log(`  A=${a.id.slice(0, 10)}…  B=${b.id.slice(0, 10)}…  cap=${gov.capId.slice(0, 10)}…`);
 
   // watch wiring
@@ -119,27 +119,27 @@ async function main(): Promise<void> {
     check('both initials arrived (A and B), tagged by id', true);
 
     step('③ mutate A (updateMarket) — expect one update for A');
-    await gov.updateMarket(a.id, { restPrice: DUMMY(0.02) });
+    await gov.updateMarket(a.id, { restPrice: DUMMY(0.02) }).send();
     const ua = await nextUpdate((t) => t.id === a.id);
     check('A change pushed over the firehose', ua.id === a.id);
 
     step('④ add C in flight — expect C initial');
     const c = await gov.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
       earningsInbox: earningsInbox.inboxId,
-    });
+    }).send();
     watch.add(c.id);
     const ic = await nextUpdate((t) => t.id === c.id);
     check('added escrow C emits its initial', ic.id === c.id);
 
     step('⑤ mutate B — expect an update for B');
-    await gov.updateMarket(b.id, { restPrice: DUMMY(0.02) });
+    await gov.updateMarket(b.id, { restPrice: DUMMY(0.02) }).send();
     const ub = await nextUpdate((t) => t.id === b.id);
     check('B change pushed', ub.id === b.id);
 
     step('⑥ remove A, mutate A — expect silence for A');
     watch.remove(a.id);
     const aBefore = ticks.filter((t) => t.id === a.id).length;
-    await gov.updateMarket(a.id, { restPrice: DUMMY(0.03) });
+    await gov.updateMarket(a.id, { restPrice: DUMMY(0.03) }).send();
     await sleep(10_000);
     const aAfter = ticks.filter((t) => t.id === a.id).length;
     check('no A update after remove()', aAfter === aBefore, `${aBefore}→${aAfter}`);
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     step('⑦ stop — expect no further callbacks');
     watch.stop();
     const total = ticks.length;
-    await gov.updateMarket(b.id, { restPrice: DUMMY(0.04) });
+    await gov.updateMarket(b.id, { restPrice: DUMMY(0.04) }).send();
     await sleep(8_000);
     check('no callbacks after stop()', ticks.length === total, `${total}→${ticks.length}`);
   } finally {

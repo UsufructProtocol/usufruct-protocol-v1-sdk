@@ -44,13 +44,13 @@ async function main() {
     retireCommitment: 'immediate', // I can pull the asset anytime
     ensembleCommitment: 'immediate', // I can change the market anytime (for now)
   };
-  const { escrow, governanceCap } = await u.integrate({ asset: swordId, coin: DUMMY, market });
+  const { escrow, governanceCap } = await u.integrate({ asset: swordId, coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id} — floor ${escrow.floorPrice}, cap ${governanceCap.capId}\n`);
 
   // ════════════ ② ADJUST — bump ONLY the rest price ════════════
   // No ceremony: pass just what changes. The rest of the market is read from the
   // chain and preserved — so `auctionShape: 'smoothstep'` survives untouched.
-  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) });
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) }).send();
   const [floor, shape] = await Promise.all([
     escrow.reader.restPrice().then((r) => (r.kind === 'fixed' ? r.priceMist : 0n)),
     escrow.reader.auctionShape().then((s) => s.kind),
@@ -58,11 +58,11 @@ async function main() {
   console.log(`② adjusted — floor now ${floor} mist; auctionShape preserved: ${shape}\n`);
 
   // ════════════ ③ COMMIT — bind my own hands so renters can trust the market ════════════
-  await governanceCap.extendEnsembleCommitment(escrow, { deferredFor: '7d' });
+  await governanceCap.extendEnsembleCommitment(escrow, { deferredFor: '7d' }).send();
   // now the market is locked for 7 days — a further price change is rejected:
   let locked = false;
   try {
-    await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.05) });
+    await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.05) }).send();
   } catch (e) {
     locked = e instanceof CommittedEnsemble;
   }
@@ -70,11 +70,11 @@ async function main() {
 
   // ════════════ ④ RETIRE — pull the asset out of the market ════════════
   // (retireCommitment was 'immediate', so this is allowed even while the ensemble is locked)
-  await governanceCap.retire(escrow);
+  await governanceCap.retire(escrow).send();
   console.log(`④ retired ${escrow.id}\n`);
 
   // ════════════ ⑤ CLAIM — take the asset back ════════════
-  const { assetId } = await governanceCap.claim(escrow);
+  const { assetId } = await governanceCap.claim(escrow).send();
   const owner = (await client.core.getObject({ objectId: assetId })).object.owner;
   console.log(`⑤ claimed — asset ${assetId} back to ${JSON.stringify(owner)}`);
 }

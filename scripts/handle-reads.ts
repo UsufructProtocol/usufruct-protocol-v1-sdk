@@ -60,10 +60,10 @@ async function main(): Promise<void> {
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
 
   step('① integrate + rent — ask the ACTIVE cap about itself (cap.state())');
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   const bob = await newRenter();
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
+  await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
 
   const occ = await a.escrow(escrow.id);
   const activeCap = await a.usufructCap(occ.activeUsufructCapId!); // read-only resolve, no ownership
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
   step('② challenge — the PENDING cap routes to pending, active-only fields gate to null');
   const carol = await newRenter();
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await (await uc.escrow(escrow.id)).rent({ tenures: 1 }); // bid on the occupied escrow → demand
+  await (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send(); // bid on the occupied escrow → demand
   const demand = await a.escrow(escrow.id);
   const pendingCap = await a.usufructCap(demand.pendingUsufructCapId!);
   const pending = await pendingCap.state();

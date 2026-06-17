@@ -64,19 +64,19 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}\n`);
 
   // ════════════ ② RENT — Bob takes it ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
   console.log(`② Bob rented — cap ${bobCap.id}, paid ${bobCap.receipt!.paid}\n`);
 
   // ════════════ ③ CHALLENGE — Carol rents the OCCUPIED escrow (the bid) ════════════
   const uc = usufruct({ network: 'testnet', client, signer: carol });
   const occupied = await uc.escrow(escrow.id);
   console.log(`③ Carol sees status=${occupied.status}, ascending floor=${occupied.floorPrice} → she bids`);
-  const carolCap = await occupied.rent({ tenures: 1 }); // renting occupied = the bid
+  const carolCap = await occupied.rent({ tenures: 1 }).send(); // renting occupied = the bid
   console.log(`   Carol bid — cap ${carolCap.id}, paid ${carolCap.receipt!.paid}\n`);
 
   // ════════════ ④ READ — the always-liquid state, off the Escrow handle ════════════
@@ -89,7 +89,7 @@ async function main() {
   // ════════════ ⑤ HANDOVER — wait out Bob's window, settle ════════════
   console.log('⑤ waiting out the handover window, then settling…');
   await waitForChainTime(client, BigInt(demand.handoverExpiresAt!.getTime()));
-  await demand.applyPendingTransitionStates();
+  await demand.applyPendingTransitionStates().send();
   const after = await uc.escrow(escrow.id);
   console.log(`   status=${after.status}; active cap is now ${after.activeUsufructCapId === carolCap.id ? 'Carol' : after.activeUsufructCapId}\n`);
 

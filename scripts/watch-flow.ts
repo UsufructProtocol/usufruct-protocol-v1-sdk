@@ -75,12 +75,12 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}`);
 
   // ② RENT — Bob occupies
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }));
+  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send());
   console.log('② Bob rented — occupied\n');
 
   // ③ WATCH — the keeper starts waiting for a challenge (do NOT await yet)
@@ -91,7 +91,7 @@ async function main() {
 
   // ④ CHALLENGE — Carol bids on the occupied escrow
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }));
+  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send());
   console.log('④ Carol bid on the occupied escrow (the challenge)\n');
 
   // ⑤ REACT — the keeper's wait resolves the moment the state turns to demand
@@ -100,7 +100,7 @@ async function main() {
   console.log(`⑤ keeper reacted — status=${challenged.status}, challenger=${pendingIsCarol ? 'Carol' : challenged.pendingUsufructuaryAddr}`);
   console.log(`   acting: waiting out the handover (until ${challenged.handoverExpiresAt?.toISOString()}), then settling…`);
   await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
-  await challenged.applyPendingTransitionStates();
+  await challenged.applyPendingTransitionStates().send();
   const after = await withRetry(() => a.escrow(escrow.id));
   console.log(`   settled — status=${after.status}; active cap = ${after.activeUsufructCapId?.slice(0, 12)}…`);
   console.log(after.status === 'occupied' ? '\nALL PASS — keeper waited, reacted, settled.' : '\nUNEXPECTED');

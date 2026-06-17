@@ -68,7 +68,7 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① Alice listed ${escrow.id}`);
   console.log(`   earnings inbox (one per escrow) = ${earningsInbox.inboxId}\n`);
 
@@ -79,13 +79,13 @@ async function main() {
 
   // ════════════ ② RENT — Bob takes it; pays the stake that becomes credit ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 });
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
   console.log(`② Bob rented — paid ${bobCap.receipt!.paid}; tenure ends ${bobCap.receipt!.expiresAt.toISOString()}\n`);
 
   // ════════════ ③ EXPIRE — wait out the tenure, then settle (posts the earnings) ════════════
   console.log('③ waiting out the tenure, then settling (apply posts earnings + fee)…');
   await waitForChainTime(client, BigInt(bobCap.receipt!.expiresAt.getTime()));
-  await (await a.escrow(escrow.id)).applyPendingTransitionStates();
+  await (await a.escrow(escrow.id)).applyPendingTransitionStates().send();
   console.log(`   settled — status is now ${(await a.escrow(escrow.id)).status}\n`);
 
   // ════════════ ④ PREVIEW — the earnings delta is exactly 90% of consumed credit ════════════
@@ -101,14 +101,14 @@ async function main() {
   const bobEarnings = ub.earningsInbox(earningsInbox.inboxId);
   let refused = false;
   try {
-    await bobEarnings.collect();
+    await bobEarnings.collect().send();
   } catch {
     refused = true;
   }
   check('Bob (non-holder) cannot collect Alice’s earnings', refused);
 
   // ════════════ ⑥ COLLECT — Alice collects (she holds the inbox), by coin (§5.2) ════════════
-  const collected = await earningsInbox.collect();
+  const collected = await earningsInbox.collect().send();
   console.log(`⑥ Alice swept:`, collected.map((b) => `${b.amount}`).join(', ') || '(empty)');
   const collectedDummy = collected.find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   check('Alice collected at least this run’s earnings', collectedDummy >= expected, `${collectedDummy} mist`);
