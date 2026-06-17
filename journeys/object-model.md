@@ -236,19 +236,30 @@ escrow.feeInboxId;          // the protocol fee inbox
 escrow.activeUsufructCapId; // the current right-of-use cap (or null)
 ```
 
-Separately, it resolves **which of those the signer currently holds**, as ready
-handles (else `null`):
+And it hands you **every related object as a ready handle** — built from those ids,
+no fetch, no possession required. Ask any of them; act on any of them (a write just
+needs you to actually hold it):
 
 ```ts
-escrow.usufructCap;   // UsufructCap   — if I hold the active cap
-escrow.governanceCap; // GovernanceCap — if I hold the gov cap
-escrow.earningsInbox; // EarningsInbox — if I hold the earnings inbox
-escrow.canRent / escrow.canBorrow / escrow.canGovern; // sugar over "do I hold X here?"
+escrow.activeCap;     // UsufructCap | null — the current seat (read its state, or borrow if yours)
+escrow.pendingCap;    // UsufructCap | null — the challenger's seat
+escrow.governanceCap; // GovernanceCap      — governs(escrow), updateMarket(escrow), …
+escrow.earningsInbox; // EarningsInbox      — balance(), collect()
+escrow.feeInbox;      // ProtocolFeeInbox
 ```
 
-This keeps the UI ergonomics ("what can *I* do here?") while being honest that
-the answer is *possession*, resolved by an owned-objects lookup, not an identity
-the SDK assumes.
+**Possession is a separate, boolean axis** — "what can *I* do here?", honest that
+the answer is an owned-objects lookup, not an identity the SDK assumes:
+
+```ts
+escrow.canRent;       // I can rent (signer set, not retired)
+escrow.canBorrow;     // I hold the active UsufructCap
+escrow.canGovern;     // I hold the GovernanceCap
+escrow.holdsEarnings; // I hold the EarningsInbox
+```
+
+So handles are *always there to ask*; possession only governs whether a **write**
+on them succeeds. One model — no handle that's null just because you don't hold it.
 
 ## Reads: handle-snapshot vs reader-live
 
@@ -261,7 +272,7 @@ There are two ways to read, and they divide the labour cleanly:
 | Surface | the curated hot fields | the ~80 drift-free kernel views |
 | After a write | **stale** — re-resolve with `u.escrow(id)` | already current — just call again |
 
-The handle's getters (`escrow.status`, `escrow.floorPrice`, `escrow.accruedCredit`,
+The handle's getters (`escrow.status`, `escrow.floorPrice`, `escrow.expiresAt`,
 …) are a **coherent photograph** taken in a single fetch: every field agrees on
 the same `t`, and they're plain sync reads. That's what you want to render a view.
 But a photograph ages — after any write the getters describe the *old* state, and
@@ -298,6 +309,26 @@ semantics: nothing settles until a transaction touches the escrow.
 
 **Rule of thumb:** render from the handle snapshot; observe a write's effect, or
 reach a view the handle doesn't surface, through `escrow.reader`.
+
+### Two read tiers: the entry snapshot vs the reference handle
+
+There's one deliberate asymmetry across the handles, and it's worth naming. The
+`Escrow` is the **entry handle**: `u.escrow(id)` performs the one eager fetch, so
+its reads are **sync getters** (the photograph above). Every *other* handle —
+`UsufructCap`, `GovernanceCap`, the inboxes — is a lightweight **reference** built
+with no IO (even `escrow.activeCap` is constructed from ids already in hand), so its
+reads are **on demand**:
+
+```ts
+escrow.floorPrice;            // sync getter — the entry snapshot already fetched it
+await escrow.activeCap.state();   // async — the cap is a reference; it reads when asked
+await escrow.earningsInbox.balance();
+```
+
+Both are "ask the object." The shape differs only because one handle is already
+*materialized* and the others are *references*. Forcing symmetry would mean either
+fetching every related object up front (taxing every `u.escrow()`) or making the
+escrow lazy (losing the coherent photo) — so the split stays, by design.
 
 ## Renting: the decision is the amount, not the coin
 

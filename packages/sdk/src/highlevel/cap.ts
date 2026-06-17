@@ -20,6 +20,7 @@ import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { retryingReader } from './retry.js';
+import { subscribeEscrowVersion } from './watch.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, mapAbort } from './errors.js';
@@ -101,6 +102,17 @@ export interface UsufructCap {
   isPending(): Promise<boolean>;
   /** Has this cap been displaced (stale — burnable)? */
   isStale(): Promise<boolean>;
+  /**
+   * React to this seat live: `onState` runs with a fresh `state()` on every change
+   * of the escrow (server-push over gRPC, poll fallback), then a `stop()`. The
+   * renter's twin of `escrow.watch` — watch *your seat*, not the whole escrow.
+   */
+  watch(onState: (s: UsufructCapState) => void, opts?: { intervalMs?: number }): () => void;
+  /** Resolve once the seat satisfies `predicate` (e.g. `s => s.role === 'stale'`). */
+  waitFor(
+    predicate: (s: UsufructCapState) => boolean,
+    opts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<UsufructCapState>;
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
@@ -241,6 +253,42 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
   const isPending = (): Promise<boolean> => mkReader().usufructCapIsPending(args.capId);
   const isStale = (): Promise<boolean> => mkReader().usufructCapIsStale(args.capId);
 
+  function watch(onState: (s: UsufructCapState) => void, watchOpts?: { intervalMs?: number }): () => void {
+    return subscribeEscrowVersion(
+      ctx,
+      args.escrowId,
+      async (alive) => {
+        const s = await state();
+        if (alive()) onState(s);
+      },
+      watchOpts,
+    );
+  }
+  function waitFor(
+    predicate: (s: UsufructCapState) => boolean,
+    waitOpts?: { intervalMs?: number; timeoutMs?: number },
+  ): Promise<UsufructCapState> {
+    return new Promise<UsufructCapState>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = watch(
+        (s) => {
+          if (predicate(s)) {
+            stop();
+            if (timer) clearTimeout(timer);
+            resolve(s);
+          }
+        },
+        waitOpts?.intervalMs !== undefined ? { intervalMs: waitOpts.intervalMs } : undefined,
+      );
+      if (waitOpts?.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          stop();
+          reject(new Error(`waitFor timed out after ${waitOpts.timeoutMs}ms`));
+        }, waitOpts.timeoutMs);
+      }
+    });
+  }
+
   async function burnIfStale(): Promise<{ burned: boolean; digest: string | null }> {
     if (signer == null) throw new NotConnected('burnIfStale requires a signer (it submits a tx)');
     const reader = mkReader();
@@ -275,6 +323,8 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     isActive,
     isPending,
     isStale,
+    watch,
+    waitFor,
     borrow,
     transfer: transferOf(ctx, args.capId, 'cap'),
     burnIfStale,

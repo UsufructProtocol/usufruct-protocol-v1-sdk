@@ -106,7 +106,7 @@ async function main() {
   check('Dave now governs', (await seenBy(dave, escrow.id)).canGovern);
   check('Dave holds a GovernanceCap handle', (await seenBy(dave, escrow.id)).governanceCap != null);
   check('Alice no longer governs', !aliceAfter.canGovern);
-  check('Alice holds nothing here (fully exited)', !aliceAfter.canGovern && aliceAfter.earningsInbox == null);
+  check('Alice holds nothing here (fully exited)', !aliceAfter.canGovern && !aliceAfter.holdsEarnings);
 
   // ════════════ ⑤ RESELL THE LEASE — Bob's UsufructCap → Carol ════════════
   await bobCap.transfer(carol.toSuiAddress());

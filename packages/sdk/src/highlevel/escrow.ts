@@ -13,12 +13,13 @@ import { createReader, type Reader } from '../read/reader.js';
 import { retryingReader } from './retry.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
 import { rent as rentAction } from '../actions/rent.js';
-import { escrowEventStream, escrowVersionChanges } from '../primitives/grpc-source.js';
+import { escrowEventStream } from '../primitives/grpc-source.js';
+import { subscribeEscrowVersion } from './watch.js';
 import { createCap, type UsufructCap } from './cap.js';
 import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
-import { createInbox, type EarningsInbox } from './inbox.js';
+import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
@@ -98,17 +99,25 @@ export interface Escrow {
   /** The pending challenger's `UsufructCap` handle (for reads), or null. */
   readonly pendingCap: UsufructCap | null;
 
-  // the signer's holdings here, resolved in the same fetch (possession = role)
+  // related objects — every one a sync handle (built from the ids the escrow
+  // already names; no fetch, no possession). Ask any of them: `escrow.governanceCap
+  // .governs(escrow)`, `escrow.earningsInbox.balance()`. Write methods on them still
+  // require the signer to actually hold the object (else the tx aborts).
+  /** The escrow's `GovernanceCap` handle. */
+  readonly governanceCap: GovernanceCap;
+  /** The governor's `EarningsInbox` handle. */
+  readonly earningsInbox: EarningsInbox;
+  /** The protocol's `ProtocolFeeInbox` handle. */
+  readonly feeInbox: ProtocolFeeInbox;
+
+  // possession — which of the above objects the signer holds (possession = role).
   readonly canRent: boolean;
+  /** The signer holds the active `UsufructCap` (can borrow / write as the tenant). */
   readonly canBorrow: boolean;
+  /** The signer holds this escrow's `GovernanceCap`. */
   readonly canGovern: boolean;
-  /** The active `UsufructCap`, **if the signer holds it** (write authority; sync).
-   *  For reading the active seat regardless of possession, use `activeCap`. */
-  readonly usufructCap: UsufructCap | null;
-  /** The `GovernanceCap`, if the signer holds it (sync). */
-  readonly governanceCap: GovernanceCap | null;
-  /** The `EarningsInbox`, if the signer holds it (sync). */
-  readonly earningsInbox: EarningsInbox | null;
+  /** The signer holds this escrow's `EarningsInbox`. */
+  readonly holdsEarnings: boolean;
 
   /**
    * Acquire the right of use for `tenures`. The only decision is the **amount**:
@@ -372,19 +381,17 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return m == null ? null : price(m, coin);
   }
 
-  // Read-resolvable cap handles for the seats — built from the ids the escrow
-  // already names + its type args (no fetch, no possession). The simple seat read:
-  // `await escrow.activeCap?.state()`.
+  // Every related object as a sync handle — built from the ids the escrow already
+  // names + its type args (no fetch, no possession). Read or act on any of them;
+  // write methods still require the signer to actually hold the object. Possession
+  // is the boolean axis below (canBorrow / canGovern / holdsEarnings).
   const capHandle = (capId: string | null): UsufructCap | null =>
     capId == null ? null : createCap(ctx, { capId, escrowId: idStr, typeArguments, receipt: null });
   const activeCap = capHandle(activeCapId);
   const pendingCap = capHandle(pendingCapId);
-
-  // The signer's active cap, gated on possession (write authority) — a narrowing
-  // of `activeCap` to "if it's mine".
-  const usufructCap: UsufructCap | null = role.capId === activeCapId ? activeCap : null;
-  const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
-  const earningsInbox: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
+  const governanceCap: GovernanceCap = createGovernanceCap(ctx, govCapId);
+  const earningsInbox: EarningsInbox = createInbox(ctx, inboxId, 'earnings');
+  const feeInbox: ProtocolFeeInbox = createInbox(ctx, feeInboxId, 'fees');
 
   async function rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap> {
     if (signer == null || owner == null) {
@@ -461,66 +468,18 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return events.map(toHistoryEvent);
   }
 
+  // Re-resolve the decode-free handle on each version change (the shared subscribe
+  // loop lives in `watch.ts` and is reused by `usufructCap.watch`).
   function watch(onChange: (e: Escrow) => void, watchOpts?: { intervalMs?: number }): () => void {
-    let stopped = false;
-    // Re-resolve the decode-free handle and hand it to the callback. A transient
-    // read flake (truncated devInspect) skips this tick — it must NOT end the
-    // watch, or a `waitFor` would hang forever.
-    const emit = async () => {
-      try {
+    return subscribeEscrowVersion(
+      ctx,
+      escrowId,
+      async (alive) => {
         const snap = await createEscrow(ctx, idStr);
-        if (!stopped) onChange(snap);
-      } catch {
-        /* transient resolve flake — skip, keep watching */
-      }
-    };
-
-    // PUSH: a gRPC client streams the escrow's version changes (decode-free — just
-    // object_id + version off the checkpoint firehose). On each, re-resolve the
-    // decode-free handle. No asset schema, no polling latency.
-    const grpc = ctx.grpcClient;
-    if (grpc) {
-      const controller = new AbortController();
-      void (async () => {
-        try {
-          await emit(); // initial snapshot, so waitFor can match the current state
-          const changes = escrowVersionChanges(grpc, escrowId, controller.signal)[Symbol.asyncIterator]();
-          while (!stopped) {
-            if ((await changes.next()).done) break;
-            await emit();
-          }
-        } catch {
-          /* aborted or stream error */
-        }
-      })();
-      return () => {
-        stopped = true;
-        controller.abort();
-      };
-    }
-
-    // POLL fallback (no gRPC available): version-poll the object.
-    const intervalMs = watchOpts?.intervalMs ?? 3000;
-    let lastVersion: string | null = null;
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    void (async () => {
-      while (!stopped) {
-        try {
-          const { object } = await client.core.getObject({ objectId: escrowId });
-          const v = String(object.version);
-          if (v !== lastVersion) {
-            lastVersion = v;
-            await emit();
-          }
-        } catch {
-          /* transient read error — keep polling */
-        }
-        if (!stopped) await sleep(intervalMs);
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
+        if (alive()) onChange(snap);
+      },
+      watchOpts,
+    );
   }
 
   function waitFor(
@@ -642,12 +601,13 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     handoverExpiresAt: handoverMs == null ? null : new Date(Number(handoverMs)),
     activeCap,
     pendingCap,
+    governanceCap,
+    earningsInbox,
+    feeInbox,
     canRent: owner != null && status !== 'retired',
     canBorrow: role.capId != null,
     canGovern: role.governs,
-    usufructCap,
-    governanceCap,
-    earningsInbox,
+    holdsEarnings: role.holdsEarnings,
     rent,
     nextFloorPrice,
     retireUnlocksAt,

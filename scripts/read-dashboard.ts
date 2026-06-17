@@ -117,10 +117,23 @@ async function main(): Promise<void> {
   noCeremony('escrow.lastRentPrice/assetId', null);
   console.log(`  lastRentPrice=${lastRent?.format() ?? 'null'}  assetId=${assetId.slice(0, 10)}…`);
 
+  step('⑧ unified related handles — every object reachable from the escrow (no possession)');
+  // All present as handles regardless of who holds them; possession is the boolean axis.
+  check('governanceCap handle present + governs', (await e.governanceCap.governs(escrow.id)) === true);
+  check('earningsInbox handle present', typeof e.earningsInbox.inboxId === 'string');
+  check('feeInbox handle present', typeof e.feeInbox.inboxId === 'string');
+  console.log(`  possession: canGovern=${e.canGovern} holdsEarnings=${e.holdsEarnings} canBorrow=${e.canBorrow}`);
+
+  step('⑨ react on the seat — usufructCap.watch() (the renter watches their own seat)');
+  const seen: string[] = [];
+  const stop = e.activeCap!.watch((s) => seen.push(s.role));
+  await new Promise((r) => setTimeout(r, 4000)); // let the initial state land
+  stop();
+  check('cap.watch emitted the seat state', seen.length >= 1, `roles=${seen.join(',')}`);
+
   step('— ceremony report —');
   console.log(`  reader-drops needed: ${ceremony.length} (was 16)`);
   check('zero ceremony — every read has a home on its object', ceremony.length === 0);
-  check('governs still object-centric', (await governanceCap.governs(escrow.id)) === true);
 }
 
 main().then(finish);
