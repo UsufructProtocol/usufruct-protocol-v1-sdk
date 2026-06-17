@@ -7,7 +7,7 @@
  * The reads are a snapshot at `t` (the fetch time); for live values use the
  * kernel `reader` (exposed) or, later, `watch`/`priceCurve`.
  */
-import { id as toId, mist, tenureCount } from '../primitives/brand.js';
+import { id as toId, mist, tenureCount, type Mist, type Ms } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { retryingReader } from './retry.js';
 import { applyPendingTransitionStates } from '../actions/apply.js';
@@ -262,20 +262,6 @@ export interface Escrow {
   readonly reader: Reader;
 }
 
-async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
-  const [retired, occupied, demand, descending] = await Promise.all([
-    reader.isRetired(),
-    reader.isOccupied(),
-    reader.isDemand(),
-    reader.isDescending(),
-  ]);
-  if (retired) return 'retired';
-  if (occupied) return 'occupied';
-  if (demand) return 'demand';
-  if (descending) return 'descent';
-  return 'idle';
-}
-
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
   const { client, packageId, account, defaultExecutor, assetSchema, retry } = ctx;
@@ -295,28 +281,50 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // (it throws inside the reader's own parse). Status is handled by the client.
   const reader = retry ? retryingReader(kernelReader, retry) : kernelReader;
 
-  const [floorMist, status, expiryMs, activeCapId, govCapId, inboxId, feeInboxId] = await Promise.all([
-    reader.floorPriceMist(t),
-    resolveStatus(reader),
-    reader.tenureExpiryMs(),
-    reader.activeUsufructCapId(),
-    reader.governanceCapId(),
-    reader.earningsInboxId(),
-    reader.feeInboxId(),
-  ]);
+  // One batched simulation for the unconditional snapshot (+ status booleans) —
+  // every view evaluated against a single chain state, coherent at `t`.
+  const b1 = await reader.batch(
+    [
+      'floorPriceMist', 'isRetired', 'isOccupied', 'isDemand', 'isDescending',
+      'tenureExpiryMs', 'activeUsufructCapId', 'governanceCapId', 'earningsInboxId', 'feeInboxId',
+    ],
+    { t },
+  );
+  const v = <T>(k: string): T => b1[k] as T;
+  const floorMist = v<Mist>('floorPriceMist');
+  const expiryMs = v<Ms | null>('tenureExpiryMs');
+  const activeCapId = v<string | null>('activeUsufructCapId');
+  const govCapId = v<string>('governanceCapId');
+  const inboxId = v<string>('earningsInboxId');
+  const feeInboxId = v<string>('feeInboxId');
+  const status: EscrowStatus = v<boolean>('isRetired')
+    ? 'retired'
+    : v<boolean>('isOccupied')
+      ? 'occupied'
+      : v<boolean>('isDemand')
+        ? 'demand'
+        : v<boolean>('isDescending')
+          ? 'descent'
+          : 'idle';
 
-  // The demand-state views (pending challenger + handover) only exist in `demand`.
-  // Seat economics (stake / time-remaining / accrued credit) are NOT here — they
-  // belong to the seat's `UsufructCap` (`cap.state()`), object-centric.
+  // Conditional views — pending challenger + handover only exist in `demand`, the
+  // active usufructuary addr only when rented. Batch exactly the views valid now
+  // (an aborting view would fail the whole sim). Seat economics belong to the
+  // cap's `state()`, object-centric, not here.
   const rented = status === 'occupied' || status === 'demand';
   const challenged = status === 'demand';
-  const [role, activeAddr, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
+  const condNames = [
+    ...(rented ? ['activeUsufructuaryAddr'] : []),
+    ...(challenged ? ['pendingUsufructCapId', 'pendingUsufructuaryAddr', 'handoverExpiryMs'] : []),
+  ];
+  const [role, b2] = await Promise.all([
     resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
-    rented ? reader.activeUsufructuaryAddr() : Promise.resolve(null),
-    challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
-    challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
-    challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
+    condNames.length ? reader.batch(condNames, { t }) : Promise.resolve({} as Record<string, unknown>),
   ]);
+  const activeAddr = rented ? ((b2['activeUsufructuaryAddr'] as string | null) ?? null) : null;
+  const pendingCapId = challenged ? ((b2['pendingUsufructCapId'] as string | null) ?? null) : null;
+  const pendingAddr = challenged ? ((b2['pendingUsufructuaryAddr'] as string | null) ?? null) : null;
+  const handoverMs = challenged ? ((b2['handoverExpiryMs'] as Ms | null) ?? null) : null;
 
   // Real decimals/symbol from CoinMetadata (cached) — assuming 9 renders any
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.

@@ -15,7 +15,7 @@ import {
   burnUsufructCapToPtb,
   updateUsufructuaryRefundAddress,
 } from '../actions/governance.js';
-import { id as toId } from '../primitives/brand.js';
+import { id as toId, type Mist } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
@@ -202,18 +202,21 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
 
   async function state(opts?: { at?: When }): Promise<UsufructCapState> {
     const reader = mkReader();
-    const [t, activeId, pendingId] = await Promise.all([
-      resolveWhen(client, opts?.at),
-      reader.activeUsufructCapId(),
-      reader.pendingUsufructCapId(),
-    ]);
     const coinType = args.typeArguments[1];
+    // Role in one batched sim — the two seat ids + the stale probe (capId-gated),
+    // in parallel with the chain clock.
+    const [t, r0] = await Promise.all([
+      resolveWhen(client, opts?.at),
+      reader.batch(['activeUsufructCapId', 'pendingUsufructCapId', 'usufructCapIsStale'], {
+        capId: args.capId,
+      }),
+    ]);
     const role: UsufructCapRole =
-      activeId === args.capId
+      (r0['activeUsufructCapId'] as string | null) === args.capId
         ? 'active'
-        : pendingId === args.capId
+        : (r0['pendingUsufructCapId'] as string | null) === args.capId
           ? 'pending'
-          : (await reader.usufructCapIsStale(args.capId))
+          : (r0['usufructCapIsStale'] as boolean)
             ? 'stale'
             : 'unknown';
     const none: UsufructCapState = {
@@ -228,40 +231,45 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       creditCappedAt: null,
     };
     if (role === 'active') {
-      const [coin, addr, stakeMist, remainMist, accruedMist, tenures, leftMs, accruing, cappedAtMs] =
-        await Promise.all([
-          resolveCoinInfo(client, coinType),
-          reader.activeUsufructuaryAddr(),
-          reader.activeStakeBalanceMist(),
-          reader.activeStakeBalanceRemainingMist(t),
-          reader.accruedCreditMist(t),
-          reader.activeCommittedTenures(),
-          reader.activeUsufructuaryTimeRemainingMs(t),
-          reader.creditIsAccruing(),
-          reader.creditCappedAtMs(),
-        ]);
+      // The active seat's economics in one batched sim (coin metadata in parallel).
+      const [coin, s] = await Promise.all([
+        resolveCoinInfo(client, coinType),
+        reader.batch(
+          [
+            'activeUsufructuaryAddr', 'activeStakeBalanceMist', 'activeStakeBalanceRemainingMist',
+            'accruedCreditMist', 'activeCommittedTenures', 'activeUsufructuaryTimeRemainingMs',
+            'creditIsAccruing', 'creditCappedAtMs',
+          ],
+          { t },
+        ),
+      ]);
+      const stakeMist = s['activeStakeBalanceMist'] as Mist | null;
+      const remainMist = s['activeStakeBalanceRemainingMist'] as Mist | null;
+      const tenures = s['activeCommittedTenures'] as bigint | null;
+      const leftMs = s['activeUsufructuaryTimeRemainingMs'] as bigint | null;
+      const cappedAtMs = s['creditCappedAtMs'] as bigint | null;
       return {
         role,
-        usufructuaryAddr: addr,
+        usufructuaryAddr: s['activeUsufructuaryAddr'] as string | null,
         stake: stakeMist == null ? null : price(stakeMist, coin),
         stakeRemaining: remainMist == null ? null : price(remainMist, coin),
-        accruedCredit: price(accruedMist, coin),
+        accruedCredit: price(s['accruedCreditMist'] as Mist, coin),
         committedTenures: tenures == null ? null : Number(tenures),
         timeRemainingMs: leftMs == null ? null : Number(leftMs),
-        creditAccruing: accruing,
+        creditAccruing: s['creditIsAccruing'] as boolean,
         creditCappedAt: cappedAtMs == null ? null : new Date(Number(cappedAtMs)),
       };
     }
     if (role === 'pending') {
-      const [coin, addr, stakeMist, tenures] = await Promise.all([
+      const [coin, s] = await Promise.all([
         resolveCoinInfo(client, coinType),
-        reader.pendingUsufructuaryAddr(),
-        reader.pendingStakeBalanceMist(),
-        reader.pendingCommittedTenures(),
+        reader.batch(['pendingUsufructuaryAddr', 'pendingStakeBalanceMist', 'pendingCommittedTenures']),
       ]);
+      const stakeMist = s['pendingStakeBalanceMist'] as Mist | null;
+      const tenures = s['pendingCommittedTenures'] as bigint | null;
       return {
         ...none,
-        usufructuaryAddr: addr,
+        usufructuaryAddr: s['pendingUsufructuaryAddr'] as string | null,
         stake: stakeMist == null ? null : price(stakeMist, coin),
         committedTenures: tenures == null ? null : Number(tenures),
       };
