@@ -55,6 +55,7 @@ export type { RetryOptions } from './retry.js';
 
 export {
   UsufructError,
+  MoveAbortError,
   InsufficientBalance,
   InsufficientPayment,
   NotAvailable,
@@ -66,3 +67,4 @@ export {
   InvalidShape,
   InvalidMarket,
 } from './errors.js';
+export { MOVE_ABORTS, type MoveAbortEntry } from './aborts.generated.js';

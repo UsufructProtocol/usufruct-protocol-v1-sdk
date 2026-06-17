@@ -41,7 +41,8 @@
     "watch:many": "tsx scripts/watch-many.ts",
     "reads": "tsx scripts/handle-reads.ts",
     "dashboard": "tsx scripts/read-dashboard.ts",
-    "history": "tsx scripts/history-perf.ts"
+    "history": "tsx scripts/history-perf.ts",
+    "aborts": "tsx scripts/aborts-live.ts"
   },
   "keywords": [
     "sui",
