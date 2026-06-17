@@ -1,21 +1,45 @@
 {
-  "name": "@usufruct-protocol/sdk",
-  "version": "0.1.0",
-  "description": "TypeScript SDK for the Usufruct protocol on Sui",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    }
+  "name": "@usufruct-protocol/monorepo",
+  "version": "0.0.0",
+  "description": "Usufruct Protocol TypeScript SDK monorepo: @usufruct-protocol/sdk (drift-zero core) + @usufruct-protocol/sim (off-chain mirror)",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "lint": "eslint src",
-    "format": "prettier --write src",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc -b packages/sdk packages/sim",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsc -b --watch packages/sdk packages/sim",
+    "lint": "eslint packages/*/src",
+    "format": "prettier --write packages/*/src",
+    "test": "vitest run",
+    "codegen": "npm -w @usufruct-protocol/sdk run codegen",
+    "e2e": "tsx scripts/e2e-testnet.ts",
+    "keystone": "tsx scripts/keystone-slice.ts",
+    "governor": "tsx scripts/governor-slice.ts",
+    "demo": "tsx scripts/usufruct-in-action.ts",
+    "lifecycle": "tsx scripts/governor-lifecycle.ts",
+    "challenge": "tsx scripts/challenge-flow.ts",
+    "secondary": "tsx scripts/secondary-market.ts",
+    "fee": "tsx scripts/protocol-fee.ts",
+    "agnostic": "tsx scripts/coin-agnostic.ts",
+    "sui": "tsx scripts/sui-coin.ts",
+    "pricing": "tsx scripts/rent-pricing.ts",
+    "clean": "tsx scripts/clean.ts",
+    "watch": "tsx scripts/watch-flow.ts",
+    "watch:events": "tsx scripts/watch-events.ts",
+    "asset": "tsx scripts/asset-agnostic.ts",
+    "earnings": "tsx scripts/earnings-collect.ts",
+    "compose": "tsx scripts/reader-compose.ts",
+    "retry": "tsx scripts/retry-live.ts",
+    "watch:many": "tsx scripts/watch-many.ts",
+    "reads": "tsx scripts/handle-reads.ts",
+    "dashboard": "tsx scripts/read-dashboard.ts",
+    "history": "tsx scripts/history-perf.ts"
   },
   "keywords": [
     "sui",
@@ -24,17 +48,16 @@
   ],
   "author": "Antonio Jiménez <build@0xkurious.xyz>",
   "license": "Apache-2.0",
-  "type": "module",
   "devDependencies": {
+    "@mysten/codegen": "^0.10.6",
     "@types/node": "^25.9.3",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.61.0",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.4",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "@mysten/sui": "^2.17.0"
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

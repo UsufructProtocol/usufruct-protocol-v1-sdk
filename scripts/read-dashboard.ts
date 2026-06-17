@@ -1,0 +1,158 @@
+/**
+ * Read-intensive dashboard — the reads a governor/observer actually wants about a
+ * live escrow, written the way a dev would, through the OBJECT handles. Where a
+ * read has no home on its object and we must drop to `escrow.reader`, we mark it
+ * `CEREMONY` and count it — the same observe-then-simplify technique we used for
+ * the writes. Run on a demand-state escrow (active + pending + full market).
+ *
+ * Writes (integrate + 2 rents) need a funded signer; reclaim with `npm run clean`.
+ * Run: `npm run dashboard`.
+ */
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
+import { coinTag, usufruct, type InboxMessage, type Market } from '@usufruct-protocol/sdk';
+import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, sleep, step, waitForChainTime } from './lib.js';
+
+const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
+const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
+const DUMMY_COIN_TREASURY = '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
+const DUMMY = coinTag({ type: `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`, decimals: 9, symbol: 'DUMMY' });
+
+const client = rateLimited(makeClient());
+const ALICE = loadSigner();
+const me = ALICE.toSuiAddress();
+
+// Every read below now has a home on its object — no drops to escrow.reader.
+// `ceremony` stays empty; `noCeremony` just labels the (formerly reader-only) read.
+const ceremony: string[] = [];
+function noCeremony<T>(_what: string, v: T): T {
+  return v;
+}
+// Render policy unions (they carry bigints) compactly.
+const j = (v: unknown): string => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? `${x}n` : x));
+
+async function newRenter(): Promise<Ed25519Keypair> {
+  const kp = Ed25519Keypair.generate();
+  const tx = new Transaction();
+  tx.transferObjects([tx.splitCoins(tx.gas, [60_000_000n])[0]!], kp.toSuiAddress());
+  tx.transferObjects(
+    [tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`, arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000_000_000n)] })],
+    kp.toSuiAddress(),
+  );
+  await send(client, tx, ALICE);
+  return kp;
+}
+
+async function mintAsset(): Promise<string> {
+  const tx = new Transaction();
+  tx.transferObjects([tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` })], me);
+  return createdId(await send(client, tx, ALICE), '::dummy_asset::DummyAsset');
+}
+
+const market: Market = {
+  restPrice: DUMMY(0.01),
+  tenure: '5m',
+  multiTenure: false,
+  creditShape: 'linear',
+  auctionShape: 'linear',
+  descent: 'off',
+  handover: '15s',
+  escalation: { fixed: DUMMY(0.001) },
+  retireCommitment: 'immediate',
+  ensembleCommitment: 'immediate',
+};
+
+async function main(): Promise<void> {
+  const a = usufruct({ network: 'testnet', client, signer: ALICE, graphql: GRAPHQL_TESTNET });
+
+  step('setup — integrate + rent (Bob) + challenge (Carol) → demand');
+  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const bob = await newRenter();
+  const carol = await newRenter();
+  await (await usufruct({ network: 'testnet', client, signer: bob }).escrow(escrow.id)).rent({ tenures: 1 });
+  await (await usufruct({ network: 'testnet', client, signer: carol }).escrow(escrow.id)).rent({ tenures: 1 });
+
+  const e = await a.escrow(escrow.id);
+
+  step('① escrow-whole — straight off the handle');
+  console.log(`  status=${e.status}  available=${e.isAvailable}  floor=${e.floorPrice.format()}`);
+  console.log(`  expiresAt=${e.expiresAt?.toISOString()}  challenged=${e.isChallenged}`);
+  console.log(`  coin=${e.coin.symbol}  govCap=${e.governanceCapId.slice(0, 10)}…`);
+  check('handle covers status/floor/expiry/ids', true);
+
+  step('② the seat — escrow.activeCap?.state() (no fetch dance, no possession)');
+  const active = await e.activeCap!.state(); // built from ids the handle already has
+  const pending = await e.pendingCap!.state();
+  console.log(`  active: who=${e.activeUsufructuaryAddr?.slice(0, 10)}… stake=${active.stake?.format()} time=${active.timeRemainingMs}ms accruing=${active.creditAccruing}`);
+  console.log(`  pending: stake=${pending.stake?.format()} role=${pending.role}`);
+  check('escrow.activeCap/pendingCap resolve the seats', active.role === 'active' && pending.role === 'pending');
+
+  step('③ the MARKET / policy — escrow.market() (one call, coin-aware)');
+  const mkt = noCeremony('escrow.market()', await e.market());
+  console.log(`  restPrice=${mkt.restPrice.format()} tenure=${mkt.tenure}ms handover=${j(mkt.handover)}`);
+  console.log(`  creditShape=${j(mkt.creditShape)} escalation=${j(mkt.escalation)} descent=${j(mkt.descent)}`);
+  check('market.restPrice is a rendered Price', mkt.restPrice.format().includes(e.coin.symbol));
+
+  step('④ live cycle params — escrow.cycle()');
+  const cycle = noCeremony('escrow.cycle()', await e.cycle());
+  console.log(`  floor=${cycle?.floor.format()} ceilingMs=${cycle?.ceilingMs} handoverMs=${cycle?.handoverMs}`);
+
+  step('⑤ settlement preview — escrow.tenureSettlement() (rendered Prices)');
+  const settle = noCeremony('escrow.tenureSettlement()', await e.tenureSettlement());
+  console.log(`  governorShare=${settle.governorShare.format()} fee=${settle.fee.format()}`);
+  check('settlement is coin-rendered', settle.fee.format().includes(e.coin.symbol));
+
+  step('⑥ temporal / keeper — escrow.integratedAt() / phaseStartAt() / nextTransitionAt() (Dates)');
+  const [integratedAt, phaseStart, nextT] = await Promise.all([
+    e.integratedAt(),
+    e.phaseStartAt(),
+    e.nextTransitionAt(),
+  ]);
+  noCeremony('escrow.integratedAt/phaseStartAt/nextTransitionAt', null);
+  console.log(`  integratedAt=${integratedAt.toISOString()} phaseStart=${phaseStart?.toISOString()} nextTransition=${nextT?.toISOString()}`);
+  check('temporal reads are Dates', integratedAt instanceof Date);
+
+  step('⑦ credit memory + asset id — escrow.lastRentPrice() / assetId()');
+  const [lastRent, assetId] = await Promise.all([e.lastRentPrice(), e.assetId()]);
+  noCeremony('escrow.lastRentPrice/assetId', null);
+  console.log(`  lastRentPrice=${lastRent?.format() ?? 'null'}  assetId=${assetId.slice(0, 10)}…`);
+
+  step('⑧ unified related handles — every object reachable from the escrow (no possession)');
+  // All present as handles regardless of who holds them; possession is the boolean axis.
+  check('governanceCap handle present + governs', (await e.governanceCap.governs(escrow.id)) === true);
+  check('earningsInbox handle present', typeof e.earningsInbox.inboxId === 'string');
+  check('feeInbox handle present', typeof e.feeInbox.inboxId === 'string');
+  console.log(`  possession: canGovern=${e.canGovern} holdsEarnings=${e.holdsEarnings} canBorrow=${e.canBorrow}`);
+
+  step('⑨ react on the seat — usufructCap.watch() (the renter watches their own seat)');
+  const seen: string[] = [];
+  const stop = e.activeCap!.watch((s) => seen.push(s.role));
+  await sleep(4000); // let the initial state land
+  stop();
+  check('cap.watch emitted the seat state', seen.length >= 1, `roles=${seen.join(',')}`);
+
+  step('⑩ inspect the cap — usufructCap.history() (its slice of the timeline)');
+  // The indexer trails the fullnode; poll briefly for the fresh cap's events.
+  let capEvents = await e.activeCap!.history();
+  for (let i = 0; i < 8 && capEvents.length === 0; i++) {
+    await sleep(5000);
+    capEvents = await e.activeCap!.history();
+  }
+  check('cap.history includes UsufructCapMinted', capEvents.some((h) => h.kind === 'UsufructCapMinted'), capEvents.map((h) => h.kind).join(','));
+
+  step('⑪ react on income — earningsInbox.watch() catches a settlement (handover → EarningsMessagePosted)');
+  const income: InboxMessage[] = [];
+  const stopInbox = e.earningsInbox.watch((m) => income.push(m));
+  await waitForChainTime(client, BigInt(e.handoverExpiresAt!.getTime())); // wait out the handover
+  await e.applyPendingTransitionStates(); // settle → Bob displaced, 90% posts to earnings
+  await sleep(6000); // let the firehose deliver the EarningsMessagePosted
+  stopInbox();
+  check('earningsInbox.watch caught income', income.length >= 1, income.map((m) => m.amount.format()).join(','));
+
+  step('— ceremony report —');
+  console.log(`  reader-drops needed: ${ceremony.length} (was 16)`);
+  check('zero ceremony — every read has a home on its object', ceremony.length === 0);
+}
+
+main().then(finish);

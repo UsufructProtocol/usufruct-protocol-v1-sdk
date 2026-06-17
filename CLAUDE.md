@@ -25,7 +25,7 @@ Economics: 90% of consumed credit → governor's `EarningsInbox`; 10% → protoc
 
 The protocol is live on Sui testnet at **v1.4.2**:
 
-- Package: `0x415c4372e76618e729dbcf76ee80e26db29d6b7e7a1e2fc0e2ad8d843a380e5d`
+- Package: `0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d`
 - Source-verified on-chain.
 
 **Do not assume SDK code works by reading it.** Build against testnet and observe the actual chain response — the chain is the arbiter. A PTB that looks correct may abort for a non-obvious reason (type argument mismatch, lazy state not applied, coin-polymorphic inbox partition, etc.). The profiling harness in the protocol repo (`profiling/`) and the audit harness (`audit/`) are reference implementations for how to build and submit PTBs correctly.

@@ -1,0 +1,33 @@
+{
+  "name": "@usufruct-protocol/sdk",
+  "version": "0.1.0",
+  "description": "Drift-zero TypeScript core for the Usufruct protocol on Sui",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./*.js": { "types": "./dist/*.d.ts", "default": "./dist/*.js" }
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk.git"
+  },
+  "homepage": "https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk#readme",
+  "bugs": { "url": "https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/issues" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "tsc -b",
+    "codegen": "sui-ts-codegen generate"
+  },
+  "keywords": ["sui", "usufruct", "sdk"],
+  "author": "Antonio Jiménez <build@0xkurious.xyz>",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@mysten/sui": "^2.17.0"
+  }
+}

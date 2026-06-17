@@ -1,0 +1,107 @@
+{
+  "capturedAt": "2026-06-14T22:13:56.456Z",
+  "network": "testnet",
+  "packageId": "0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d",
+  "objectId": "0xf6ef47de1b19c51b488762d0c78d8b545b9ddc63a45d7be618997af212860920",
+  "type": "0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d::escrow::Escrow<0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a::dummy_asset::DummyAsset,0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN>",
+  "contentBase64": "9u9H3hsZxRtIh2LQx42LVFud3GOkXXvmGJl68hKGCSAB5R74Yd1fho4YMBGGpijyUwFmDHUV0rqq7698mz0KZc6vO5ka3wuTBsRgknM9FyWPx1pXpsAQXi1nNDLOhkuXAwDoAwAAAAAAAACQXwEAAAAAAAACqGEAAAAAAAAAAAAAAQAAAAAAAAAADEtPkZKkyH1Dl5uusKeUHbkjp5W/kOZGp/bsoAWjH0aMbDLIngEAAACMbDLIngEAAACMbDLIngEAAPbvR94bGcUbSIdi0MeNi1RbndxjpF175hiZevIShgkgAQEAkQON4ZHnjInLWqeDReStOGx8FsTGmF4CbY4FbGaIVK3270feGxnFG0iHYtDHjYtUW53cY6Rde+YYmXryEoYJIAGRA43hkeeMictap4NF5K04bHwWxMaYXgJtjgVsZohUrQAAAAAAAAAABo0yyJ4BAACQXwEAAAAAAKhhAAAAAAAAAQAAAAAAAADtaYDjjAYbd5jlIlUbx9wpu+f/0gwzWbgbbrXPpJkxdTZOxmnx9k/W1XTntYcds/p1xvDlInyDiQHyIESDSkKt6AMAAAAAAAAA6AMAAAAAAACQXwEAAAAAAKhhAAAAAAAAAAAAAAAAAAA=",
+  "parity": {
+    "nowMs": "1781475233238",
+    "probeCapId": "0xe51ef861dd5f868e18301186a628f25301660c7515d2baaaefaf7c9b3d0a65ce",
+    "results": {
+      "isIdle": false,
+      "isDescending": false,
+      "isOccupied": true,
+      "isDemand": false,
+      "isLive": true,
+      "isRetired": false,
+      "isRented": true,
+      "isRetiring": false,
+      "assetId": "0x91038de191e78c89cb5aa78345e4ad386c7c16c4c6985e026d8e056c668854ad",
+      "governanceCapId": "0xe51ef861dd5f868e18301186a628f25301660c7515d2baaaefaf7c9b3d0a65ce",
+      "assetTypeName": "a72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a::dummy_asset::DummyAsset",
+      "coinTypeName": "97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN",
+      "activeUsufructuaryAddr": "0x364ec669f1f64fd6d574e7b5871db3fa75c6f0e5227c838901f22044834a42ad",
+      "activeUsufructCapId": "0xed6980e38c061b7798e522551bc7dc29bbe7ffd20c3359b81b6eb5cfa4993175",
+      "pendingUsufructuaryAddr": null,
+      "pendingUsufructCapId": null,
+      "earningsInboxId": "0xaf3b991adf0b9306c46092733d17258fc75a57a6c0105e2d673432ce864b9703",
+      "feeInboxId": "0x0c4b4f9192a4c87d43979baeb0a7941db923a795bf90e646a7f6eca005a31f46",
+      "activeStakeBalanceMist": "1000",
+      "pendingStakeBalanceMist": null,
+      "activeCommittedTenures": "1",
+      "pendingCommittedTenures": null,
+      "governanceCapIsValid": true,
+      "usufructCapIsActive": false,
+      "usufructCapIsPending": false,
+      "usufructCapIsStale": true,
+      "phaseStartMs": "1781475216646",
+      "tenureExpiryMs": "1781475306646",
+      "transitionIsReady": false,
+      "nextTransitionMs": null,
+      "handoverExpiryMs": null,
+      "activeUsufructuaryTimeRemainingMs": "73408",
+      "handoverExpiryIfBidAt": "1781475258238",
+      "tenureCeilingMs": "90000",
+      "integratedAtMs": "1781475208332",
+      "retireCommitmentUnlocksAtMs": "1781475208332",
+      "retireCommitmentAnchorMs": "1781475208332",
+      "retireCommitmentRemainingMs": "0",
+      "ensembleCommitmentUnlocksAtMs": "1781475208332",
+      "ensembleCommitmentAnchorMs": "1781475208332",
+      "ensembleCommitmentRemainingMs": "0",
+      "lastRentPriceMist": null,
+      "creditIsAccruing": true,
+      "creditIsCapped": false,
+      "creditCappedAtMs": null,
+      "hasPendingEnsembleUpdate": false,
+      "activeCycleParams": {
+        "ceilingMs": "90000",
+        "descentMs": "0",
+        "floorMist": "1000",
+        "handoverMs": "25000"
+      },
+      "nextCycleParams": null,
+      "pendingCycleParams": null,
+      "activeCeilingTotalMs": "90000",
+      "activeHandoverTotalMs": "25000",
+      "auctionWindow": {
+        "kind": "off"
+      },
+      "handover": {
+        "floorMs": "25000",
+        "kind": "fixed"
+      },
+      "restPrice": {
+        "kind": "fixed",
+        "priceMist": "1000"
+      },
+      "tenureDuration": {
+        "ceilingMs": "90000",
+        "kind": "fixed"
+      },
+      "tenureExtend": {
+        "kind": "single"
+      },
+      "priceEscalation": {
+        "deltaMist": "1",
+        "kind": "fixedDelta"
+      },
+      "priceEscalationDeltaMist": "1",
+      "retireCommitment": {
+        "kind": "immediate"
+      },
+      "ensembleCommitment": {
+        "kind": "immediate"
+      },
+      "creditShape": {
+        "kind": "linear"
+      },
+      "auctionShape": {
+        "kind": "linear"
+      },
+      "protocolFeeBps": "1000",
+      "bpsDenominator": "10000"
+    }
+  }
+}

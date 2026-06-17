@@ -1,0 +1,32 @@
+/**
+ * The shared dependencies every handle carries: the IO client, the deployment,
+ * the kernel `Source`, the (optional) signer, and — for non-uid assets (SPEC
+ * §10) — the asset BCS schema. Bundled so handles thread one value, not five.
+ */
+import type { ClientWithCoreApi } from '@mysten/sui/client';
+import type { Signer } from '@mysten/sui/cryptography';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
+import type { IndexerSource } from '../indexer/source.js';
+import type { AssetSchema } from '../primitives/state.js';
+import type { RetryOptions } from './retry.js';
+
+export interface HandleCtx {
+  readonly client: ClientWithCoreApi;
+  readonly packageId: string;
+  /** The frozen `ProtocolFeeRef` consumed by `integrate`. */
+  readonly feeRefId: string;
+  /** Null when read-only; required for writes. */
+  readonly signer: Signer | null;
+  /** Asset BCS schema for decode/reads; defaults to uid-only when omitted. */
+  readonly assetSchema?: AssetSchema;
+  /** GraphQL-backed discovery (for `governor.escrows()` byGovernor); optional. */
+  readonly indexer?: IndexerSource;
+  /** gRPC client for server-push subscriptions (`escrow.watch`); optional. */
+  readonly grpcClient?: SuiGrpcClient;
+  /**
+   * Retry policy for transient reads. When present, the handle's `reader` is
+   * wrapped to retry the truncated-`simulateTransaction` shape (the `client` is
+   * already retry-wrapped for transient status). Omitted when retry is disabled.
+   */
+  readonly retry?: RetryOptions;
+}

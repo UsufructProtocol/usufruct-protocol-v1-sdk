@@ -1,46 +1,17 @@
 {
-  // Visit https://aka.ms/tsconfig to read more about this file
+  // Dev typecheck: both packages' src together, cross-package imports resolved
+  // to SOURCE via paths (no build needed). `tsx` also reads these paths, so the
+  // scripts resolve `@usufruct-protocol/*` to src. The per-package
+  // `packages/*/tsconfig.json` are the build configs (emit dist via references).
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    // File Layout
-    "rootDir": "src",
-    "outDir": "dist",
-
-    // Environment Settings
-    // See also https://aka.ms/tsconfig/module
-    "module": "nodenext",
-    "target": "es2022",
-    "types": [],
-    // For nodejs:
-    // "lib": ["esnext"],
-    // "types": ["node"],
-    // and npm install -D @types/node
-
-    // Other Outputs
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
-
-    // Stricter Typechecking Options
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-
-    // Style Options
-    // "noImplicitReturns": true,
-    // "noImplicitOverride": true,
-    // "noUnusedLocals": true,
-    // "noUnusedParameters": true,
-    // "noFallthroughCasesInSwitch": true,
-    // "noPropertyAccessFromIndexSignature": true,
-
-    // Recommended Options
-    "strict": true,
-    "jsx": "react-jsx",
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force",
-    "skipLibCheck": true,
-
-    "moduleResolution": "nodenext",
-  }
+    "noEmit": true,
+    "paths": {
+      "@usufruct-protocol/sdk": ["./packages/sdk/src/index.ts"],
+      "@usufruct-protocol/sdk/*": ["./packages/sdk/src/*"],
+      "@usufruct-protocol/sim": ["./packages/sim/src/index.ts"],
+      "@usufruct-protocol/sim/*": ["./packages/sim/src/*"]
+    }
+  },
+  "include": ["packages/sdk/src", "packages/sim/src"]
 }
