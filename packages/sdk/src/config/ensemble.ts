@@ -64,6 +64,7 @@ export function ensembleToPtb(
   const p = pkg.packageId;
   const price = (m: Mist) => tx.add(e.price({ package: p, arguments: [m] }));
   const dur = (m: Ms) => tx.add(e.duration({ package: p, arguments: [m] }));
+  const basisPoints = (b: Bps) => tx.add(e.basisPoints({ package: p, arguments: [b] }));
 
   const restPrice = tx.add(
     e.newRestPriceFixed({ package: p, arguments: [price(cfg.restPrice)] }),
@@ -99,10 +100,10 @@ export function ensembleToPtb(
       : tx.add(
           e.newPriceCompoundDelta({
             package: p,
-            // BasisPoints has no public constructor; it is a single-u64 struct,
-            // so its BCS layout is exactly a pure u64 (pattern proven live by
-            // the audit harness).
-            arguments: [tx.pure.u64(escalation.bps), price(escalation.deltaMist)],
+            // `bps` is a `BasisPoints` struct — build it via the Move constructor
+            // `ensemble::basis_points` (like `Price` via `ensemble::price`); a struct
+            // can't be a `tx.pure` arg (Sui rejects it: InvalidUsageOfPureArg).
+            arguments: [basisPoints(escalation.bps), price(escalation.deltaMist)],
           }),
         );
 

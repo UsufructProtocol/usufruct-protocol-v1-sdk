@@ -10,7 +10,7 @@ versioned together while pre-1.0.
 ## [0.1.0] — Unreleased
 
 First public release. The SDK is the high-level, object-centric TypeScript API over
-the Usufruct protocol (live on Sui testnet v1.4.2), split along a **drift-zero seam**.
+the Usufruct protocol (live on Sui testnet v1.4.3), split along a **drift-zero seam**.
 
 ### Added
 
@@ -30,6 +30,11 @@ the Usufruct protocol (live on Sui testnet v1.4.2), split along a **drift-zero s
     `governanceCap.watch` (decode-free `escrowVersionChangesMany`).
   - **Object-centric reads** — `usufructCap.state()`/`isActive()`/`isPending()`/
     `isStale()` (role-gated seat economics) and `governanceCap.governs(escrow)`.
+  - **Drift-zero abort mapping** — the full runtime-abort registry is generated from
+    the Move source (`scripts/gen-aborts.ts` → `aborts.generated.ts`), and `mapAbort`
+    resolves any on-chain abort to a `MoveAbortError` carrying its verbatim source
+    name (`.abort`/`.module`/`.code`), with curated overlay subclasses. A live harness
+    (`npm run aborts`) provokes every reachable abort on testnet.
 - **`@usufruct-protocol/sim` — opt-in mirror.** The off-chain re-derivation tier
   (`View<T>`, `Action.step`, the fixed-point curve, `MemorySource`/`memoryInbox`)
   for simulation, what-if analysis, and an offline testbed; golden-tested against
@@ -50,3 +55,7 @@ the Usufruct protocol (live on Sui testnet v1.4.2), split along a **drift-zero s
 
 - `retryingClient` proxy preserves `this` for proxied client methods (gRPC private
   fields) — execution is bound but never retried.
+- **Compound price escalation** now builds a valid PTB: the `bps` argument is
+  constructed via `ensemble::basis_points` (exposed in protocol v1.4.3) instead of a
+  raw `tx.pure.u64`, which Sui rejected for a struct type (`InvalidUsageOfPureArg`).
+  `escalation: { compound: … }` was previously unbuildable.

@@ -36,6 +36,7 @@ describe('ensembleToPtb', () => {
       'ensemble::new_descent_fixed',
       'ensemble::new_power_law',
       'ensemble::new_linear',
+      'ensemble::basis_points',
       'ensemble::price',
       'ensemble::new_price_compound_delta',
       'ensemble::new_ensemble',

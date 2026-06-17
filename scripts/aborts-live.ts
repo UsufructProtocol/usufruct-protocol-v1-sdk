@@ -3,8 +3,8 @@
  * reachable on-chain abort and assert the SDK surfaces it as a clear typed error
  * naming the Move source constant. The chain is the arbiter. Run: `npm run aborts`.
  *
- * Coverage (≈22 aborts, 3 cheap escrows — a rejected tx is state-preserving, so
- * one escrow absorbs many aborts in sequence):
+ * Coverage (≈23 aborts + a compound-success check, 3 cheap escrows — a rejected tx
+ * is state-preserving, so one escrow absorbs many aborts in sequence):
  *
  *   Tier 1 — policy aborts via governanceCap.updateMarket (escrow A):
  *     EPriceZero, EDurationZero, EDescentCeilingZero, EHandoverFloorZero,
@@ -20,6 +20,8 @@
  *     EAlreadyRetired → ERetiredNoBid
  *   Tier 5 — commitments + multi-cycle (escrow C): EMultiCycleNotAllowed,
  *     ERetireCommitmentFloorNotElapsed, EEnsembleCommitmentFloorNotElapsed
+ *   Tier 6 — happy path the v1.4.3 fix unblocks: a VALID compound escalation
+ *     commits (proves `ensemble::basis_points` end-to-end)
  *
  * NOT exercised live (the offline test `test/highlevel-aborts.test.ts` proves the
  * mapping for all 39 runtime constants from fabricated abort strings):
@@ -32,8 +34,6 @@
  *   • commitment-not-extended — ERetireCommitmentNotExtended, EEnsembleCommitmentNotExtended
  *   • internal / overflow / view-only — EAlreadyRetiring, EMulDivOverflow,
  *     ENthRootBadDegree, EPriceAddOverflow, escrow::EAssetBorrowed, ENotRented
- *   • EBpsRange — compound escalation can't build a PTB on v1.4.2 (no public
- *     BasisPoints constructor); needs the v1.4.3 protocol fix. Mapped offline.
  *
  * Note on gas: a deterministic abort costs ZERO gas and leaves NO on-chain tx —
  * the SDK doesn't set a gas budget, so @mysten/sui estimates it via a pre-flight
@@ -169,16 +169,10 @@ async function main(): Promise<void> {
     // the ensemble, not the commitments — governanceCap.ts) — so ERetireCommitmentFloorZero
     // / EEnsembleCommitmentFloorZero are provoked at integrate-time below (Tier 1b).
     { label: 'escalation fixed 0', patch: { escalation: { fixed: A.coin(0) } }, expect: { cls: InvalidEscalation, abort: 'EDeltaZero', module: 'price_escalation_policy', code: 0 } },
-    // EBpsRange (price_escalation_policy #1) is NOT exercised live: the compound-delta
-    // path can't build a valid PTB on v1.4.2 — `new_price_compound_delta` wants a
-    // `BasisPoints` struct and the package exposes no public constructor for it (only the
-    // package-private `math::bps`), so a pure u64 fails with InvalidUsageOfPureArg before
-    // the chain reaches the policy. Fix is a one-line protocol addition in v1.4.3
-    // (`public fun bps(value: u64): BasisPoints` in api/ensemble.move); once deployed, add:
-    //   { label: 'escalation compound bps 0',
-    //     patch: { escalation: { compound: { bps: 0, delta: DUMMY(0.001) } } },
-    //     expect: { cls: InvalidEscalation, abort: 'EBpsRange', module: 'price_escalation_policy', code: 1 } }
-    // For now the mapping is covered offline.
+    // Compound escalation: v1.4.3's `ensemble::basis_points` constructor makes the bps
+    // arg a real `BasisPoints`, so the policy is now reachable on-chain (was unbuildable
+    // on v1.4.2). bps 0 < 1 → EBpsRange.
+    { label: 'escalation compound bps 0', patch: { escalation: { compound: { bps: 0, delta: DUMMY(0.001) } } }, expect: { cls: InvalidEscalation, abort: 'EBpsRange', module: 'price_escalation_policy', code: 1 } },
     { label: 'creditShape powerLaw 2/2 (= linear)', patch: { creditShape: { powerLaw: { num: 2, den: 2 } } }, expect: { cls: InvalidShape, abort: 'EDegenerateLinear', module: 'curve_shape_policy', code: 2 } },
     // Tier 2 — the typed API forbids these; cast past it to prove the live mapping.
     { label: 'powerLaw num out of range (cast)', patch: { creditShape: { powerLaw: { num: 0 as PowerLawNum, den: 1 } } }, expect: { cls: InvalidShape, abort: 'EAlphaNumRange', module: 'curve_shape_policy', code: 0 } },
@@ -240,6 +234,17 @@ async function main(): Promise<void> {
 
   const e_committedEnsemble = await expectAbort('updateMarket before commitment elapses', () => C.governanceCap.updateMarket(C.id, { restPrice: DUMMY(0.02) }));
   assertAbort('updateMarket before commitment elapses', e_committedEnsemble, { cls: CommittedEnsemble, abort: 'EEnsembleCommitmentFloorNotElapsed', module: 'asset_state', code: 18 });
+
+  // ── Tier 6 — the happy path the v1.4.3 fix unblocks: a VALID compound escalation
+  // now builds (via ensemble::basis_points) and commits. Mutates A's market, so it
+  // runs last. This is the positive complement to the EBpsRange abort above.
+  step('Tier 6 — compound escalation succeeds (v1.4.3 basis_points)');
+  try {
+    const { digest } = await A.governanceCap.updateMarket(A.id, { escalation: { compound: { bps: 100, delta: DUMMY(0.001) } } });
+    check('compound escalation updateMarket committed', true, `${digest.slice(0, 12)}…`);
+  } catch (err) {
+    check('compound escalation updateMarket committed', false, (err as Error).message);
+  }
 }
 
 main().then(finish);
