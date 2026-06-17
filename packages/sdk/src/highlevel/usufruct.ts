@@ -10,7 +10,6 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
-import { Transaction } from '@mysten/sui/transactions';
 import { integrate as integrateAction } from '../actions/integrate.js';
 import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
@@ -29,11 +28,11 @@ import { normalizeStructTag } from '@mysten/sui/utils';
 import { resolveCoinTag } from './coinmeta.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { ownedIds } from './role.js';
-import { NotConnected, mapAbort } from './errors.js';
+import { makePlan, type Plan } from './plan.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { retryingClient, retryingGraphqlClient, retryingReader, type RetryOptions } from './retry.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import { createdIdByType, execute, signerExecutor, type Executor } from './send.js';
+import { createdIdByType, signerExecutor, type Executor } from './send.js';
 import type { CoinTag } from './value.js';
 
 /** Tell a `Signer` from an `Executor` (the latter has `execute`). */
@@ -126,7 +125,7 @@ export interface Usufruct {
    * `coin` is the immutable `phantom CoinType` of the escrow — fixed here, never
    * changeable (it's not part of the mutable `Market`).
    */
-  integrate(args: { asset: string; coin: CoinTag; market: Market }): Promise<{
+  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{
     escrow: Escrow;
     governanceCap: GovernanceCap;
     earningsInbox: EarningsInbox;
@@ -297,37 +296,40 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return watchMany(ctx(), escrowIds, onChange, opts);
     },
 
-    async integrate({ asset, coin, market }) {
-      const s = signer;
-      if (s == null) throw new NotConnected('integrate requires a signer; pass one to usufruct() or u.connect()');
+    integrate({ asset, coin, market }) {
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = coin.type;
-      const { object } = await client.core.getObject({ objectId: asset });
-      const assetType = object.type;
-
-      const tx = new Transaction();
-      const created = integrateAction({
-        ensemble,
-        ...(retireCommitment ? { retireCommitment } : {}),
-        ...(ensembleCommitment ? { ensembleCommitment } : {}),
-        assetType,
-        coinType,
-      }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
-      tx.transferObjects([created[0]!, created[1]!], s.toSuiAddress()); // [GovernanceCap, EarningsInbox]
-
-      const res = await execute(client, tx, s).catch(mapAbort);
-      const escrowId = createdIdByType(res, '::escrow::Escrow');
-      const capId = createdIdByType(res, '::governance_cap::GovernanceCap');
-      const inboxId = createdIdByType(res, '::earnings_inbox::EarningsInbox');
-      if (!escrowId || !capId || !inboxId) {
-        throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
-      }
-      const c = ctx();
-      return {
-        escrow: await createEscrow(c, escrowId),
-        governanceCap: createGovernanceCap(c, capId),
-        earningsInbox: createInbox(c, inboxId, 'earnings'),
-      };
+      return makePlan({
+        defaultExecutor: () => resolveExecutor(),
+        // build: list the asset's type, append the integrate, keep cap + inbox.
+        build: async (tx, sender) => {
+          const { object } = await client.core.getObject({ objectId: asset });
+          const assetType = object.type;
+          const created = integrateAction({
+            ensemble,
+            ...(retireCommitment ? { retireCommitment } : {}),
+            ...(ensembleCommitment ? { ensembleCommitment } : {}),
+            assetType,
+            coinType,
+          }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
+          tx.transferObjects([created[0]!, created[1]!], sender); // [GovernanceCap, EarningsInbox]
+        },
+        // decode: the three created objects → resolved handles.
+        decode: async (res) => {
+          const escrowId = createdIdByType(res, '::escrow::Escrow');
+          const capId = createdIdByType(res, '::governance_cap::GovernanceCap');
+          const inboxId = createdIdByType(res, '::earnings_inbox::EarningsInbox');
+          if (!escrowId || !capId || !inboxId) {
+            throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
+          }
+          const c = ctx();
+          return {
+            escrow: await createEscrow(c, escrowId),
+            governanceCap: createGovernanceCap(c, capId),
+            earningsInbox: createInbox(c, inboxId, 'earnings'),
+          };
+        },
+      });
     },
 
     async usufructCap(idStr) {

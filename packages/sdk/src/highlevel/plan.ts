@@ -46,6 +46,12 @@ export function makePlan<T>(spec: {
       throw new NotConnected('send requires a signer (pass one to usufruct()/connect()) or an Executor');
     }
     const tx = await toTransaction(ex.address);
+    // A build that appends no commands is a no-op write (e.g. an empty `collect`):
+    // nothing to sign or send, so decode without touching the chain. Only such
+    // writes hit this branch, and their decode does not depend on the effects.
+    if (tx.getData().commands.length === 0) {
+      return spec.decode({ digest: '' } as unknown as ExecResult);
+    }
     const res = await ex.execute(tx);
     return spec.decode(res);
   }

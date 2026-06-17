@@ -8,7 +8,6 @@
  * listing into the portfolio you name the inbox the new escrow pays into,
  * because the two are independently transferable.
  */
-import type { Signer } from '@mysten/sui/cryptography';
 import { Transaction } from '@mysten/sui/transactions';
 import { claimAsset } from '../actions/claimAsset.js';
 import {
@@ -25,14 +24,14 @@ import { transferOf } from './bearer.js';
 import { fetchTypeArgs } from './typeargs.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
-import { digestPlan, type Plan } from './plan.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { digestPlan, makePlan, type Plan } from './plan.js';
+import { UsufructError } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
 import { coinInfo, coinTag, type CoinTag } from './value.js';
 import { readMarket } from './marketReadback.js';
-import { createdIdByType, execute } from './send.js';
+import { createdIdByType } from './send.js';
 
 /** An escrow id, or a resolved `Escrow` handle. */
 export type EscrowRef = string | Escrow;
@@ -48,7 +47,7 @@ export interface GovernanceCap {
    */
   updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
   retire(escrow: EscrowRef): Plan<{ digest: string }>;
-  claim(escrow: EscrowRef): Promise<{ assetId: string; digest: string }>;
+  claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
   extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
 
@@ -70,7 +69,7 @@ export interface GovernanceCap {
     coin: CoinTag,
     market: Market,
     opts: { earningsInbox: string },
-  ): Promise<Escrow>;
+  ): Plan<Escrow>;
 
   /**
    * The escrows THIS cap governs — its **portfolio**, as decode-free
@@ -106,16 +105,9 @@ interface RefInfo {
 
 /** Build a `GovernanceCap` handle. Authority = the signer currently holding it. */
 export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCap {
-  const { client, packageId, feeRefId, signer, assetSchema } = ctx;
+  const { client, packageId, feeRefId, assetSchema } = ctx;
   const pkg = { packageId, feeRefId };
   const govId = toId<'GovernanceCap'>(capId);
-
-  const need = (action: string): Signer => {
-    if (signer == null) {
-      throw new NotConnected(`${action} requires a signer; pass one to usufruct() or u.connect()`);
-    }
-    return signer;
-  };
 
   async function resolveRef(ref: EscrowRef): Promise<RefInfo> {
     if (typeof ref !== 'string') {
@@ -178,23 +170,26 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       );
     },
 
-    async claim(ref) {
-      const s = need('claim');
-      const r = await resolveRef(ref);
-      // A claimed asset is *unwrapped* (not "Created" in effects), so read its
-      // id from the escrow's view before consuming the escrow.
-      const reader = createReader(client, {
-        packageId,
-        escrowId: r.escrowId,
-        typeArguments: r.typeArguments,
-        ...(assetSchema ? { assetSchema } : {}),
+    claim(ref) {
+      // A claimed asset is *unwrapped* (not "Created" in effects), so its id is
+      // read from the escrow's view at build time and carried into decode.
+      let assetId = '';
+      return makePlan({
+        defaultExecutor: () => ctx.defaultExecutor,
+        build: async (tx, sender) => {
+          const r = await resolveRef(ref);
+          const reader = createReader(client, {
+            packageId,
+            escrowId: r.escrowId,
+            typeArguments: r.typeArguments,
+            ...(assetSchema ? { assetSchema } : {}),
+          });
+          assetId = String(await reader.assetId());
+          const asset = claimAsset().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
+          tx.transferObjects([asset], sender);
+        },
+        decode: async (res) => ({ assetId, digest: res.digest }),
       });
-      const assetId = await reader.assetId();
-      const tx = new Transaction();
-      const asset = claimAsset().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
-      tx.transferObjects([asset], s.toSuiAddress());
-      const res = await execute(client, tx, s).catch(mapAbort);
-      return { assetId: String(assetId), digest: res.digest };
     },
 
     renounce() {
@@ -206,30 +201,34 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     transfer: transferOf(ctx, capId),
 
-    async integrateIntoPortfolio(asset, coin, market, opts) {
-      const s = need('integrateIntoPortfolio');
+    integrateIntoPortfolio(asset, coin, market, opts) {
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = coin.type;
-      const { object } = await client.core.getObject({ objectId: asset });
-      const assetType = object.type;
-      const tx = new Transaction();
-      integrateIntoPortfolio({
-        ensemble,
-        ...(retireCommitment ? { retireCommitment } : {}),
-        ...(ensembleCommitment ? { ensembleCommitment } : {}),
-        assetType,
-        coinType,
-      }).toPtb(tx, {
-        pkg,
-        asset,
-        typeArguments: [assetType, coinType],
-        governanceCapId: capId,
-        earningsInboxId: opts.earningsInbox,
+      return makePlan({
+        defaultExecutor: () => ctx.defaultExecutor,
+        build: async (tx) => {
+          const { object } = await client.core.getObject({ objectId: asset });
+          const assetType = object.type;
+          integrateIntoPortfolio({
+            ensemble,
+            ...(retireCommitment ? { retireCommitment } : {}),
+            ...(ensembleCommitment ? { ensembleCommitment } : {}),
+            assetType,
+            coinType,
+          }).toPtb(tx, {
+            pkg,
+            asset,
+            typeArguments: [assetType, coinType],
+            governanceCapId: capId,
+            earningsInboxId: opts.earningsInbox,
+          });
+        },
+        decode: async (res) => {
+          const escrowId = createdIdByType(res, '::escrow::Escrow');
+          if (escrowId == null) throw new UsufructError(`integrateIntoPortfolio: no Escrow created (digest ${res.digest})`);
+          return createEscrow(ctx, escrowId);
+        },
       });
-      const res = await execute(client, tx, s).catch(mapAbort);
-      const escrowId = createdIdByType(res, '::escrow::Escrow');
-      if (escrowId == null) throw new UsufructError(`integrateIntoPortfolio: no Escrow created (digest ${res.digest})`);
-      return createEscrow(ctx, escrowId);
     },
 
     escrows() {
