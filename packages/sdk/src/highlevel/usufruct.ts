@@ -131,6 +131,23 @@ export interface Usufruct {
     earningsInbox: EarningsInbox;
   }>;
 
+  /**
+   * Compose several write `Plan`s into ONE atomic transaction. Returns a `Plan`
+   * whose result is the tuple of each plan's result, in order. `.send()` builds
+   * all of them into one PTB, executes once, and decodes each — so you write one
+   * `.send()`, not one per write, and the writes land all-or-nothing.
+   *
+   *   const [capA, capB] = await u.batch(eA.rent({ tenures: 1 }), eB.rent({ tenures: 1 })).send();
+   *
+   * Only for **independent** writes (one PTB). Writes that depend on a prior
+   * write's on-chain result need separate transactions (e.g. rent → handover →
+   * borrow). Being a `Plan` itself, a batch composes: `.send(executor)`,
+   * `.build(tx, me)`, `.toTransaction(me)`.
+   */
+  batch<T extends readonly Plan<unknown>[]>(
+    ...plans: T
+  ): Plan<{ -readonly [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
+
   // ── object doors: a handle to a capability object by id (authority = holding it) ──
   /** The `UsufructCap` (its escrow resolved from the object). */
   usufructCap(id: string): Promise<UsufructCap>;
@@ -329,6 +346,18 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
             earningsInbox: createInbox(c, inboxId, 'earnings'),
           };
         },
+      });
+    },
+
+    batch(...plans) {
+      return makePlan({
+        defaultExecutor: () => resolveExecutor(),
+        build: async (tx, sender) => {
+          for (const p of plans) await p.build(tx, sender);
+        },
+        decode: async (res) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (await Promise.all(plans.map((p) => p.decode(res)))) as any,
       });
     },
 

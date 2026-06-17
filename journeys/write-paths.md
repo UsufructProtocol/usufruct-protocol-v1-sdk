@@ -57,7 +57,34 @@ sugar for both.
 `build(tx, sender)` appends a write's commands to a transaction you own. You then
 execute once and decode each result. This unlocks what `send` can't:
 
-### Compose several writes into one atomic PTB
+### Compose several writes into one atomic PTB — `u.batch`
+
+`u.batch(...plans)` is the ergonomic way: it returns a `Plan` whose result is the
+tuple of each plan's result. One `.send()` builds them all into one PTB, executes
+once, and decodes each — all-or-nothing, in `build` order.
+
+```ts
+// atomic governance: change the market on two escrows in one transaction
+const [a, b] = await u.batch(
+  govA.updateMarket(eA, { restPrice: eA.coin(0.02) }),
+  govB.updateMarket(eB, { restPrice: eB.coin(0.03) }),
+).send();
+```
+
+A batch is itself a `Plan`, so it composes: `.send(executor)`, `.build(tx, me)`,
+`.toTransaction(me)`.
+
+**The decode caveat.** A batch is exact for **digest-only** writes (governance,
+`transfer`), for `collect`, and for writes that create **distinct** object types.
+Batching several writes that mint the **same** type (e.g. two `rent`s) still
+executes correctly — the tx is atomic and both objects are created — but the SDK
+cannot attribute each created object to its plan from the shared effects, so the
+returned handles collide. For those, use separate `.send()`s, or re-fetch by id.
+
+### The lower-level seam — `build` it yourself
+
+When you need full control (mix raw commands, a custom executor, an external
+wallet), drive the three phases by hand. This is what `batch` is built on:
 
 ```ts
 import { Transaction } from '@mysten/sui/transactions';
@@ -76,8 +103,6 @@ const res = await signerExecutor(client, signer).execute(tx);   // ② execute o
 const cap     = await rentPlan.decode(res);     // ③ decode each, from shared effects
 const amounts = await collectPlan.decode(res);
 ```
-
-All-or-nothing: the writes land in one transaction, in `build` order.
 
 ### Mix raw Sui commands around a write
 
@@ -144,8 +169,8 @@ real transactions, two honest `send()`s.
 | One write, the SDK signs (keypair) | `await write().send()` |
 | One write, a wallet / Ledger / sponsor signs | `await write().send(executor)` |
 | One write, hand off the PTB (offline / external wallet) | `await write().toTransaction(me)` → decode after |
-| Several independent writes, one atomic tx | `build()` each → `execute` once → `decode` each |
-| Mix writes with raw Sui commands | `build()` into your own `tx` |
+| Several independent writes, one atomic tx | `await u.batch(planA, planB).send()` |
+| Same, with full control / raw commands / external wallet | `build()` each → `execute` once → `decode` each |
 | Writes that depend on each other's chain result | separate `send()`s (multi-tx) |
 
 ## The principle
