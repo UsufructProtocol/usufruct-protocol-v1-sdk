@@ -8,6 +8,7 @@ import { collectMessages, discoverInboxMessages, type InboxKind, type MessageGro
 import { packageEventStream } from '../primitives/grpc-source.js';
 import { normEscrowId } from '../indexer/events.js';
 import { transferOf } from './bearer.js';
+import type { Plan } from './plan.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import type { HandleCtx } from './ctx.js';
@@ -31,7 +32,7 @@ export interface Inbox {
   /** Collect everything, partitioned by coin (§5.2). Requires holding the inbox. */
   collect(): Promise<Array<{ coin: string; amount: Price }>>;
   /** Hand the inbox (and the right to collect) to another address. */
-  transfer(to: string): Promise<{ digest: string }>;
+  transfer(to: string): Plan<{ digest: string }>;
   /**
    * React to income live: `onMessage` runs for each settlement pushed into THIS
    * inbox (typed, per coin), server-push over the gRPC firehose. The inbox's twin
@@ -90,7 +91,7 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
       await execute(client, tx, signer).catch(mapAbort);
       return sumGroups(client, groups);
     },
-    transfer: transferOf(ctx, inboxId, `${kind} inbox`),
+    transfer: transferOf(ctx, inboxId),
     watch(onMessage: (m: InboxMessage) => void): () => void {
       if (grpcClient == null) {
         throw new UsufructError('watch requires a gRPC client (live event push) — the SDK default');

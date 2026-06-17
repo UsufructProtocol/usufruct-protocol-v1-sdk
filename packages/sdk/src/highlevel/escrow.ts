@@ -7,7 +7,6 @@
  * The reads are a snapshot at `t` (the fetch time); for live values use the
  * kernel `reader` (exposed) or, later, `watch`/`priceCurve`.
  */
-import { Transaction } from '@mysten/sui/transactions';
 import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { retryingReader } from './retry.js';
@@ -20,11 +19,11 @@ import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { UsufructError } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
-import { createdIdByType, execute } from './send.js';
-import { makePlan, type Plan } from './plan.js';
+import { createdIdByType } from './send.js';
+import { makePlan, digestPlan, type Plan } from './plan.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
@@ -180,7 +179,7 @@ export interface Escrow {
    * expiry, auction expiry, handover) — the Move `apply_pending_transition_states`.
    * Rarely called by hand; the next interaction (e.g. a rent) applies them anyway.
    */
-  applyPendingTransitionStates(): Promise<{ digest: string }>;
+  applyPendingTransitionStates(): Plan<{ digest: string }>;
 
   /**
    * The roster of every `UsufructCap` this escrow has minted (active, pending, or
@@ -279,7 +278,7 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
-  const { client, packageId, signer, account, defaultExecutor, assetSchema, retry } = ctx;
+  const { client, packageId, account, defaultExecutor, assetSchema, retry } = ctx;
   const owner = account; // identity for role resolution + the build-time sender
   const escrowId = toId<'Escrow'>(idStr);
 
@@ -323,13 +322,12 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
   const coin = await resolveCoinInfo(client, coinType);
   const typeArguments: [string, string] = [assetType, coinType];
-  async function applyPending(): Promise<{ digest: string }> {
-    if (signer == null) throw new NotConnected('applyPendingTransitionStates requires a signer (it submits a tx)');
-    const tx = new Transaction();
-    applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments });
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    return { digest: res.digest };
-  }
+  const applyPending = (): Plan<{ digest: string }> =>
+    digestPlan(
+      () => defaultExecutor,
+      (tx) =>
+        applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments }),
+    );
 
   // Live reader wrappers (zero cost unless called), typed in the escrow's coin / as Dates.
   async function nextFloorPrice(totalBid: Price, tenures: number): Promise<Price> {

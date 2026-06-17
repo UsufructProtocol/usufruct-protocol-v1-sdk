@@ -8,6 +8,7 @@
  * middle away.
  */
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
+import { digestPlan, type Plan } from './plan.js';
 import { withBorrowedAsset } from '../actions/borrow.js';
 import {
   burnStaleUsufructCap,
@@ -143,16 +144,17 @@ export interface UsufructCap {
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
-  transfer(to: string): Promise<{ digest: string }>;
+  transfer(to: string): Plan<{ digest: string }>;
   /**
    * Burn this cap, but only if it's stale (the holder was displaced). Checks the
    * chain first: if the cap is still active/pending it's a no-op (`burned: false`).
+   * A read-then-maybe-write convenience (not a `Plan`) — it sends at most one tx.
    */
   burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;
   /** Voluntarily relinquish the right of use — burn the cap unconditionally. */
-  burn(): Promise<{ digest: string }>;
+  burn(): Plan<{ digest: string }>;
   /** Redirect where this cap's stake refunds on settlement. */
-  updateRefundAddress(addr: string): Promise<{ digest: string }>;
+  updateRefundAddress(addr: string): Plan<{ digest: string }>;
   /** Back-edge: re-resolve the escrow this cap belongs to. */
   escrow(): Promise<Escrow>;
 }
@@ -348,21 +350,21 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     return { burned: true, digest: res.digest };
   }
 
-  async function burn(): Promise<{ digest: string }> {
-    if (signer == null) throw new NotConnected('burn requires a signer (it submits a tx)');
-    const tx = new Transaction();
-    burnUsufructCapToPtb(tx, { pkg: { packageId }, usufructCapId: args.capId });
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    return { digest: res.digest };
-  }
+  const burn = (): Plan<{ digest: string }> =>
+    digestPlan(
+      () => ctx.defaultExecutor,
+      (tx) => burnUsufructCapToPtb(tx, { pkg: { packageId }, usufructCapId: args.capId }),
+    );
 
-  async function updateRefundAddress(addr: string): Promise<{ digest: string }> {
-    if (signer == null) throw new NotConnected('updateRefundAddress requires a signer (it submits a tx)');
-    const tx = new Transaction();
-    updateUsufructuaryRefundAddress({ usufructCapId: args.capId, newAddress: addr }).toPtb(tx, capPtbArgs);
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    return { digest: res.digest };
-  }
+  const updateRefundAddress = (addr: string): Plan<{ digest: string }> =>
+    digestPlan(
+      () => ctx.defaultExecutor,
+      (tx) =>
+        updateUsufructuaryRefundAddress({ usufructCapId: args.capId, newAddress: addr }).toPtb(
+          tx,
+          capPtbArgs,
+        ),
+    );
 
   return {
     id: args.capId,
@@ -376,7 +378,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     waitFor,
     history,
     borrow,
-    transfer: transferOf(ctx, args.capId, 'cap'),
+    transfer: transferOf(ctx, args.capId),
     burnIfStale,
     burn,
     updateRefundAddress,

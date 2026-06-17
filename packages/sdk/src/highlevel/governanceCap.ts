@@ -25,6 +25,7 @@ import { transferOf } from './bearer.js';
 import { fetchTypeArgs } from './typeargs.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
+import { digestPlan, type Plan } from './plan.js';
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
@@ -45,16 +46,16 @@ export interface GovernanceCap {
    * the rest are read from the current on-chain market and preserved. (You
    * reasoned about every field at `integrate`; modifying touches a subset.)
    */
-  updateMarket(escrow: EscrowRef, changes: Partial<Market>): Promise<{ digest: string }>;
-  retire(escrow: EscrowRef): Promise<{ digest: string }>;
+  updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
+  retire(escrow: EscrowRef): Plan<{ digest: string }>;
   claim(escrow: EscrowRef): Promise<{ assetId: string; digest: string }>;
-  extendRetireCommitment(escrow: EscrowRef, until: Commitment): Promise<{ digest: string }>;
-  extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Promise<{ digest: string }>;
+  extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
+  extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
 
   // cap-level
-  renounce(): Promise<{ digest: string }>;
+  renounce(): Plan<{ digest: string }>;
   /** Hand governance (this cap) to another address. */
-  transfer(to: string): Promise<{ digest: string }>;
+  transfer(to: string): Plan<{ digest: string }>;
 
   /**
    * Integrate a NEW asset (priced in `coin`) into this cap's portfolio. The only
@@ -123,57 +124,56 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     return { escrowId: toId<'Escrow'>(ref), typeArguments: await fetchTypeArgs(client, ref) };
   }
 
-  /** Resolve the escrow, build one PTB command, sign+send. */
-  async function write(
-    action: string,
+  /** A digest-only governance write: resolve the escrow, append one PTB command. */
+  function write(
     ref: EscrowRef,
     build: (tx: Transaction, r: RefInfo) => void,
-  ): Promise<{ digest: string }> {
-    const s = need(action);
-    const r = await resolveRef(ref);
-    const tx = new Transaction();
-    build(tx, r);
-    const res = await execute(client, tx, s).catch(mapAbort);
-    return { digest: res.digest };
+  ): Plan<{ digest: string }> {
+    return digestPlan(
+      () => ctx.defaultExecutor,
+      async (tx) => {
+        build(tx, await resolveRef(ref));
+      },
+    );
   }
 
   return {
     capId,
 
-    async updateMarket(ref, changes) {
-      const s = need('updateMarket');
-      const r = await resolveRef(ref);
-      // Read the current market, overlay the changes, send the full ensemble.
-      const reader = createReader(client, {
-        packageId,
-        escrowId: r.escrowId,
-        typeArguments: r.typeArguments,
-        ...(assetSchema ? { assetSchema } : {}),
-      });
-      // Decimals are irrelevant to the merge (only mist is sent), so the fallback
-      // coin tag is fine here.
-      const current = await readMarket(reader, coinTag(coinInfo(r.typeArguments[1])));
-      const { ensemble } = toEnsembleConfig({ ...current, ...changes });
-      const tx = new Transaction();
-      updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
-      const res = await execute(client, tx, s).catch(mapAbort);
-      return { digest: res.digest };
+    updateMarket(ref, changes) {
+      return digestPlan(
+        () => ctx.defaultExecutor,
+        async (tx) => {
+          const r = await resolveRef(ref);
+          // Read the current market, overlay the changes, send the full ensemble.
+          const reader = createReader(client, {
+            packageId,
+            escrowId: r.escrowId,
+            typeArguments: r.typeArguments,
+            ...(assetSchema ? { assetSchema } : {}),
+          });
+          // Decimals are irrelevant to the merge (only mist is sent), so the fallback coin tag is fine.
+          const current = await readMarket(reader, coinTag(coinInfo(r.typeArguments[1])));
+          const { ensemble } = toEnsembleConfig({ ...current, ...changes });
+          updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
+        },
+      );
     },
 
     retire(ref) {
-      return write('retire', ref, (tx, r) =>
+      return write(ref, (tx, r) =>
         retireAction().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendRetireCommitment(ref, until) {
-      return write('extendRetireCommitment', ref, (tx, r) =>
+      return write(ref, (tx, r) =>
         extendRetireAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendEnsembleCommitment(ref, until) {
-      return write('extendEnsembleCommitment', ref, (tx, r) =>
+      return write(ref, (tx, r) =>
         extendEnsembleAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
@@ -197,15 +197,14 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       return { assetId: String(assetId), digest: res.digest };
     },
 
-    async renounce() {
-      const s = need('renounce');
-      const tx = new Transaction();
-      renounceGovernanceToPtb(tx, { pkg, governanceCapId: capId });
-      const res = await execute(client, tx, s).catch(mapAbort);
-      return { digest: res.digest };
+    renounce() {
+      return digestPlan(
+        () => ctx.defaultExecutor,
+        (tx) => renounceGovernanceToPtb(tx, { pkg, governanceCapId: capId }),
+      );
     },
 
-    transfer: transferOf(ctx, capId, 'governanceCap'),
+    transfer: transferOf(ctx, capId),
 
     async integrateIntoPortfolio(asset, coin, market, opts) {
       const s = need('integrateIntoPortfolio');

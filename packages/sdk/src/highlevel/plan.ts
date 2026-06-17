@@ -59,3 +59,22 @@ export function makePlan<T>(spec: {
     then: (onFulfilled, onRejected) => send().then(onFulfilled, onRejected),
   };
 }
+
+/**
+ * The common write whose only result is its digest. `build` appends the PTB
+ * command(s); `decode` is just the digest. Most writes (`transfer`, `burn`,
+ * `updateMarket`, `retire`, …) are this shape.
+ */
+export function digestPlan(
+  defaultExecutor: () => Executor | null,
+  // Returns whatever (e.g. a `toPtb` `TransactionResult`); the value is discarded.
+  build: (tx: Transaction, sender: string) => unknown,
+): Plan<{ digest: string }> {
+  return makePlan({
+    defaultExecutor,
+    build: async (tx, sender) => {
+      await build(tx, sender);
+    },
+    decode: async (res) => ({ digest: res.digest }),
+  });
+}
