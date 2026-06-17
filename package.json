@@ -57,7 +57,8 @@
     "compose": "tsx scripts/reader-compose.ts",
     "retry": "tsx scripts/retry-live.ts",
     "watch:many": "tsx scripts/watch-many.ts",
-    "reads": "tsx scripts/handle-reads.ts"
+    "reads": "tsx scripts/handle-reads.ts",
+    "history": "tsx scripts/history-perf.ts"
   },
   "keywords": [
     "sui",

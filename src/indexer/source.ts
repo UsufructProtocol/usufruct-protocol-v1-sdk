@@ -24,7 +24,7 @@ import {
   type Source,
   type SubscribeOpts,
 } from '../primitives/source.js';
-import { ESCROW_KEYED, normEscrowId, toTypedEvent, type TypedEvent } from './events.js';
+import { ESCROW_KEYED, eventKey, normEscrowId, toTypedEvent, type TypedEvent } from './events.js';
 
 /** @deprecated use `TypedEvent` (a superset). Kept for source compatibility. */
 export type EventRecord = TypedEvent;
@@ -42,12 +42,12 @@ export interface EventsFilter {
 }
 
 export interface TimelineOpts {
-  /** Event names (`module::Name`) to fan out over (default: every escrow-keyed event). */
+  /** Event names (`module::Name`) to keep (default: every escrow-keyed event). A
+   *  client-side allowlist over the escrow's transactions. */
   readonly types?: readonly string[];
   /**
-   * Restrict to events emitted by transactions this address signed — narrows
-   * the fan-out (and avoids scanning unrelated history the indexer may have
-   * pruned). Omit for the full timeline across all actors.
+   * Restrict to transactions this address signed (`sentAddress`) — narrows the
+   * escrow's tx walk to one actor. Omit for the full timeline across all actors.
    */
   readonly sender?: string;
   readonly afterCheckpoint?: number;
@@ -85,7 +85,19 @@ const OBJECTS_DOC = `query($type: String!, $after: String, $first: Int!) {
 const EVENTS_DOC = `query($type: String!, $sender: SuiAddress, $after: String, $first: Int!, $afterCp: UInt53, $beforeCp: UInt53) {
   events(first: $first, after: $after, filter: { type: $type, sender: $sender, afterCheckpoint: $afterCp, beforeCheckpoint: $beforeCp }) {
     pageInfo { hasNextPage endCursor }
-    nodes { sender { address } timestamp contents { bcs json } }
+    nodes { sender { address } timestamp contents { type { repr } bcs json } }
+  }
+}`;
+
+// An escrow's timeline = the transactions that *touched the escrow object*
+// (`affectedObject`) and the events those transactions emitted. This is O(the
+// escrow's own lifecycle), not O(package history) — and it is the only correct
+// shape: a `type`-prefix events scan silently truncates on the public endpoint
+// (confirmed live), while exact-type-per-event needs a 25-way fan-out.
+const TX_DOC = `query($obj: SuiAddress!, $sent: SuiAddress, $after: String, $first: Int!, $afterCp: UInt53, $beforeCp: UInt53) {
+  transactions(first: $first, after: $after, filter: { affectedObject: $obj, sentAddress: $sent, afterCheckpoint: $afterCp, beforeCheckpoint: $beforeCp }) {
+    pageInfo { hasNextPage endCursor }
+    nodes { effects { timestamp events { nodes { sender { address } contents { type { repr } bcs json } } } } }
   }
 }`;
 
@@ -98,12 +110,24 @@ type ObjectsResult = {
 type EventNode = {
   sender: { address: string } | null;
   timestamp: string | null;
-  contents: { bcs: string | null; json: Record<string, unknown> };
+  contents: { type: { repr: string } | null; bcs: string | null; json: Record<string, unknown> };
 };
 type EventsResult = {
   events: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
     nodes: EventNode[];
+  };
+};
+type TxNode = {
+  effects: {
+    timestamp: string | null;
+    events: { nodes: EventNode[] } | null;
+  } | null;
+};
+type TxResult = {
+  transactions: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: TxNode[];
   };
 };
 
@@ -176,9 +200,15 @@ export function indexerSource<
     } while (after);
   }
 
-  /** Page one event type (typed, BCS-decoded). The single GraphQL events call. */
+  /**
+   * Page a GraphQL `events` query by **exact type** (`pkg::module::Name`), typed
+   * and BCS-decoded. (A `type`-prefix filter — package or module — is *not* used:
+   * the public endpoint silently truncates a broad prefix scan, confirmed live.
+   * Per-escrow history goes through `escrowTimeline`'s `affectedObject` walk.)
+   * Each `TypedEvent` carries its own type from `contents.type.repr`.
+   */
   async function* pageEvents(
-    fullType: string,
+    typeFilter: string,
     p: {
       sender?: string;
       afterCheckpoint?: number;
@@ -190,7 +220,7 @@ export function indexerSource<
     const pageFirst = p.pageSize ?? first;
     do {
       const { events }: EventsResult = await run(EVENTS_DOC, {
-        type: fullType,
+        type: typeFilter,
         sender: p.sender ?? null,
         after,
         first: pageFirst,
@@ -199,7 +229,7 @@ export function indexerSource<
       });
       for (const n of events.nodes) {
         yield toTypedEvent({
-          type: fullType,
+          type: n.contents.type?.repr ?? typeFilter,
           sender: n.sender?.address ?? null,
           timestamp: n.timestamp,
           bcs: n.contents.bcs,
@@ -233,36 +263,46 @@ export function indexerSource<
 
     async escrowTimeline(escrowId, timelineOpts) {
       const want = normEscrowId(escrowId);
-      const names = timelineOpts?.types ?? ESCROW_KEYED;
-      const per = {
-        ...(timelineOpts?.sender !== undefined ? { sender: timelineOpts.sender } : {}),
-        ...(timelineOpts?.afterCheckpoint !== undefined
-          ? { afterCheckpoint: timelineOpts.afterCheckpoint }
-          : {}),
-        ...(timelineOpts?.beforeCheckpoint !== undefined
-          ? { beforeCheckpoint: timelineOpts.beforeCheckpoint }
-          : {}),
-        ...(timelineOpts?.pageSize !== undefined ? { pageSize: timelineOpts.pageSize } : {}),
-      };
-      // Fan out the escrow-keyed event types and filter by escrow_id client-side
-      // (the GraphQL filter can't match a payload field). Bound the concurrency
-      // so we don't burst the indexer — a public endpoint drops parallel queries
-      // under load. Errors propagate (the caller retries); decode is best-effort.
-      const oneType = async (n: string): Promise<TypedEvent[]> => {
-        const out: TypedEvent[] = [];
-        for await (const e of pageEvents(`${opts.packageId}::${n}`, per)) {
-          if (e.escrowId === want) out.push(e);
+      const allow = new Set(timelineOpts?.types ?? ESCROW_KEYED); // `module::Name`
+      const pageFirst = timelineOpts?.pageSize ?? first;
+      const sent = timelineOpts?.sender ?? null;
+      const afterCp = timelineOpts?.afterCheckpoint ?? null;
+      const beforeCp = timelineOpts?.beforeCheckpoint ?? null;
+
+      // Walk the transactions that touched THIS escrow object and read the events
+      // they emitted — O(the escrow's own lifecycle), not O(package history).
+      // A tx may touch several escrows, so still filter by `escrow_id`; the
+      // allowlist drops non-escrow-keyed package events (e.g. *Collected).
+      const out: TypedEvent[] = [];
+      let after: string | null = null;
+      do {
+        const { transactions }: TxResult = await run(TX_DOC, {
+          obj: escrowId,
+          sent,
+          after,
+          first: pageFirst,
+          afterCp,
+          beforeCp,
+        });
+        for (const tx of transactions.nodes) {
+          const ts = tx.effects?.timestamp ?? null;
+          for (const n of tx.effects?.events?.nodes ?? []) {
+            const e = toTypedEvent({
+              type: n.contents.type?.repr ?? '',
+              sender: n.sender?.address ?? null,
+              timestamp: ts,
+              bcs: n.contents.bcs,
+              json: n.contents.json,
+            });
+            if (allow.has(eventKey(e.type)) && e.escrowId === want) out.push(e);
+          }
         }
-        return out;
-      };
-      const CONCURRENCY = 5;
-      const lists: TypedEvent[][] = [];
-      for (let i = 0; i < names.length; i += CONCURRENCY) {
-        lists.push(...(await Promise.all(names.slice(i, i + CONCURRENCY).map(oneType))));
-      }
-      // Merge and order by emission time (ISO string sorts chronologically);
-      // ties broken by event name for determinism.
-      return lists.flat().sort((a, b) => {
+        after = transactions.pageInfo.hasNextPage ? transactions.pageInfo.endCursor : null;
+      } while (after);
+
+      // Order by emission time (ISO string sorts chronologically); ties broken by
+      // event name for determinism.
+      return out.sort((a, b) => {
         const t = (a.timestamp ?? '').localeCompare(b.timestamp ?? '');
         return t !== 0 ? t : a.name.localeCompare(b.name);
       });

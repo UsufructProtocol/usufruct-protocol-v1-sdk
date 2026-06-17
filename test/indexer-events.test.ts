@@ -60,33 +60,62 @@ const tenureBcs = (escrowId: string) =>
     }).toBytes(),
   );
 
-/** node: { sender, timestamp, contents:{ bcs, json } } — the indexer's shape. */
-const node = (bcs: string, escrowId: string, timestamp: string) => ({
+/** node: the indexer's shape, carrying its own `contents.type.repr`. */
+const node = (repr: string, bcs: string | null, escrowId: string, timestamp: string) => ({
   sender: { address: ADDR },
   timestamp,
-  contents: { bcs, json: { escrow_id: escrowId } },
+  contents: { type: { repr }, bcs, json: { escrow_id: escrowId } },
 });
 
-/** Fake GraphQL serving events by `type`; `pages[name]` holds that type's nodes. */
-function fakeGql(pages: Record<string, ReturnType<typeof node>[]>) {
-  return {
-    query: async ({ variables }: { variables: { type: string } }) => {
-      const name = variables.type.split('::').pop()!;
+/** Fake GraphQL for the `events()` path: serves an exact-type `EventFilter`. */
+function fakeEventsGql(nodes: ReturnType<typeof node>[]) {
+  const client = {
+    query: async ({ variables }: { variables: { type: string } }) => ({
+      data: {
+        events: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: nodes.filter((n) => n.contents.type.repr === variables.type),
+        },
+      },
+    }),
+    core: {},
+  } as unknown as SuiGraphQLClient;
+  return { client };
+}
+
+/** A transaction grouping events (the `affectedObject` timeline shape). */
+const tx = (timestamp: string, ...evs: ReturnType<typeof node>[]) => ({
+  effects: { timestamp, events: { nodes: evs } },
+});
+
+/**
+ * Fake GraphQL for the `escrowTimeline` path: serves `transactions(filter:{
+ * affectedObject })` from a flat tx list, and counts `query` calls (so a test can
+ * assert the timeline is a single object-scoped walk, not a 25-way fan-out).
+ */
+function fakeTxGql(txs: ReturnType<typeof tx>[]) {
+  let calls = 0;
+  const client = {
+    query: async () => {
+      calls += 1;
       return {
         data: {
-          events: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: pages[name] ?? [] },
+          transactions: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: txs },
         },
       };
     },
     core: {},
   } as unknown as SuiGraphQLClient;
+  return { client, calls: () => calls };
 }
+
+const REPR = (name: string) => `${PKG}::asset_state::${name}`;
 
 describe('indexer typed events', () => {
   it('events() BCS-decodes contents.bcs to the codegen struct and extracts escrowId', async () => {
-    const gql = fakeGql({ HandoverCompleted: [node(handoverBcs(A), A, '2024-01-01T00:00:01Z')] });
+    const { client } = fakeEventsGql([node(REPR('HandoverCompleted'), handoverBcs(A), A, '2024-01-01T00:00:01Z')]);
     const recs = [];
-    for await (const e of indexerSource(gql, { packageId: PKG }).events({
+    for await (const e of indexerSource(client, { packageId: PKG }).events({
       type: `${PKG}::asset_state::HandoverCompleted`,
     })) {
       recs.push(e);
@@ -101,18 +130,25 @@ describe('indexer typed events', () => {
 });
 
 describe('indexer escrowTimeline', () => {
-  it('fans out, keeps only the asked escrow, and orders by time', async () => {
-    const gql = fakeGql({
-      HandoverCompleted: [
-        node(handoverBcs(A), A, '2024-01-01T00:00:01Z'),
-        node(handoverBcs(B), B, '2024-01-01T00:00:00Z'), // other escrow → excluded
-      ],
-      TenureExpired: [node(tenureBcs(A), A, '2024-01-01T00:00:02Z')],
-    });
-    const timeline = await indexerSource(gql, { packageId: PKG }).escrowTimeline(id<'Escrow'>(A), {
-      types: ['asset_state::HandoverCompleted', 'asset_state::TenureExpired'],
-    });
+  it('walks the escrow’s transactions: keeps only this escrow + escrow-keyed types, time-ordered', async () => {
+    const { client, calls } = fakeTxGql([
+      // a tenure-expiry tx (later) — a single tx can emit several events…
+      tx(
+        '2024-01-01T00:00:02Z',
+        node(REPR('TenureExpired'), tenureBcs(A), A, '2024-01-01T00:00:02Z'),
+        // …and a non-escrow-keyed one → excluded by the allowlist
+        node(`${PKG}::governance_cap::GovernanceCapBurned`, null, A, '2024-01-01T00:00:02Z'),
+      ),
+      // a handover tx (earlier) that also touched another escrow B → B excluded by escrow_id
+      tx(
+        '2024-01-01T00:00:01Z',
+        node(REPR('HandoverCompleted'), handoverBcs(A), A, '2024-01-01T00:00:01Z'),
+        node(REPR('HandoverCompleted'), handoverBcs(B), B, '2024-01-01T00:00:01Z'),
+      ),
+    ]);
+    const timeline = await indexerSource(client, { packageId: PKG }).escrowTimeline(id<'Escrow'>(A));
     expect(timeline.map((e) => e.name)).toEqual(['HandoverCompleted', 'TenureExpired']); // time order
     expect(timeline.every((e) => e.escrowId === normEscrowId(A))).toBe(true); // B excluded
+    expect(calls()).toBe(1); // one object-scoped walk, not a 25-way fan-out
   });
 });
