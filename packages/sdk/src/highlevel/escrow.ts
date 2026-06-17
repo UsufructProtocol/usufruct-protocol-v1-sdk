@@ -23,7 +23,8 @@ import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.
 import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
-import { createdIdByType, execute } from './send.js';
+import { createdIdByType, execute, signerExecutor } from './send.js';
+import { makePlan, type Plan } from './plan.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
@@ -125,10 +126,16 @@ export interface Escrow {
    * **overpay** — the surplus becomes stake (more credit/time). The coin is the
    * escrow's own, drawn from your balance — you never name it. Returns the cap.
    *
-   *   escrow.rent({ tenures: 1 })                    // pay the floor
-   *   escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
+   *   await escrow.rent({ tenures: 1 })                     // pay the floor (default signer)
+   *   await escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
+   *   await escrow.rent({ tenures: 1 }).send(walletExecutor) // swap how it's signed
+   *   const tx = await escrow.rent({ tenures: 1 }).toTransaction(addr) // build-only
+   *
+   * Returns a `Plan<UsufructCap>` — a deferred write. Awaiting it (or `.send()`)
+   * builds, executes with the handle's signer, and decodes the minted cap;
+   * `.send(executor)` swaps signing; `.toTransaction(addr)` hands you the PTB.
    */
-  rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap>;
+  rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap>;
 
   /**
    * Preview the floor a bid would establish: what the next floor price becomes if
@@ -393,39 +400,43 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   const earningsInbox: EarningsInbox = createInbox(ctx, inboxId, 'earnings');
   const feeInbox: ProtocolFeeInbox = createInbox(ctx, feeInboxId, 'fees');
 
-  async function rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap> {
-    if (signer == null || owner == null) {
-      throw new NotConnected('rent requires a signer; pass one to usufruct() or u.connect()');
-    }
+  function rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap> {
     const count = BigInt(args.tenures);
-    const floorTotal = floorMist * count; // snapshot floor at fetch time `t`
     // The decision: pay the floor (default) or overpay (surplus → stake). The
     // coin is the escrow's own — auto-sourced; the renter only chooses the number.
-    const paidMist = args.pay ? args.pay.mist : floorTotal;
+    const paidMist = args.pay ? args.pay.mist : floorMist * count; // floor snapshot @ fetch `t`
 
-    const tx = new Transaction();
-    const payment = await sourceCoin(tx, client, owner, { coinType, amountMist: paidMist });
-    const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
-      pkg: { packageId },
-      escrowId,
-      payment,
-      typeArguments,
-    });
-    tx.transferObjects([minted], owner);
+    return makePlan<UsufructCap>({
+      // default execution = the handle's signer (today's path); null ⇒ read-only.
+      defaultExecutor: () => (signer == null ? null : signerExecutor(client, signer)),
 
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    const capId = createdIdByType(res, '::usufruct_cap::UsufructCap');
-    if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
+      // phase 1 — build: source the payment from `sender`, mint, keep the cap.
+      build: async (tx, sender) => {
+        const payment = await sourceCoin(tx, client, sender, { coinType, amountMist: paidMist });
+        const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
+          pkg: { packageId },
+          escrowId,
+          payment,
+          typeArguments,
+        });
+        tx.transferObjects([minted], sender);
+      },
 
-    const expiry = await reader.tenureExpiryMs();
-    return createCap(ctx, {
-      capId,
-      escrowId: idStr,
-      typeArguments,
-      receipt: {
-        paid: price(paidMist, coin),
-        expiresAt: new Date(Number(expiry ?? 0n)),
-        digest: res.digest,
+      // phase 3 — decode: created cap id (from effects) + a post-exec read for expiry.
+      decode: async (res) => {
+        const capId = createdIdByType(res, '::usufruct_cap::UsufructCap');
+        if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
+        const expiry = await reader.tenureExpiryMs();
+        return createCap(ctx, {
+          capId,
+          escrowId: idStr,
+          typeArguments,
+          receipt: {
+            paid: price(paidMist, coin),
+            expiresAt: new Date(Number(expiry ?? 0n)),
+            digest: res.digest,
+          },
+        });
       },
     });
   }
