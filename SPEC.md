@@ -576,11 +576,11 @@ The four-primitive kernel loses on exactly one category — agenda
 dashboards — and wins on every category where the use case is not
 schedule-shaped, including the entire "ideas not yet imagined" class.
 
-The agenda-ergonomics gap is closed by **convenience layers** (§11 packages),
-which compose the primitives in canonical ways without contaminating the
-kernel. `Schedule` ships as the first convenience layer: opt-in, hand-written,
-explicitly built atop `View` and `Action`. The result: agenda ergonomics
-where they help, full expressive ceiling preserved everywhere else.
+The agenda-ergonomics gap is closed by **convenience layers** (§7.2), which
+compose the primitives in canonical ways without contaminating the kernel.
+`Schedule` ships as one such layer: opt-in, hand-written, explicitly built atop
+`View` and `Action`. The result: agenda ergonomics where they help, full
+expressive ceiling preserved everywhere else.
 
 The discipline this imposes:
 
@@ -590,6 +590,42 @@ The discipline this imposes:
 Every accommodation is pushed outward into convenience packages, never inward
 into the kernel. The kernel exists at the lowest non-trivial level and stays
 there.
+
+### §7.2 — The high-level API (Layer 2)
+
+The developer-facing API — `usufruct()` and the capability **handles** (`Escrow`,
+`UsufructCap`, `GovernanceCap`, `EarningsInbox`, `ProtocolFeeInbox`) — is the
+**canonical convenience layer**: the productized composition of §7. It is governed
+by this spec, not exempt from it.
+
+**Composition law.** Every handle member is a composition of the four primitives —
+nothing else. Reads route through the `Reader` (the on-chain `View` surface, §6.1);
+writes through `Action.toPtb`; discovery/history/streaming through `Source`. The
+handle adds only *ergonomics*: batching a fetch into a coherent snapshot, resolving
+rich types (`Price`/`Date` from `Mist`/`Ms` + on-chain `CoinMetadata`), and the
+object-centric routing below. If a handle method requires new core code (not a
+composition of `EscrowState`/`View`/`Action`/`Source`), the design has failed —
+the same discipline §7.1 imposes on the kernel.
+
+**Drift-zero by construction.** Layer 2 lives in the core package
+(`@usufruct-protocol/sdk`) and reads *everything effective* through the `Reader`,
+so it inherits drift-zero (§12): it never re-derives the contract's logic. The
+off-chain mirror (`@usufruct-protocol/sim`) is reached explicitly, never by a
+core handle.
+
+**Object-centric law.** Authority is **possession** of a bearer object, so both
+reads and writes live on the object whose question or right they are — you ask the
+object you hold. A write is a method on its receiver (`usufructCap.burn()`,
+`governanceCap.updateMarket()`); a read is likewise scoped to its subject
+(`escrow.status`, `usufructCap.state()`, `governanceCap.governs(escrow)`). A view
+parameterized by another object's id is projected onto that object's handle and
+**role-gated** — `usufructCap.state()` reports the seat's economics only while the
+cap holds the seat, else `null` (honest possession, never another seat's data).
+`transfer` is first-class: moving the object moves the role.
+
+**The four verbs.** The whole surface reduces to read · write · inspect · react —
+`Reader`/snapshot · `Action.toPtb` · `Source` pull (events/discovery) · `Source`
+push (gRPC firehose). Each is one of the primitives; none is new core.
 
 ---
 
