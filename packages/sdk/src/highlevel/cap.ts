@@ -40,8 +40,20 @@ export interface RentReceipt {
   readonly digest: string;
 }
 
-/** The caller's PTB middle: the asset is handed in; the `return` is appended for you. */
+/**
+ * The caller's PTB middle — one zone where the code foreign to the SDK lives.
+ * The asset and the whole `tx` are handed in; the `return` is appended for you.
+ * A `Use` is just a value: write it inline as a lambda, as a named constant in
+ * another file, or as a factory `(args) => Use` when it needs parameters.
+ */
 export type Use = (asset: TransactionObjectArgument, tx: Transaction) => void;
+
+/** Compose several `Use` middles into one, applied left-to-right over the same `(asset, tx)`. */
+const compose =
+  (uses: Use[]): Use =>
+  (asset, tx) => {
+    for (const use of uses) use(asset, tx);
+  };
 
 /** Outcome of a self-driven `borrow` (sign + send). */
 export interface BorrowReceipt {
@@ -50,10 +62,13 @@ export interface BorrowReceipt {
 }
 
 export interface BorrowMethod {
-  /** borrow → your calls → return, signed & sent. */
-  (use: Use): Promise<BorrowReceipt>;
+  /**
+   * borrow → your calls → return, signed & sent. Pass one `Use`, or several —
+   * they compose in order inside the single bracket (no separate composer).
+   */
+  (...uses: Use[]): Promise<BorrowReceipt>;
   /** Drop the bracket into a PTB you drive (sponsorship / batching). */
-  into(tx: Transaction, use: Use): void;
+  into(tx: Transaction, ...uses: Use[]): void;
 }
 
 /** This cap's relationship to its escrow's seats, by possession of the seat. */
@@ -159,19 +174,19 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     typeArguments: args.typeArguments,
   };
 
-  const borrow = ((use: Use): Promise<BorrowReceipt> => {
+  const borrow = ((...uses: Use[]): Promise<BorrowReceipt> => {
     if (signer == null) {
       throw new NotConnected('borrow requires a signer; pass one to usufruct() or u.connect()');
     }
     const tx = new Transaction();
-    withBorrowedAsset(tx, ptbArgs, use);
+    withBorrowedAsset(tx, ptbArgs, compose(uses));
     return execute(client, tx, signer)
       .then((res) => ({ digest: res.digest, returned: true as const }))
       .catch(mapAbort);
   }) as BorrowMethod;
 
-  borrow.into = (tx: Transaction, use: Use): void => {
-    withBorrowedAsset(tx, ptbArgs, use);
+  borrow.into = (tx: Transaction, ...uses: Use[]): void => {
+    withBorrowedAsset(tx, ptbArgs, compose(uses));
   };
 
   const capPtbArgs = {

@@ -90,6 +90,11 @@ await governanceCap.transfer(treasury);             // move the object → move 
 Each write lives on the object that authorizes it. `transfer` is first-class on
 every bearer — moving the object moves the role.
 
+`borrow` is the one write that hands you the asset mid-PTB to compose with. It is
+variadic — `cap.borrow(a, b, c)` composes recipes in order — and `cap.borrow.into`
+drops the bracket into a PTB you drive. See
+[borrow — composing code around the rented asset](./borrow-composition.md).
+
 ## Inspect — what happened (pull)
 
 Every object answers two questions: *which escrows relate to me* (discovery) and

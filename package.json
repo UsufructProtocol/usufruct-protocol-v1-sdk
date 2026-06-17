@@ -22,6 +22,8 @@
     "keystone": "tsx scripts/keystone-slice.ts",
     "governor": "tsx scripts/governor-slice.ts",
     "demo": "tsx scripts/usufruct-in-action.ts",
+    "demo:recipes": "tsx scripts/borrow-recipes.ts",
+    "demo:recipes:repeat": "tsx scripts/borrow-recipes-repeat.ts",
     "lifecycle": "tsx scripts/governor-lifecycle.ts",
     "challenge": "tsx scripts/challenge-flow.ts",
     "secondary": "tsx scripts/secondary-market.ts",

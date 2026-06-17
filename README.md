@@ -52,8 +52,9 @@ Full quickstart in the [core package README](./packages/sdk/README.md).
   mirror.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the primitives, how they compose, and the
   drift-zero seam.
-- [`journeys/`](./journeys) — the object model (authority = possession) and the
-  read·write·inspect·react mental model.
+- [`journeys/`](./journeys) — the object model (authority = possession), the
+  read·write·inspect·react mental model, and
+  [borrow composition](./journeys/borrow-composition.md) (recipes around the rented asset).
 - [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.
 
 ## Development
