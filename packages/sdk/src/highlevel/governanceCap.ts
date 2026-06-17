@@ -79,6 +79,13 @@ export interface GovernanceCap {
   escrows(): Promise<EscrowListing[]>;
 
   /**
+   * Does THIS cap govern the given escrow right now? Object-centric read: one cap
+   * governs a *portfolio*, so the question names the escrow. (`governanceCapIsValid`
+   * on that escrow, probed with this cap's id.)
+   */
+  governs(escrow: EscrowRef): Promise<boolean>;
+
+  /**
    * React to changes across this cap's **whole portfolio** over one gRPC
    * firehose: resolves `escrows()` and `watchMany`s them. `onChange` fires with a
    * handle per escrow's current state, then on every change. Grow/shrink and end
@@ -226,6 +233,15 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     escrows() {
       return discoverIntegrated(ctx, { governanceCapId: capId });
+    },
+
+    async governs(ref) {
+      const r = await resolveRef(ref);
+      return createReader(client, {
+        packageId,
+        escrowId: r.escrowId,
+        typeArguments: r.typeArguments,
+      }).governanceCapIsValid(capId);
     },
 
     async watch(onChange, watchOpts) {

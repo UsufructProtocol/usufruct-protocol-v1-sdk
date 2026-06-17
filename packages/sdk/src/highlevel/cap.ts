@@ -15,13 +15,16 @@ import {
   updateUsufructuaryRefundAddress,
 } from '../actions/governance.js';
 import { id as toId } from '../primitives/brand.js';
-import { createReader } from '../read/reader.js';
+import { createReader, type Reader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
+import { resolveCoinInfo } from './coinmeta.js';
+import { resolveWhen } from './clock.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, mapAbort } from './errors.js';
 import { execute } from './send.js';
-import type { Price } from './value.js';
+import { price, type Price } from './value.js';
+import type { When } from './usufruct.js';
 
 /** Mint details when the cap came from a `rent()` call. */
 export interface RentReceipt {
@@ -49,12 +52,50 @@ export interface BorrowMethod {
   into(tx: Transaction, use: Use): void;
 }
 
+/** This cap's relationship to its escrow's seats, by possession of the seat. */
+export type UsufructCapRole = 'active' | 'pending' | 'stale' | 'unknown';
+
+/**
+ * The cap's read photo — its seat, object-centric. The seat numbers
+ * (`stake`/`timeRemainingMs`/…) are the *active* (or *pending*) seat's values, so
+ * they are populated only when THIS cap holds that seat; otherwise `null`. (Asking
+ * a displaced cap for "its" stake honestly returns `null`, not another seat's.)
+ */
+export interface UsufructCapState {
+  readonly role: UsufructCapRole;
+  /** The seat's usufructuary address (active or pending), else `null`. */
+  readonly usufructuaryAddr: string | null;
+  /** Staked balance — the seat's prepaid credit pool. Active or pending seat. */
+  readonly stake: Price | null;
+  /** Stake left after credit consumed, at `t`. Active seat only. */
+  readonly stakeRemaining: Price | null;
+  /** Credit consumed so far, at `t`. Active seat only. */
+  readonly accruedCredit: Price | null;
+  /** Tenures this seat committed to. Active or pending seat. */
+  readonly committedTenures: number | null;
+  /** Ms this seat has left at `t`. Active seat only. */
+  readonly timeRemainingMs: number | null;
+}
+
 /** The right of use. The cap is the receiver of its writes — never a hidden arg. */
 export interface UsufructCap {
   readonly id: string;
   readonly escrowId: string;
   /** Mint details if this handle came from `rent()`, else `null`. */
   readonly receipt: RentReceipt | null;
+
+  /**
+   * This cap's read photo — ask the cap about its own seat (object-centric, the
+   * read twin of the writes). One batched fetch against the escrow's views,
+   * role-gated: seat numbers are this cap's only while it holds the seat.
+   */
+  state(opts?: { at?: When }): Promise<UsufructCapState>;
+  /** Does this cap hold the active seat right now? (cheap one-off) */
+  isActive(): Promise<boolean>;
+  /** Is this cap the pending challenger? */
+  isPending(): Promise<boolean>;
+  /** Has this cap been displaced (stale — burnable)? */
+  isStale(): Promise<boolean>;
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
@@ -111,13 +152,83 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     typeArguments: args.typeArguments,
   };
 
-  async function burnIfStale(): Promise<{ burned: boolean; digest: string | null }> {
-    if (signer == null) throw new NotConnected('burnIfStale requires a signer (it submits a tx)');
-    const reader = createReader(client, {
+  /** A drift-free reader bound to this cap's escrow (cap reads route through it). */
+  const mkReader = (): Reader =>
+    createReader(client, {
       packageId,
       escrowId: toId<'Escrow'>(args.escrowId),
       typeArguments: args.typeArguments,
     });
+
+  async function state(opts?: { at?: When }): Promise<UsufructCapState> {
+    const reader = mkReader();
+    const [t, activeId, pendingId] = await Promise.all([
+      resolveWhen(client, opts?.at),
+      reader.activeUsufructCapId(),
+      reader.pendingUsufructCapId(),
+    ]);
+    const coinType = args.typeArguments[1];
+    const role: UsufructCapRole =
+      activeId === args.capId
+        ? 'active'
+        : pendingId === args.capId
+          ? 'pending'
+          : (await reader.usufructCapIsStale(args.capId))
+            ? 'stale'
+            : 'unknown';
+    const none: UsufructCapState = {
+      role,
+      usufructuaryAddr: null,
+      stake: null,
+      stakeRemaining: null,
+      accruedCredit: null,
+      committedTenures: null,
+      timeRemainingMs: null,
+    };
+    if (role === 'active') {
+      const [coin, addr, stakeMist, remainMist, accruedMist, tenures, leftMs] = await Promise.all([
+        resolveCoinInfo(client, coinType),
+        reader.activeUsufructuaryAddr(),
+        reader.activeStakeBalanceMist(),
+        reader.activeStakeBalanceRemainingMist(t),
+        reader.accruedCreditMist(t),
+        reader.activeCommittedTenures(),
+        reader.activeUsufructuaryTimeRemainingMs(t),
+      ]);
+      return {
+        role,
+        usufructuaryAddr: addr,
+        stake: stakeMist == null ? null : price(stakeMist, coin),
+        stakeRemaining: remainMist == null ? null : price(remainMist, coin),
+        accruedCredit: price(accruedMist, coin),
+        committedTenures: tenures == null ? null : Number(tenures),
+        timeRemainingMs: leftMs == null ? null : Number(leftMs),
+      };
+    }
+    if (role === 'pending') {
+      const [coin, addr, stakeMist, tenures] = await Promise.all([
+        resolveCoinInfo(client, coinType),
+        reader.pendingUsufructuaryAddr(),
+        reader.pendingStakeBalanceMist(),
+        reader.pendingCommittedTenures(),
+      ]);
+      return {
+        ...none,
+        usufructuaryAddr: addr,
+        stake: stakeMist == null ? null : price(stakeMist, coin),
+        committedTenures: tenures == null ? null : Number(tenures),
+      };
+    }
+    return none;
+  }
+
+  const isActive = (): Promise<boolean> => mkReader().usufructCapIsActive(args.capId);
+  const isPending = (): Promise<boolean> => mkReader().usufructCapIsPending(args.capId);
+  const isStale = (): Promise<boolean> => mkReader().usufructCapIsStale(args.capId);
+
+  async function burnIfStale(): Promise<{ burned: boolean; digest: string | null }> {
+    if (signer == null) throw new NotConnected('burnIfStale requires a signer (it submits a tx)');
+    const reader = mkReader();
     if (!(await reader.usufructCapIsStale(args.capId))) return { burned: false, digest: null };
     const tx = new Transaction();
     burnStaleUsufructCap({ usufructCapId: args.capId }).toPtb(tx, capPtbArgs);
@@ -145,6 +256,10 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     id: args.capId,
     escrowId: args.escrowId,
     receipt: args.receipt,
+    state,
+    isActive,
+    isPending,
+    isStale,
     borrow,
     transfer: transferOf(ctx, args.capId, 'cap'),
     burnIfStale,

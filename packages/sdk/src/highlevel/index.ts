@@ -19,7 +19,15 @@ export { duration, toEnsembleConfig } from './market.js';
 export type { Market, Duration, Shape, Commitment, PowerLawNum, PowerLawDen, ExpAlpha } from './market.js';
 
 export type { Escrow, EscrowStatus } from './escrow.js';
-export type { UsufructCap, RentReceipt, BorrowReceipt, BorrowMethod, Use } from './cap.js';
+export type {
+  UsufructCap,
+  UsufructCapState,
+  UsufructCapRole,
+  RentReceipt,
+  BorrowReceipt,
+  BorrowMethod,
+  Use,
+} from './cap.js';
 export type { GovernanceCap, EscrowRef } from './governanceCap.js';
 export type { Inbox, EarningsInbox, ProtocolFeeInbox } from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';

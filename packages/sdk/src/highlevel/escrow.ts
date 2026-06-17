@@ -46,15 +46,7 @@ export interface Escrow {
   /** Free to take now at the floor (idle/descent), without displacing a tenant. */
   readonly isAvailable: boolean;
   readonly floorPrice: Price;
-  readonly accruedCredit: Price;
   readonly expiresAt: Date | null;
-  /** The sitting tenant's staked balance (their prepaid credit pool). Rented only. */
-  readonly activeStake: Price | null;
-  /** The pending challenger's staked balance. Non-null only in `demand`. */
-  readonly pendingStake: Price | null;
-  /** Ms the sitting tenant has left at the snapshot's `t` (the authoritative view,
-   *  not just `expiresAt − t`). Rented only; else null. */
-  readonly timeRemainingMs: number | null;
 
   // identities — which objects relate to this escrow (data, any holder)
   readonly governanceCapId: string;
@@ -240,22 +232,16 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     reader.feeInboxId(),
   ]);
 
-  // `accruedCreditMist` aborts on a non-rented escrow — read it only when rented.
   // The demand-state views (pending challenger + handover) only exist in `demand`.
-  const rented = status === 'occupied' || status === 'demand';
+  // Seat economics (stake / time-remaining / accrued credit) are NOT here — they
+  // belong to the seat's `UsufructCap` (`cap.state()`), object-centric.
   const challenged = status === 'demand';
-  const [accruedMist, role, pendingCapId, pendingAddr, handoverMs, activeStakeMist, pendingStakeMist, timeLeftMs] =
-    await Promise.all([
-      rented ? reader.accruedCreditMist(t) : Promise.resolve(mist(0n)),
-      resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
-      challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
-      challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
-      challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
-      // stake + time-remaining are meaningful only while rented (gated, like accrued)
-      rented ? reader.activeStakeBalanceMist() : Promise.resolve(null),
-      challenged ? reader.pendingStakeBalanceMist() : Promise.resolve(null),
-      rented ? reader.activeUsufructuaryTimeRemainingMs(t) : Promise.resolve(null),
-    ]);
+  const [role, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
+    resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
+    challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
+    challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
+    challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
+  ]);
 
   // Real decimals/symbol from CoinMetadata (cached) — assuming 9 renders any
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
@@ -534,11 +520,7 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     status,
     isAvailable: status === 'idle' || status === 'descent',
     floorPrice: price(floorMist, coin),
-    accruedCredit: price(accruedMist, coin),
     expiresAt: expiryMs == null ? null : new Date(Number(expiryMs)),
-    activeStake: activeStakeMist == null ? null : price(activeStakeMist, coin),
-    pendingStake: pendingStakeMist == null ? null : price(pendingStakeMist, coin),
-    timeRemainingMs: timeLeftMs == null ? null : Number(timeLeftMs),
     governanceCapId: govCapId,
     earningsInboxId: inboxId,
     feeInboxId,
