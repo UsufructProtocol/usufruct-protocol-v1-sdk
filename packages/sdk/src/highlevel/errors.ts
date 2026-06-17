@@ -86,20 +86,54 @@ const OVERLAY: Readonly<Record<string, new (e: MoveAbortEntry) => MoveAbortError
   EHandoverFloorExceedsTenure: InvalidMarket,
 };
 
-/** Nicer text for common aborts; the rest are humanized from the constant name. */
+/** Human text per abort (one entry per runtime constant); humanize() is the fallback. */
 const MESSAGES: Readonly<Record<string, string>> = {
-  ENotRented: 'the escrow is not currently rented',
-  EInsufficientPayment: 'the payment was below floor × tenures',
-  EAlreadyRetired: 'the asset is already retired',
-  EAlreadyRetiring: 'the escrow is already retiring',
-  ENotRetired: 'the asset is not retired yet',
-  EPendingUsufructCap: 'a challenger is pending — this cap is not the active seat',
-  EStaleUsufructCap: 'this usufruct cap is stale (the holder was displaced)',
-  EUsufructCapNotStale: 'this usufruct cap is still active/pending — not stale',
+  // asset_state — the escrow state machine
+  ENotRented: 'the escrow is not currently rented — call rent() first',
+  EInsufficientPayment: 'the payment was < floor × tenures',
+  ERetireFlagBlocksBid: 'the governor flagged retire — the asset can no longer be rented and will be retired',
+  ERetiredNoBid: 'the escrow is retired and cannot be rented',
+  ERetireCommitmentFloorNotElapsed:
+    'the retire-commitment window has not elapsed — the governor cannot retire the asset yet',
+  EAlreadyRetired: 'the asset is already retired — you can claim it now',
   EWrongEscrowUsufructCap: 'this usufruct cap belongs to a different escrow',
-  EWrongEscrowGovernanceCap: 'this governance cap does not govern this escrow',
+  EPendingUsufructCap: 'your seat is pending — this cap becomes active unless another bid supersedes it',
+  EStaleUsufructCap: 'this usufruct cap is stale — no longer the active or pending seat; burn it and rent again',
+  EUsufructCapNotStale:
+    'this usufruct cap is still active/pending — not stale; burning it forfeits your right to borrow the asset — use burn() to do it anyway',
   EReceiptEscrowMismatch: 'the borrow receipt is for a different escrow',
+  EWrongEscrowGovernanceCap: 'this governance cap does not govern this escrow',
+  ENotRetired: 'you must call retire() before the asset can be claimed',
+  ERetireAlreadyScheduled: 'retire is already scheduled for this escrow',
+  ERetireCommitmentNotExtended: 'the retire-commitment extension must set a longer window',
   EReturnedDifferentAsset: 'a different asset was returned than was borrowed',
+  EAlreadyRetiring: 'the escrow is already retiring — it will be retired the next time the asset becomes idle',
+  EUsufructCapStale:
+    'this usufruct cap is stale — no longer the active or pending seat; already refunded — burn it and rent again',
+  EEnsembleCommitmentFloorNotElapsed:
+    'the market-commitment window has not elapsed — the governor committed not to change the market yet',
+  EEnsembleCommitmentNotExtended: 'the market-commitment extension must set a longer window',
+  // policies — invalid market configuration
+  EDescentCeilingZero: "auction descent duration must be > 0 — use 'off' instead",
+  EAlphaNumRange: 'curve exponent numerator out of range (1 <= num <= 8)',
+  EAlphaDenRange: 'curve exponent denominator out of range (1 <= den <= 4)',
+  EDegenerateLinear: "powerLaw num == den is just linear — use 'linear' instead",
+  EAlphaAbsRange: 'exponential alpha out of range (1 <= magnitude <= 8)',
+  EEnsembleCommitmentFloorZero: "market-commitment window must be > 0 — use 'immediate' instead",
+  EHandoverFloorZero: "handover window must be > 0 — use 'off' instead",
+  EHandoverFloorExceedsTenure: 'handover window must be <= the tenure',
+  EDeltaZero: 'price-escalation delta must be > 0',
+  EBpsRange: 'compound-escalation bps out of range (must be >= 1)',
+  EPriceZero: 'rest price must be > 0',
+  ERetireCommitmentFloorZero: "retire-commitment window must be > 0 — use 'immediate' instead",
+  EDurationZero: 'tenure duration must be > 0',
+  EMultiCycleNotAllowed: 'multi-tenure is off — rent a single tenure',
+  ETenuresZero: 'tenure count must be >= 1',
+  // internal / overflow (rare)
+  EAssetBorrowed: 'the asset is currently borrowed — you cannot read it until it is returned',
+  EMulDivOverflow: 'internal arithmetic overflow (mul-div)',
+  ENthRootBadDegree: 'internal: nth-root degree out of range',
+  EPriceAddOverflow: 'price addition overflowed u64',
 };
 
 /** `EAlreadyRetired` → "already retired". */
