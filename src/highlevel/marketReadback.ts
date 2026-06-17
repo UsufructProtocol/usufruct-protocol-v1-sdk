@@ -4,7 +4,7 @@
  * read the current market, merge the changed fields, send the full ensemble.
  */
 import type { Reader } from '../read/reader.js';
-import type { Commitment as ViewCommitment, CurveShape } from '../views/config.js';
+import type { Commitment as ViewCommitment, CurveShape } from '../types/config-types.js';
 import type { Commitment, ExpAlpha, Market, PowerLawDen, PowerLawNum, Shape } from './market.js';
 import { coinInfo, coinTag, price } from './value.js';
 

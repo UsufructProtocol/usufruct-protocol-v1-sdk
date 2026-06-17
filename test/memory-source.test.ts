@@ -5,7 +5,7 @@
  * subscribe.
  */
 import { describe, expect, it } from 'vitest';
-import * as actions from '../src/actions/index.js';
+import * as actions from '../src/sim/actions/index.js';
 import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
 import { memorySource } from '../src/primitives/memory-source.js';
 import { isMissingObject } from '../src/primitives/source.js';

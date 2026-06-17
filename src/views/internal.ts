@@ -2,14 +2,19 @@
  * Shared pure helpers for hand-written views. Mirrors the private accessors
  * in `escrow.move` (`read_state`, `read_core`, `read_ensemble`).
  */
-import type { AssetSchema, EscrowData, EscrowState } from '../primitives/state.js';
+import type { AssetSchema, EscrowState } from '../primitives/state.js';
+import type { AssetStateData, CoreData, EnsembleData } from '../types/state-views.js';
+import type { CycleParamsData } from '../types/cycle-types.js';
 
-type Escrow = EscrowData<AssetSchema>;
-export type AssetStateData = NonNullable<Escrow['state']>;
-export type CoreData = NonNullable<Escrow['core']>;
-export type EnsembleData = CoreData['ensemble']['active'];
-export type RentingData = Extract<AssetStateData, { $kind: 'Renting' }>['Renting'];
-export type OccupiedTermsData = Extract<RentingData, { $kind: 'Occupied' }>['Occupied']['terms'];
+// The projection types now live in core (`types/`); re-export for back-compat.
+export type {
+  AssetStateData,
+  CoreData,
+  EnsembleData,
+  OccupiedTermsData,
+  RentingData,
+} from '../types/state-views.js';
+export type { CycleParamsData } from '../types/cycle-types.js';
 
 /** Mirrors `read_state`: aborts with EAssetBorrowed when the slot is empty. */
 export function assetState(state: EscrowState<AssetSchema>): AssetStateData {
@@ -35,14 +40,6 @@ export function rentingTerms(s: AssetStateData) {
   if (s.$kind !== 'Renting') return null;
   const r = s.Renting;
   return r.$kind === 'Occupied' ? r.Occupied.terms : r.Demand.terms;
-}
-
-/** Decoded `CycleParams` in parsed (string-u64) form. */
-export interface CycleParamsData {
-  readonly floor: { readonly mist: string };
-  readonly ceiling: { readonly ms: string };
-  readonly handover: { readonly ms: string };
-  readonly descent: { readonly ms: string };
 }
 
 /** Mirrors `asset_state::resolve_cycle_params(ensemble)`. */

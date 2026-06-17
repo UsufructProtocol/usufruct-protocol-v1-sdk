@@ -1,0 +1,18 @@
+{
+  // Drift-zero proof (SPEC §6 / §8): the core compiles with the mirror absent.
+  // If any core module imported `sim/`, `views/`, the in-memory sources, or the
+  // pure `View<T>` alias, this build would fail "cannot find module". Green here
+  // = the core is self-contained and cannot drift (its only failure surface is
+  // the BCS decode). `src/index.ts` is excluded because it is the combined
+  // barrel that re-exports the opt-in `sim` namespace; in the Phase-B monorepo
+  // the core package's entry point will not.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/sim",
+    "src/views",
+    "src/primitives/memory-source.ts",
+    "src/primitives/memory-inbox.ts",
+    "src/primitives/view.ts",
+    "src/index.ts"
+  ]
+}

@@ -1,6 +1,6 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import * as actions from '../src/actions/index.js';
+import * as actions from '../src/sim/actions/index.js';
 import { TESTNET } from '../src/config/network.js';
 import { id, mist, ms } from '../src/primitives/brand.js';
 import * as views from '../src/views/index.js';

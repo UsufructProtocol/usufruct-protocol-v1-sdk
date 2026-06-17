@@ -24,8 +24,8 @@ import type {
   RestPrice,
   TenureDuration,
   TenureExtend,
-} from '../views/config.js';
-import type { CycleParamsView } from '../views/cycle.js';
+} from '../types/config-types.js';
+import type { CycleParamsView } from '../types/cycle-types.js';
 import { SPEC_BY_NAME, VIEW_SPECS, runSpec, runSpecs, type ReadCtx } from './spec.js';
 
 export interface ReaderTarget {

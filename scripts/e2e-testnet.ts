@@ -10,7 +10,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
-import * as actions from '../src/actions/index.js';
+import * as actions from '../src/sim/actions/index.js';
 import {
   EarningsMessageCollected,
   EarningsMessagePosted,

@@ -4,7 +4,7 @@
  * the live e2e proves (collected == posted), here as an offline assertion.
  */
 import { describe, expect, it } from 'vitest';
-import * as actions from '../src/actions/index.js';
+import * as actions from '../src/sim/actions/index.js';
 import { id, mist, ms } from '../src/primitives/brand.js';
 import { memoryInbox, postSettlement } from '../src/primitives/memory-inbox.js';
 import { memorySource } from '../src/primitives/memory-source.js';

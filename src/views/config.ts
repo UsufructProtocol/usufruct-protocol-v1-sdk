@@ -4,22 +4,39 @@
  * (broad collapse, user decision 2026-06-12). The unrolled on-chain views
  * remain the parity oracle in the e2e harness.
  */
-import type { Bps, Mist, Ms } from '../primitives/brand.js';
+import type { Bps, Mist } from '../primitives/brand.js';
 import { bps, mist, ms } from '../primitives/brand.js';
 import type { View } from '../primitives/view.js';
+import type {
+  AuctionWindow,
+  Commitment,
+  CurveShape,
+  Handover,
+  PriceEscalation,
+  RestPrice,
+  TenureDuration,
+  TenureExtend,
+} from '../types/config-types.js';
 import { core, ensemble } from './internal.js';
+
+// The policy unions now live in core (`types/config-types.ts`) so the on-chain
+// Reader can type its returns without importing the mirror. This module keeps
+// the runtime `collapse*` projections and re-exports the types for back-compat.
+export type {
+  AuctionWindow,
+  Commitment,
+  CurveShape,
+  Handover,
+  PriceEscalation,
+  RestPrice,
+  TenureDuration,
+  TenureExtend,
+};
 
 /** `escrow::protocol_fee_bps()` — 10% of consumed credit. */
 export const PROTOCOL_FEE_BPS: Bps = bps(1_000);
 /** `escrow::bps_denominator()`. */
 export const BPS_DENOMINATOR: Bps = bps(10_000);
-
-export type CurveShape =
-  | { readonly kind: 'linear' }
-  | { readonly kind: 'smoothstep' }
-  | { readonly kind: 'logistic' }
-  | { readonly kind: 'powerLaw'; readonly alphaNum: number; readonly alphaDen: number }
-  | { readonly kind: 'exponential'; readonly alphaAbs: number; readonly alphaNeg: boolean };
 
 type CurveShapePolicyData = ReturnType<typeof ensemble>['credit_shape'];
 
@@ -56,10 +73,6 @@ export const auctionShape: View<CurveShape> = (state) =>
 // Each collapses one Move family: the `*_is_X` predicates, the `*_kind`
 // string view, and the per-variant field accessors.
 
-export type AuctionWindow =
-  | { readonly kind: 'off' }
-  | { readonly kind: 'fixed'; readonly ceilingMs: Ms };
-
 /** Collapses `auction_window_is_off/_is_fixed`, `auction_window_kind`, `descent_ceiling_ms`. */
 export const auctionWindow: View<AuctionWindow> = (state) => {
   const p = ensemble(state).auction_window;
@@ -67,11 +80,6 @@ export const auctionWindow: View<AuctionWindow> = (state) => {
     ? { kind: 'off' }
     : { kind: 'fixed', ceilingMs: ms(p.Fixed.ceiling.ms) };
 };
-
-export type Handover =
-  | { readonly kind: 'off' }
-  | { readonly kind: 'fullTenure' }
-  | { readonly kind: 'fixed'; readonly floorMs: Ms };
 
 /** Collapses `handover_is_*`, `handover_kind`, `handover_floor_ms`. */
 export const handover: View<Handover> = (state) => {
@@ -86,15 +94,11 @@ export const handover: View<Handover> = (state) => {
   }
 };
 
-export type RestPrice = { readonly kind: 'fixed'; readonly priceMist: Mist };
-
 /** Collapses `rest_price_kind`, `rest_price_floor_mist`, `rest_price_floor_fixed_mist`. */
 export const restPrice: View<RestPrice> = (state) => {
   const p = ensemble(state).rest_price;
   return { kind: 'fixed', priceMist: mist(p.Fixed.price.mist) };
 };
-
-export type TenureDuration = { readonly kind: 'fixed'; readonly ceilingMs: Ms };
 
 /** Collapses `tenure_duration_kind/_is_fixed`, `tenure_ceiling_ms`, `tenure_ceiling_fixed_ms`. */
 export const tenureDuration: View<TenureDuration> = (state) => {
@@ -102,15 +106,9 @@ export const tenureDuration: View<TenureDuration> = (state) => {
   return { kind: 'fixed', ceilingMs: ms(p.Fixed.ceiling.ms) };
 };
 
-export type TenureExtend = { readonly kind: 'single' } | { readonly kind: 'multi' };
-
 /** Collapses `tenure_extend_kind`. */
 export const tenureExtend: View<TenureExtend> = (state) =>
   ensemble(state).tenure_extend.$kind === 'Single' ? { kind: 'single' } : { kind: 'multi' };
-
-export type PriceEscalation =
-  | { readonly kind: 'fixedDelta'; readonly deltaMist: Mist }
-  | { readonly kind: 'compoundDelta'; readonly bps: Bps; readonly deltaMist: Mist };
 
 /** Collapses `price_fn_is_*`, `price_fn_kind`, `price_fn_fixed_delta`, `price_fn_compound_delta_*`. */
 export const priceEscalation: View<PriceEscalation> = (state) => {
@@ -129,10 +127,6 @@ export const priceEscalationDeltaMist: View<Mist> = (state, t) => {
   const p = priceEscalation(state, t);
   return p.deltaMist;
 };
-
-export type Commitment =
-  | { readonly kind: 'immediate' }
-  | { readonly kind: 'deferred'; readonly floorMs: Ms };
 
 type CommitmentPolicyData = ReturnType<typeof core>['retire_commitment']['policy'];
 

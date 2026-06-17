@@ -11,6 +11,7 @@
  * This is a re-export facade — the mirror modules are unchanged.
  */
 export * as curve from './curve.js';
+export * as actions from './actions/index.js';
 export * from '../views/index.js';
 export * from '../primitives/state.js';
 export * from '../primitives/view.js';

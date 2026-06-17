@@ -19,6 +19,19 @@ import type { EscrowState } from './state.js';
  * no primitive: only genericity.
  */
 
+/**
+ * The core (drift-zero) interpretation of an action: a PTB builder, and
+ * nothing else. In the core SDK an "action" is *only* its on-chain
+ * interpretation — `toPtb`. The second interpretation, `step` (an off-chain
+ * re-derivation of the contract's effect), is a mirror concern: it lives in
+ * the opt-in `sim` layer, which composes a full `Origin/Transition/Terminal`
+ * action (below) by pairing a `step` with the core's `toPtb`. Confining the
+ * core's action surface to `toPtb` is what makes the core impossible to drift.
+ */
+export interface PtbAction<P> {
+  readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
+}
+
 /** Creates a state aggregate (only `integrate` for escrows). */
 export interface OriginAction<R, P, S = EscrowState> {
   readonly step: (t: Ms) => { state: S; result: R };
