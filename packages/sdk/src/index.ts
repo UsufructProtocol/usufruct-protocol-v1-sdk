@@ -6,8 +6,6 @@ export * as read from './read/index.js';
 // Write path: Action.toPtb builds the PTBs.
 export * as actions from './actions/index.js';
 
-// Tier 2 (opt-in): the functional mirror for local computation.
-export * as sim from './sim/index.js';
 
 // Non-core convenience: GraphQL discovery (by governor / type / all) + events.
 export * as indexer from './indexer/index.js';

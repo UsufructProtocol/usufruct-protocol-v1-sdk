@@ -7,8 +7,8 @@
  */
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { describe, expect, it } from 'vitest';
-import { id } from '../src/primitives/brand.js';
-import { escrowVersionChangesMany, type VersionUpdate } from '../src/primitives/grpc-source.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { escrowVersionChangesMany, type VersionUpdate } from '@usufruct-protocol/sdk/primitives/grpc-source.js';
 
 const A = '0x' + 'ab'.repeat(32);
 const B = '0x' + 'cd'.repeat(32);

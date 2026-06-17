@@ -19,9 +19,9 @@ import {
   type CollectStepResult,
   type MessageGroups,
   type MessageRef,
-} from '../actions/collect.js';
-import type { Mist, Ms } from './brand.js';
-import { mist } from './brand.js';
+} from '@usufruct-protocol/sdk/actions/collect.js';
+import type { Mist, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
 
 /** Canonical inbox id form (`0x`-insensitive), matching the other stores. */
 function normId(s: string): string {

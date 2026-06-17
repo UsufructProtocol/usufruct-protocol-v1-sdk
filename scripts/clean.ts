@@ -16,9 +16,9 @@
  */
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Transaction } from '@mysten/sui/transactions';
-import { retire as retireCall, claimAsset as claimCall } from '../src/codegen/usufruct/escrow.js';
-import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
-import { usufruct } from '../src/index.js';
+import { retire as retireCall, claimAsset as claimCall } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
+import { GRAPHQL_TESTNET, TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { usufruct } from '@usufruct-protocol/sdk';
 import { loadSigner, makeClient, rateLimited, retry429, send, sleep } from './lib.js';
 
 const PKG = TESTNET.packageId;

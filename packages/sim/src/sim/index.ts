@@ -13,11 +13,11 @@
 export * as curve from './curve.js';
 export * as actions from './actions/index.js';
 export * from '../views/index.js';
-export * from '../primitives/state.js';
+export * from '@usufruct-protocol/sdk/primitives/state.js';
 export * from '../primitives/view.js';
-export * from '../primitives/source.js';
-export { grpcSource } from '../primitives/grpc-source.js';
-export type { GrpcSource, EscrowUpdate, ManySubscription } from '../primitives/grpc-source.js';
+export * from '@usufruct-protocol/sdk/primitives/source.js';
+export { grpcSource } from '@usufruct-protocol/sdk/primitives/grpc-source.js';
+export type { GrpcSource, EscrowUpdate, ManySubscription } from '@usufruct-protocol/sdk/primitives/grpc-source.js';
 export { memorySource } from '../primitives/memory-source.js';
 export type { MemorySource } from '../primitives/memory-source.js';
 export { memoryInbox, postSettlement } from '../primitives/memory-inbox.js';
@@ -26,5 +26,5 @@ export type {
   OriginAction,
   TransitionAction,
   TerminalAction,
-} from '../primitives/action.js';
-export { NotImplementedStepError } from '../primitives/action.js';
+} from '@usufruct-protocol/sdk/primitives/action.js';
+export { NotImplementedStepError } from '@usufruct-protocol/sdk/primitives/action.js';

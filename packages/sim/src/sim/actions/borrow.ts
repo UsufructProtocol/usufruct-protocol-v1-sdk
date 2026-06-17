@@ -15,11 +15,11 @@ import {
   type BorrowReceipt,
   type BorrowResult,
   type ReturnPtbArgs,
-} from '../../actions/borrow.js';
-import type { TransitionAction } from '../../primitives/action.js';
-import type { Ms } from '../../primitives/brand.js';
-import { id } from '../../primitives/brand.js';
-import type { EscrowState } from '../../primitives/state.js';
+} from '@usufruct-protocol/sdk/actions/borrow.js';
+import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import { applyPendingTransitionStates } from './apply.js';
 
 export { withBorrowedAsset };

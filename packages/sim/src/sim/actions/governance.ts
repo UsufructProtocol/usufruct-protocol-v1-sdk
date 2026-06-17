@@ -15,15 +15,15 @@ import {
   type GovernancePtbArgs,
   type UpdateEnsembleResult,
   type CapHolderPtbArgs,
-} from '../../actions/governance.js';
-import type { TransitionAction } from '../../primitives/action.js';
-import type { Ms } from '../../primitives/brand.js';
-import type { EscrowState } from '../../primitives/state.js';
+} from '@usufruct-protocol/sdk/actions/governance.js';
+import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import type {
   EnsembleCommitmentConfig,
   EnsembleConfig,
   RetireCommitmentConfig,
-} from '../../config/ensemble.js';
+} from '@usufruct-protocol/sdk/config/ensemble.js';
 import { resolveCycleParams } from '../../views/internal.js';
 import { applyPendingTransitionStates } from './apply.js';
 import { ensembleConfigToData } from './integrate.js';

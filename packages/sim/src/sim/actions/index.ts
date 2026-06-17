@@ -15,4 +15,4 @@ export * from './borrow.js';
 export * from './governance.js';
 // `collect` is core-clean (drift-free arithmetic over MessageGroups) and ships
 // whole in core; re-export it so this facade is a complete superset.
-export * from '../../actions/collect.js';
+export * from '@usufruct-protocol/sdk/actions/collect.js';

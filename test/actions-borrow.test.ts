@@ -1,8 +1,8 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import * as actions from '../src/sim/actions/index.js';
-import { TESTNET } from '../src/config/network.js';
-import { id, ms } from '../src/primitives/brand.js';
+import * as actions from '@usufruct-protocol/sim/sim/actions/index.js';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { id, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { BIDDER_CAP, ESCROW_ID, TENANT_CAP, idleState, occupiedState } from './synthetic.js';
 import { stable } from './parity-cases.js';
 

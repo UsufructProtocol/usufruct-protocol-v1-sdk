@@ -3,10 +3,10 @@
  * `retireToPtb`. Pure state machine; no curve. `step` mirrors `execute_retire`:
  * settle pending first, then immediate (Waiting) or flag (Renting).
  */
-import { retireToPtb, type RetirePtbArgs } from '../../actions/retire.js';
-import type { TransitionAction } from '../../primitives/action.js';
-import type { Ms } from '../../primitives/brand.js';
-import type { AssetSchema, EscrowState } from '../../primitives/state.js';
+import { retireToPtb, type RetirePtbArgs } from '@usufruct-protocol/sdk/actions/retire.js';
+import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import { applyPendingTransitionStates } from './apply.js';
 
 export type { RetirePtbArgs };

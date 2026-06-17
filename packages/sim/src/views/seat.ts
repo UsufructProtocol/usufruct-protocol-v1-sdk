@@ -3,10 +3,10 @@
  * cap verification. Mirrors `asset_state::proj_active_*` / `proj_pending_*`
  * and `cap_is_active/_is_pending/_is_stale`.
  */
-import { mist, tenureCount, type Id, type Mist, type TenureCount, id } from '../primitives/brand.js';
+import { mist, tenureCount, type Id, type Mist, type TenureCount, id } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { View } from '../primitives/view.js';
-import { UsufructCap } from '../codegen/usufruct/usufruct_cap.js';
-import { ProtocolFeeRef } from '../codegen/usufruct/protocol_fee_ref.js';
+import { UsufructCap } from '@usufruct-protocol/sdk/codegen/usufruct/usufruct_cap.js';
+import { ProtocolFeeRef } from '@usufruct-protocol/sdk/codegen/usufruct/protocol_fee_ref.js';
 import { assetState, core, rentingTerms, type AssetStateData } from './internal.js';
 
 /** Demand bid terms, or null when not in Demand. */

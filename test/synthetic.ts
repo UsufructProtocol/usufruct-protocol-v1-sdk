@@ -3,12 +3,12 @@
  * with the codegen BCS schema and decode through the SDK's own path, so the
  * tests exercise the real decoding pipeline, not a mock.
  */
-import { Escrow } from '../src/codegen/usufruct/escrow.js';
+import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
 import {
   decodeEscrowState,
   uidAssetSchema,
   type EscrowState,
-} from '../src/primitives/state.js';
+} from '@usufruct-protocol/sdk/primitives/state.js';
 
 export const ESCROW_ID = '0x' + 'ab'.repeat(32);
 export const ASSET_ID = '0x' + 'cd'.repeat(32);

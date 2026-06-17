@@ -2,9 +2,9 @@
  * Shared pure helpers for hand-written views. Mirrors the private accessors
  * in `escrow.move` (`read_state`, `read_core`, `read_ensemble`).
  */
-import type { AssetSchema, EscrowState } from '../primitives/state.js';
-import type { AssetStateData, CoreData, EnsembleData } from '../types/state-views.js';
-import type { CycleParamsData } from '../types/cycle-types.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { AssetStateData, CoreData, EnsembleData } from '@usufruct-protocol/sdk/types/state-views.js';
+import type { CycleParamsData } from '@usufruct-protocol/sdk/types/cycle-types.js';
 
 // The projection types now live in core (`types/`); re-export for back-compat.
 export type {
@@ -13,8 +13,8 @@ export type {
   EnsembleData,
   OccupiedTermsData,
   RentingData,
-} from '../types/state-views.js';
-export type { CycleParamsData } from '../types/cycle-types.js';
+} from '@usufruct-protocol/sdk/types/state-views.js';
+export type { CycleParamsData } from '@usufruct-protocol/sdk/types/cycle-types.js';
 
 /** Mirrors `read_state`: aborts with EAssetBorrowed when the slot is empty. */
 export function assetState(state: EscrowState<AssetSchema>): AssetStateData {

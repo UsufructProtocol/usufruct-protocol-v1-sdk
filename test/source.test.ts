@@ -5,11 +5,11 @@
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { describe, expect, it } from 'vitest';
-import { Escrow } from '../src/codegen/usufruct/escrow.js';
-import { UsufructCap } from '../src/codegen/usufruct/usufruct_cap.js';
-import { id } from '../src/primitives/brand.js';
-import { chainSource } from '../src/primitives/source.js';
-import { uidAssetSchema } from '../src/primitives/state.js';
+import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
+import { UsufructCap } from '@usufruct-protocol/sdk/codegen/usufruct/usufruct_cap.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { chainSource } from '@usufruct-protocol/sdk/primitives/source.js';
+import { uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import { ASSET_ID, defaultCore, defaultCycle } from './synthetic.js';
 
 const PKG = '0x' + '0a'.repeat(32);

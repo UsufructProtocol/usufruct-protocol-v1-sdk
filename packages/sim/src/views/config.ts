@@ -4,8 +4,8 @@
  * (broad collapse, user decision 2026-06-12). The unrolled on-chain views
  * remain the parity oracle in the e2e harness.
  */
-import type { Bps, Mist } from '../primitives/brand.js';
-import { bps, mist, ms } from '../primitives/brand.js';
+import type { Bps, Mist } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { bps, mist, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { View } from '../primitives/view.js';
 import type {
   AuctionWindow,
@@ -16,7 +16,7 @@ import type {
   RestPrice,
   TenureDuration,
   TenureExtend,
-} from '../types/config-types.js';
+} from '@usufruct-protocol/sdk/types/config-types.js';
 import { core, ensemble } from './internal.js';
 
 // The policy unions now live in core (`types/config-types.ts`) so the on-chain

@@ -3,10 +3,10 @@
  * `claimAssetToPtb`. Terminal: `step` returns no successor state. It settles
  * pending first, requires a Retired escrow, then reads the asset id.
  */
-import { claimAssetToPtb, type ClaimAssetPtbArgs, type ClaimResult } from '../../actions/claimAsset.js';
-import type { TerminalAction } from '../../primitives/action.js';
-import type { Ms } from '../../primitives/brand.js';
-import type { AssetSchema, EscrowState } from '../../primitives/state.js';
+import { claimAssetToPtb, type ClaimAssetPtbArgs, type ClaimResult } from '@usufruct-protocol/sdk/actions/claimAsset.js';
+import type { TerminalAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import { assetId } from '../../views/identity.js';
 import { applyPendingTransitionStates } from './apply.js';
 

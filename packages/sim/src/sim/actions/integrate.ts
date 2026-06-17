@@ -11,12 +11,12 @@ import {
   type IntegrateParams,
   type IntegratePtbArgs,
   type IntegrateIntoPortfolioPtbArgs,
-} from '../../actions/integrate.js';
-import type { OriginAction } from '../../primitives/action.js';
-import { id } from '../../primitives/brand.js';
-import type { EscrowState } from '../../primitives/state.js';
-import type { EnsembleConfig } from '../../config/ensemble.js';
-import type { EnsembleData } from '../../types/state-views.js';
+} from '@usufruct-protocol/sdk/actions/integrate.js';
+import type { OriginAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EnsembleConfig } from '@usufruct-protocol/sdk/config/ensemble.js';
+import type { EnsembleData } from '@usufruct-protocol/sdk/types/state-views.js';
 import { resolveCycleParams } from '../../views/internal.js';
 
 export type { IntegrateParams, IntegratePtbArgs, IntegrateIntoPortfolioPtbArgs };

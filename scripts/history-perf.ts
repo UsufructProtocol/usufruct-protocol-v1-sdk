@@ -10,8 +10,8 @@
  * Run: `npm run history`.
  */
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
-import { coinTag, usufruct } from '../src/index.js';
-import { GRAPHQL_TESTNET } from '../src/config/network.js';
+import { coinTag, usufruct } from '@usufruct-protocol/sdk';
+import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
 import { check, finish, step } from './lib.js';
 
 const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';

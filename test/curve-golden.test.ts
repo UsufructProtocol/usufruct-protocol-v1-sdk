@@ -8,7 +8,7 @@
  * transcribed wrong, this fails before any testnet run.
  */
 import { describe, expect, it } from 'vitest';
-import * as c from '../src/sim/curve.js';
+import * as c from '@usufruct-protocol/sim/sim/curve.js';
 
 const SCALE = 1_000_000_000n;
 const U64_MAX = 18_446_744_073_709_551_615n;

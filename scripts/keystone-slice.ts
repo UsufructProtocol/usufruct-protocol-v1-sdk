@@ -11,10 +11,10 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import * as actions from '../src/actions/index.js';
-import { TESTNET } from '../src/config/network.js';
-import { id, mist } from '../src/primitives/brand.js';
-import { coinTag, price, usufruct } from '../src/index.js';
+import * as actions from '@usufruct-protocol/sdk/actions/index.js';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { id, mist } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { coinTag, price, usufruct } from '@usufruct-protocol/sdk';
 import {
   check,
   createdId,

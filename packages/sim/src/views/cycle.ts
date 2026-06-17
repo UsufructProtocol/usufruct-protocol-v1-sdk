@@ -4,11 +4,11 @@
  * Move views (broad collapse, user decision 2026-06-12), plus the resolved
  * tenancy totals.
  */
-import type { Ms } from '../primitives/brand.js';
-import { mist, ms } from '../primitives/brand.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { mist, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { View } from '../primitives/view.js';
 import { assetState, core, rentingTerms, resolveCycleParams } from './internal.js';
-import type { CycleParamsData, CycleParamsView } from '../types/cycle-types.js';
+import type { CycleParamsData, CycleParamsView } from '@usufruct-protocol/sdk/types/cycle-types.js';
 
 // `CycleParamsView` now lives in core (`types/cycle-types.ts`); re-export for
 // back-compat. This module keeps the runtime record-collapse projections.

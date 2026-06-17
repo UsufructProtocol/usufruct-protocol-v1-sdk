@@ -12,7 +12,8 @@ const config: SuiCodegenConfig = {
   packages: [
     {
       package: '@local-pkg/usufruct',
-      path: process.env['USUFRUCT_MOVE_PATH'] ?? '../../main/usufruct',
+      // Relative to this package dir (`packages/sdk/`); override in CI.
+      path: process.env['USUFRUCT_MOVE_PATH'] ?? '../../../../main/usufruct',
     },
   ],
 };

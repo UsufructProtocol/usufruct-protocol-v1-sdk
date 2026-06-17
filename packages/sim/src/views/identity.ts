@@ -2,8 +2,8 @@
  * Identity views — mirror `asset_state::proj_asset_id`,
  * `proj_governance_cap_id`, `proj_active_addr`.
  */
-import type { Id } from '../primitives/brand.js';
-import { id } from '../primitives/brand.js';
+import type { Id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { View } from '../primitives/view.js';
 import { assetState, core, rentingTerms } from './internal.js';
 

@@ -5,9 +5,9 @@
  */
 import type { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { describe, expect, it } from 'vitest';
-import { Escrow } from '../src/codegen/usufruct/escrow.js';
-import { indexerSource } from '../src/indexer/source.js';
-import { uidAssetSchema } from '../src/primitives/state.js';
+import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
+import { indexerSource } from '@usufruct-protocol/sdk/indexer/source.js';
+import { uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import { ASSET_ID, defaultCore, defaultCycle } from './synthetic.js';
 
 const PKG = '0x' + '0a'.repeat(32);

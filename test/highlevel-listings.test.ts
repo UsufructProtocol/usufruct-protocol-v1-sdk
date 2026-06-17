@@ -1,10 +1,10 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { normalizeStructTag } from '@mysten/sui/utils';
 import { describe, expect, it } from 'vitest';
-import type { HandleCtx } from '../src/highlevel/ctx.js';
-import { UsufructError } from '../src/highlevel/errors.js';
-import { createListing } from '../src/highlevel/listings.js';
-import { usufruct } from '../src/highlevel/usufruct.js';
+import type { HandleCtx } from '@usufruct-protocol/sdk/highlevel/ctx.js';
+import { UsufructError } from '@usufruct-protocol/sdk/highlevel/errors.js';
+import { createListing } from '@usufruct-protocol/sdk/highlevel/listings.js';
+import { usufruct } from '@usufruct-protocol/sdk/highlevel/usufruct.js';
 
 const hex = (b: string) => '0x' + b.repeat(64);
 const ctx: HandleCtx = {

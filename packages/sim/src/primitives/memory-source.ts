@@ -15,11 +15,11 @@
  * `GovernanceCap`, not in the escrow — so it throws, the same honest limit
  * `chainSource` has over the core API.
  */
-import type { Id, Ms } from './brand.js';
+import type { Id, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { activeUsufructuaryAddr } from '../views/identity.js';
-import type { OriginAction, TerminalAction, TransitionAction } from './action.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
-import { channel, type Predicate, type Source, type SubscribeOpts } from './source.js';
+import type { OriginAction, TerminalAction, TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { AssetSchema, EscrowState, uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import { channel, type Predicate, type Source, type SubscribeOpts } from '@usufruct-protocol/sdk/primitives/source.js';
 
 /** Canonical id form (`0x`-insensitive), matching the other sources. */
 function normId(s: string): string {

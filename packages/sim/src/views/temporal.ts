@@ -2,8 +2,8 @@
  * Temporal views — mirror `proj_phase_start`, `tenure_expiry_ms`, and
  * `compute_next_pending` (the lazy-transition agenda primitive).
  */
-import type { Mist, Ms } from '../primitives/brand.js';
-import { bps, mist, ms } from '../primitives/brand.js';
+import type { Mist, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { bps, mist, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { View } from '../primitives/view.js';
 import type { PriceEscalation } from './config.js';
 import { assetState, core, rentingTerms } from './internal.js';

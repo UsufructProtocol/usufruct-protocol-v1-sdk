@@ -13,10 +13,10 @@ import {
   type AppliedTransition,
   type HandoverSettlement,
   type TenureSettlement,
-} from '../../actions/apply.js';
-import { mist } from '../../primitives/brand.js';
-import type { TransitionAction } from '../../primitives/action.js';
-import type { AssetSchema, EscrowState } from '../../primitives/state.js';
+} from '@usufruct-protocol/sdk/actions/apply.js';
+import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import { collapseCurveShape } from '../../views/config.js';
 import { resolveCycleParams } from '../../views/internal.js';
 import {

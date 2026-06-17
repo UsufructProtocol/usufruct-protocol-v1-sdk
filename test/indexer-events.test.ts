@@ -7,10 +7,10 @@
 import type { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { toBase64 } from '@mysten/sui/utils';
 import { describe, expect, it } from 'vitest';
-import { HandoverCompleted, TenureExpired } from '../src/codegen/usufruct/asset_state.js';
-import { id } from '../src/primitives/brand.js';
-import { indexerSource } from '../src/indexer/source.js';
-import { normEscrowId } from '../src/indexer/events.js';
+import { HandoverCompleted, TenureExpired } from '@usufruct-protocol/sdk/codegen/usufruct/asset_state.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { indexerSource } from '@usufruct-protocol/sdk/indexer/source.js';
+import { normEscrowId } from '@usufruct-protocol/sdk/indexer/events.js';
 
 const PKG = '0x' + '0a'.repeat(32);
 const A = '0x' + 'a1'.repeat(32);

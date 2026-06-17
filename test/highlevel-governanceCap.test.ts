@@ -1,11 +1,11 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { describe, expect, it } from 'vitest';
-import type { HandleCtx } from '../src/highlevel/ctx.js';
-import { CommittedEnsemble, CommittedRetire, InvalidEscalation, InvalidMarket, InvalidShape, NotConnected, mapAbort } from '../src/highlevel/errors.js';
-import { createGovernanceCap } from '../src/highlevel/governanceCap.js';
-import { createInbox } from '../src/highlevel/inbox.js';
-import type { Market } from '../src/highlevel/market.js';
-import { SUI } from '../src/highlevel/value.js';
+import type { HandleCtx } from '@usufruct-protocol/sdk/highlevel/ctx.js';
+import { CommittedEnsemble, CommittedRetire, InvalidEscalation, InvalidMarket, InvalidShape, NotConnected, mapAbort } from '@usufruct-protocol/sdk/highlevel/errors.js';
+import { createGovernanceCap } from '@usufruct-protocol/sdk/highlevel/governanceCap.js';
+import { createInbox } from '@usufruct-protocol/sdk/highlevel/inbox.js';
+import type { Market } from '@usufruct-protocol/sdk/highlevel/market.js';
+import { SUI } from '@usufruct-protocol/sdk/highlevel/value.js';
 
 const hex = (b: string) => '0x' + b.repeat(32);
 const CAP = hex('11');

@@ -16,7 +16,7 @@
  * Single actor (self-rent — permissionless). Run: `npm run asset`.
  */
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct, type Market } from '../src/index.js';
+import { coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';

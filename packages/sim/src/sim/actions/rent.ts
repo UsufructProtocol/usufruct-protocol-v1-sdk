@@ -4,11 +4,11 @@
  * Dutch-auction floor in Descent, ascending escalation floor for a bid),
  * validates the payment, and assembles the successor state.
  */
-import { rentToPtb, type RentParams, type RentPtbArgs, type RentResult } from '../../actions/rent.js';
-import type { TransitionAction } from '../../primitives/action.js';
-import type { Ms } from '../../primitives/brand.js';
-import { mist } from '../../primitives/brand.js';
-import type { AssetSchema, EscrowState } from '../../primitives/state.js';
+import { rentToPtb, type RentParams, type RentPtbArgs, type RentResult } from '@usufruct-protocol/sdk/actions/rent.js';
+import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
 import { collapseCurveShape } from '../../views/config.js';
 import { ascendingFloor, descendingFloor, stakePerTenure, totalDuration } from '../curve.js';
 

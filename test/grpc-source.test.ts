@@ -8,10 +8,10 @@
  */
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { describe, expect, it } from 'vitest';
-import { Escrow } from '../src/codegen/usufruct/escrow.js';
-import { id } from '../src/primitives/brand.js';
-import { grpcSource } from '../src/primitives/grpc-source.js';
-import { uidAssetSchema } from '../src/primitives/state.js';
+import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
+import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { grpcSource } from '@usufruct-protocol/sdk/primitives/grpc-source.js';
+import { uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import { ASSET_ID, defaultCore, defaultCycle } from './synthetic.js';
 
 const PKG = '0x' + '0a'.repeat(32);

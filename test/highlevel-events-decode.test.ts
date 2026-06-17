@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { UsufructCapMinted } from '../src/codegen/usufruct/usufruct_cap.js';
-import { decodeEventBytes, typedEventFromBytes } from '../src/indexer/events.js';
+import { UsufructCapMinted } from '@usufruct-protocol/sdk/codegen/usufruct/usufruct_cap.js';
+import { decodeEventBytes, typedEventFromBytes } from '@usufruct-protocol/sdk/indexer/events.js';
 
 const hex = (b: string) => '0x' + b.repeat(64);
 const ESCROW = hex('1');

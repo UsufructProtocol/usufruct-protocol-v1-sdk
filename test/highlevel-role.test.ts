@@ -1,8 +1,8 @@
 import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { describe, expect, it } from 'vitest';
-import { chainNow, resolveWhen } from '../src/highlevel/clock.js';
-import { resolveRole } from '../src/highlevel/role.js';
+import { chainNow, resolveWhen } from '@usufruct-protocol/sdk/highlevel/clock.js';
+import { resolveRole } from '@usufruct-protocol/sdk/highlevel/role.js';
 
 const PKG = '0xpkg';
 const CAP = `${PKG}::usufruct_cap::UsufructCap`;

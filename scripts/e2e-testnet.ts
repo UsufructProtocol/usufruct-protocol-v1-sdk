@@ -10,18 +10,18 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
-import * as actions from '../src/sim/actions/index.js';
+import * as actions from '@usufruct-protocol/sim/sim/actions/index.js';
 import {
   EarningsMessageCollected,
   EarningsMessagePosted,
-} from '../src/codegen/usufruct/earnings_message.js';
+} from '@usufruct-protocol/sdk/codegen/usufruct/earnings_message.js';
 import {
   FeeMessage,
   FeeMessageCollected,
   FeeMessagePosted,
-} from '../src/codegen/usufruct/fee_message.js';
-import { HandoverCompleted } from '../src/codegen/usufruct/asset_state.js';
-import * as curve from '../src/sim/curve.js';
+} from '@usufruct-protocol/sdk/codegen/usufruct/fee_message.js';
+import { HandoverCompleted } from '@usufruct-protocol/sdk/codegen/usufruct/asset_state.js';
+import * as curve from '@usufruct-protocol/sim/sim/curve.js';
 import {
   PARITY_CASES,
   parityEqual,
@@ -29,15 +29,15 @@ import {
   type ParityCtx,
 } from '../test/parity-cases.js';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
-import { GRAPHQL_TESTNET, TESTNET } from '../src/config/network.js';
-import { indexerSource } from '../src/indexer/index.js';
-import { id, mist, ms, tenureCount } from '../src/primitives/brand.js';
-import { chainSource } from '../src/primitives/source.js';
-import { grpcSource } from '../src/primitives/grpc-source.js';
-import { memorySource } from '../src/primitives/memory-source.js';
-import { memoryInbox } from '../src/primitives/memory-inbox.js';
-import { createReader, type Reader } from '../src/read/index.js';
-import * as views from '../src/views/index.js';
+import { GRAPHQL_TESTNET, TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { indexerSource } from '@usufruct-protocol/sdk/indexer/index.js';
+import { id, mist, ms, tenureCount } from '@usufruct-protocol/sdk/primitives/brand.js';
+import { chainSource } from '@usufruct-protocol/sdk/primitives/source.js';
+import { grpcSource } from '@usufruct-protocol/sdk/primitives/grpc-source.js';
+import { memorySource } from '@usufruct-protocol/sim/primitives/memory-source.js';
+import { memoryInbox } from '@usufruct-protocol/sim/primitives/memory-inbox.js';
+import { createReader, type Reader } from '@usufruct-protocol/sdk/read/index.js';
+import * as views from '@usufruct-protocol/sim/views/index.js';
 import {
   check,
   createdId,

@@ -18,7 +18,7 @@
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { coinTag, usufruct, type Market } from '../src/index.js';
+import { coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';

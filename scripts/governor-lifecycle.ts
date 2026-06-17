@@ -10,7 +10,7 @@
  *   ⑤ CLAIM      — take the asset back
  */
 import { Transaction } from '@mysten/sui/transactions';
-import { CommittedEnsemble, coinTag, usufruct, type Market } from '../src/index.js';
+import { CommittedEnsemble, coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
 import { createdId, loadSigner, makeClient, rateLimited, send } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
