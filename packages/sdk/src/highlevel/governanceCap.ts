@@ -29,7 +29,7 @@ import { NotConnected, UsufructError, mapAbort } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import type { CoinTag } from './value.js';
+import { coinInfo, coinTag, type CoinTag } from './value.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType, execute } from './send.js';
 
@@ -150,7 +150,9 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
         typeArguments: r.typeArguments,
         ...(assetSchema ? { assetSchema } : {}),
       });
-      const current = await readMarket(reader, r.typeArguments[1]);
+      // Decimals are irrelevant to the merge (only mist is sent), so the fallback
+      // coin tag is fine here.
+      const current = await readMarket(reader, coinTag(coinInfo(r.typeArguments[1])));
       const { ensemble } = toEnsembleConfig({ ...current, ...changes });
       const tx = new Transaction();
       updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });

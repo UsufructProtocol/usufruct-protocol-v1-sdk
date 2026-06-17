@@ -18,7 +18,13 @@ export type { Price, CoinInfo, CoinTag } from './value.js';
 export { duration, toEnsembleConfig } from './market.js';
 export type { Market, Duration, Shape, Commitment, PowerLawNum, PowerLawDen, ExpAlpha } from './market.js';
 
-export type { Escrow, EscrowStatus } from './escrow.js';
+export type {
+  Escrow,
+  EscrowStatus,
+  TenureSettlement,
+  HandoverSettlement,
+  CyclePreview,
+} from './escrow.js';
 export type {
   UsufructCap,
   UsufructCapState,

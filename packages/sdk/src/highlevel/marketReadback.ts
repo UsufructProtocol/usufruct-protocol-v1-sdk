@@ -6,7 +6,7 @@
 import type { Reader } from '../read/reader.js';
 import type { Commitment as ViewCommitment, CurveShape } from '../types/config-types.js';
 import type { Commitment, ExpAlpha, Market, PowerLawDen, PowerLawNum, Shape } from './market.js';
-import { coinInfo, coinTag, price } from './value.js';
+import { price, type CoinTag } from './value.js';
 
 function curveToShape(c: CurveShape): Shape {
   switch (c.kind) {
@@ -26,8 +26,13 @@ function viewToCommitment(c: ViewCommitment): Commitment {
   return c.kind === 'immediate' ? 'immediate' : { deferredFor: Number(c.floorMs) };
 }
 
-/** The escrow's current market, reconstructed from its on-chain views. */
-export async function readMarket(reader: Reader, coinType: string): Promise<Market> {
+/**
+ * The escrow's current market, reconstructed from its on-chain views. `coin` is
+ * the escrow's resolved payment tag — its mist amounts render in that coin. (For
+ * the `updateMarket` merge only the mist matters; for `escrow.market()` the tag's
+ * decimals matter, so the caller passes the chain-resolved tag.)
+ */
+export async function readMarket(reader: Reader, coin: CoinTag): Promise<Market> {
   const [restPrice, tenure, extend, handover, auction, credit, auctionShape, escalation, retire, ensemble] =
     await Promise.all([
       reader.restPrice(),
@@ -44,7 +49,6 @@ export async function readMarket(reader: Reader, coinType: string): Promise<Mark
 
   // `coin` is the escrow's immutable phantom type, not a Market field — but its
   // mist amounts still render in that coin, so we tag the prices with it.
-  const coin = coinTag(coinInfo(coinType));
   return {
     restPrice: price(restPrice.priceMist, coin),
     tenure: Number(tenure.ceilingMs),

@@ -75,6 +75,10 @@ export interface UsufructCapState {
   readonly committedTenures: number | null;
   /** Ms this seat has left at `t`. Active seat only. */
   readonly timeRemainingMs: number | null;
+  /** Whether this seat's credit is currently accruing. Active seat only. */
+  readonly creditAccruing: boolean | null;
+  /** When credit accrual caps (stake fully consumed), or null. Active seat only. */
+  readonly creditCappedAt: Date | null;
 }
 
 /** The right of use. The cap is the receiver of its writes — never a hidden arg. */
@@ -184,17 +188,22 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       accruedCredit: null,
       committedTenures: null,
       timeRemainingMs: null,
+      creditAccruing: null,
+      creditCappedAt: null,
     };
     if (role === 'active') {
-      const [coin, addr, stakeMist, remainMist, accruedMist, tenures, leftMs] = await Promise.all([
-        resolveCoinInfo(client, coinType),
-        reader.activeUsufructuaryAddr(),
-        reader.activeStakeBalanceMist(),
-        reader.activeStakeBalanceRemainingMist(t),
-        reader.accruedCreditMist(t),
-        reader.activeCommittedTenures(),
-        reader.activeUsufructuaryTimeRemainingMs(t),
-      ]);
+      const [coin, addr, stakeMist, remainMist, accruedMist, tenures, leftMs, accruing, cappedAtMs] =
+        await Promise.all([
+          resolveCoinInfo(client, coinType),
+          reader.activeUsufructuaryAddr(),
+          reader.activeStakeBalanceMist(),
+          reader.activeStakeBalanceRemainingMist(t),
+          reader.accruedCreditMist(t),
+          reader.activeCommittedTenures(),
+          reader.activeUsufructuaryTimeRemainingMs(t),
+          reader.creditIsAccruing(),
+          reader.creditCappedAtMs(),
+        ]);
       return {
         role,
         usufructuaryAddr: addr,
@@ -203,6 +212,8 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
         accruedCredit: price(accruedMist, coin),
         committedTenures: tenures == null ? null : Number(tenures),
         timeRemainingMs: leftMs == null ? null : Number(leftMs),
+        creditAccruing: accruing,
+        creditCappedAt: cappedAtMs == null ? null : new Date(Number(cappedAtMs)),
       };
     }
     if (role === 'pending') {

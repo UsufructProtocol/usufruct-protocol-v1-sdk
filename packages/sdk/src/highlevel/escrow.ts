@@ -26,11 +26,34 @@ import { createdIdByType, execute } from './send.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
+import { readMarket } from './marketReadback.js';
+import type { Market } from './market.js';
 import { resolveRole } from './role.js';
 import { fetchTypeArgs } from './typeargs.js';
 import type { When } from './usufruct.js';
 
 export type EscrowStatus = 'idle' | 'descent' | 'occupied' | 'demand' | 'retired';
+
+/** Governor economics of a tenure expiry: the 90/10 split, coin-rendered. */
+export interface TenureSettlement {
+  readonly governorShare: Price;
+  readonly fee: Price;
+}
+/** Governor economics of a handover settling at a boundary (with the refund). */
+export interface HandoverSettlement {
+  readonly remaining: Price;
+  readonly governorShare: Price;
+  readonly fee: Price;
+}
+/** The live resolved cycle params — the floor/ceiling/handover/descent in effect. */
+export interface CyclePreview {
+  readonly floor: Price;
+  readonly ceilingMs: number;
+  readonly handoverMs: number;
+  readonly descentMs: number;
+  readonly ceilingTotalMs: number | null;
+  readonly handoverTotalMs: number | null;
+}
 
 /** The hub handle. Reads are sync getters off one fetch; writes return handles. */
 export interface Escrow {
@@ -100,6 +123,30 @@ export interface Escrow {
   /** When the ensemble (market-change) commitment unlocks. Read live; ≈ now for
    *  an `immediate` commitment. */
   ensembleUnlocksAt(): Promise<Date>;
+
+  /**
+   * The escrow's current `Market` (policy) — rest price, tenure, handover,
+   * descent, curve shapes, escalation, commitments — reconstructed coin-aware from
+   * its views. The read twin of `governanceCap.updateMarket`.
+   */
+  market(): Promise<Market>;
+  /** The live resolved cycle params (active floor/ceiling/handover/descent + totals),
+   *  or `null` when none apply. */
+  cycle(): Promise<CyclePreview | null>;
+  /** Governor economics if the current tenure settles now (90/10 split). Rented only. */
+  tenureSettlement(): Promise<TenureSettlement>;
+  /** Governor economics for a handover settling at `boundary` (incl. the refund). */
+  handoverSettlement(boundary: When): Promise<HandoverSettlement>;
+  /** When the asset was integrated (escrow genesis). */
+  integratedAt(): Promise<Date>;
+  /** When the current cycle phase started, or `null`. */
+  phaseStartAt(): Promise<Date | null>;
+  /** When the next lazy transition is due at/after `at` (default now), or `null`. */
+  nextTransitionAt(at?: When): Promise<Date | null>;
+  /** The wrapped asset object's id. */
+  assetId(): Promise<string>;
+  /** The last acquisition price (auction memory), or `null` if never rented. */
+  lastRentPrice(): Promise<Price | null>;
 
   /**
    * Permissionless keeper: materialize the pending lazy transitions (tenure
@@ -264,6 +311,53 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     new Date(Number(await reader.retireCommitmentUnlocksAtMs()));
   const ensembleUnlocksAt = async (): Promise<Date> =>
     new Date(Number(await reader.ensembleCommitmentUnlocksAtMs()));
+
+  const market = (): Promise<Market> => readMarket(reader, coinTag(coin));
+
+  async function cycle(): Promise<CyclePreview | null> {
+    const [cp, ceilTotal, hoTotal] = await Promise.all([
+      reader.activeCycleParams(),
+      reader.activeCeilingTotalMs(),
+      reader.activeHandoverTotalMs(),
+    ]);
+    if (cp == null) return null;
+    return {
+      floor: price(cp.floorMist, coin),
+      ceilingMs: Number(cp.ceilingMs),
+      handoverMs: Number(cp.handoverMs),
+      descentMs: Number(cp.descentMs),
+      ceilingTotalMs: ceilTotal == null ? null : Number(ceilTotal),
+      handoverTotalMs: hoTotal == null ? null : Number(hoTotal),
+    };
+  }
+
+  async function tenureSettlement(): Promise<TenureSettlement> {
+    const s = await reader.tenureSettlement();
+    return { governorShare: price(s.governorShareMist, coin), fee: price(s.feeMist, coin) };
+  }
+  async function handoverSettlement(boundary: When): Promise<HandoverSettlement> {
+    const s = await reader.handoverSettlement(await resolveWhen(client, boundary));
+    return {
+      remaining: price(s.remainingMist, coin),
+      governorShare: price(s.governorShareMist, coin),
+      fee: price(s.feeMist, coin),
+    };
+  }
+
+  const integratedAt = async (): Promise<Date> => new Date(Number(await reader.integratedAtMs()));
+  const phaseStartAt = async (): Promise<Date | null> => {
+    const m = await reader.phaseStartMs();
+    return m == null ? null : new Date(Number(m));
+  };
+  async function nextTransitionAt(at?: When): Promise<Date | null> {
+    const m = await reader.nextTransitionMs(await resolveWhen(client, at));
+    return m == null ? null : new Date(Number(m));
+  }
+  const assetId = (): Promise<string> => reader.assetId();
+  async function lastRentPrice(): Promise<Price | null> {
+    const m = await reader.lastRentPriceMist();
+    return m == null ? null : price(m, coin);
+  }
 
   const usufructCap: UsufructCap | null = role.capId
     ? createCap(ctx, {
@@ -539,6 +633,15 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     nextFloorPrice,
     retireUnlocksAt,
     ensembleUnlocksAt,
+    market,
+    cycle,
+    tenureSettlement,
+    handoverSettlement,
+    integratedAt,
+    phaseStartAt,
+    nextTransitionAt,
+    assetId,
+    lastRentPrice,
     applyPendingTransitionStates: applyPending,
     usufructCaps,
     history,
