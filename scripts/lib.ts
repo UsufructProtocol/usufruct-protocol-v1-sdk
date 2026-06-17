@@ -9,6 +9,7 @@ import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction } from '@mysten/sui/transactions';
+import { resolveFeeInboxId } from '@usufruct-protocol/sdk/highlevel/feeref.js';
 
 export const RPC_URL = 'https://fullnode.testnet.sui.io:443';
 
@@ -42,6 +43,24 @@ export function loadSigner(alias = 'usufruct-sdk-testnet'): Ed25519Keypair {
     throw new Error(`could not export key for alias ${alias}`);
   }
   return Ed25519Keypair.fromSecretKey(key);
+}
+
+/**
+ * The signer that owns the protocol-fee inbox — the authority to collect fees
+ * (the collect fn has no cap; ownership IS the authority). Derived on-chain from
+ * the deployment's `feeRefId` → inbox id → its `AddressOwner`, then loaded by that
+ * address (`sui keytool` accepts an address as `--key-identity`). No hardcoded
+ * alias, so it self-adjusts to any redeploy. `FEE_OWNER_ALIAS` env overrides.
+ */
+export async function loadFeeOwner(client: ClientWithCoreApi, feeRefId: string): Promise<Ed25519Keypair> {
+  const override = process.env['FEE_OWNER_ALIAS'];
+  if (override) return loadSigner(override);
+  const inboxId = await resolveFeeInboxId(client, feeRefId);
+  const { object } = await client.core.getObject({ objectId: inboxId });
+  if (object.owner?.$kind !== 'AddressOwner') {
+    throw new Error(`fee inbox ${inboxId} is not address-owned (${object.owner?.$kind})`);
+  }
+  return loadSigner(object.owner.AddressOwner);
 }
 
 export type ExecResult = SuiClientTypes.Transaction<{

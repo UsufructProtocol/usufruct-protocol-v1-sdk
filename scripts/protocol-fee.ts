@@ -15,14 +15,16 @@
  *   ⑥ COLLECT    — the deployer collects (it holds the inbox), partitioned by coin
  *
  * Two real signers: ALICE (the SDK test address, acts as governor) and PROTOCOL
- * (the v1.4.2 deployer that holds the ProtocolFeeInbox — verified on-chain).
+ * (whoever owns the ProtocolFeeInbox — derived on-chain from the deployment, no
+ * hardcoded alias; see `loadFeeOwner`).
  *
  * Run: `npm run fee`.
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
-import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { check, createdId, finish, loadFeeOwner, loadSigner, makeClient, rateLimited, send, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
 const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
@@ -33,7 +35,7 @@ const DUMMY = coinTag({ type: COIN_T, decimals: 9, symbol: 'DUMMY' });
 
 const client = rateLimited(makeClient());
 const ALICE = loadSigner(); // governor (the SDK test address)
-const PROTOCOL = loadSigner('usufruct-v1-4-2-testnet'); // deployer; holds the ProtocolFeeInbox
+const PROTOCOL = await loadFeeOwner(client, TESTNET.feeRefId); // owns the ProtocolFeeInbox (derived on-chain)
 const me = ALICE.toSuiAddress();
 
 /** Fund a fresh renter with SUI for gas + a DUMMY coin to pay with. */

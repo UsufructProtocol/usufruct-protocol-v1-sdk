@@ -42,6 +42,7 @@ import {
   check,
   createdId,
   finish,
+  loadFeeOwner,
   loadSigner,
   makeClient,
   makeGrpcClient,
@@ -1052,9 +1053,9 @@ async function main() {
     // collect fn has no cap). We collect only the fee messages this run minted
     // (by id), so conservation is exact and we don't touch the global pool.
     const feeInbox = views.feeInboxId(state);
-    let feeOwner: ReturnType<typeof loadSigner> | null = null;
+    let feeOwner: Awaited<ReturnType<typeof loadFeeOwner>> | null = null;
     try {
-      feeOwner = loadSigner(process.env['FEE_OWNER_ALIAS'] ?? 'usufruct-v1-4-2-testnet');
+      feeOwner = await loadFeeOwner(client, TESTNET.feeRefId);
     } catch {
       feeOwner = null;
     }
