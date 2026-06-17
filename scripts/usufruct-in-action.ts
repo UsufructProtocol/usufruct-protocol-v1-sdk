@@ -68,7 +68,7 @@ async function main() {
       retireCommitment: 'immediate', //   may pull the asset anytime ({ deferredFor } to lock)
       ensembleCommitment: 'immediate', // may change the market anytime ({ deferredFor } to lock)
     },
-  });
+  }).send();
   console.log(`① listed ${escrow.id}`);
   console.log(`   floor ${escrow.floorPrice} · governanceCap ${governanceCap.capId} · earningsInbox ${earningsInbox.inboxId}\n`);
 
@@ -76,7 +76,7 @@ async function main() {
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
   const sword = await bob.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
-  const cap = await sword.rent({ tenures: 1 });
+  const cap = await sword.rent({ tenures: 1 }).send();
   console.log(`② rented — usufructCap ${cap.id}`);
   console.log(`   paid ${cap.receipt!.paid} · until ${cap.receipt!.expiresAt.toISOString()}\n`);
 
@@ -86,7 +86,7 @@ async function main() {
     // the borrow before and the return after are appended for you (guaranteed).
     const coupon = tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::use_asset`, arguments: [asset] });
     tx.transferObjects([coupon], BOB.toSuiAddress());
-  });
+  }).send();
   console.log(`③ borrowed → used → returned, one PTB · ${digest}\n`);
 
   // ════════════ ④ COLLECT — Alice collects what the market earned ════════════
@@ -94,8 +94,8 @@ async function main() {
   // (permissionless), then collect from the EarningsInbox Alice holds.
   console.log('④ waiting for the tenure to expire, then settling…');
   await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-  await sword.applyPendingTransitionStates(); // permissionless; the next rent would do it anyway
-  const earned = await earningsInbox.collect();
+  await sword.applyPendingTransitionStates().send(); // permissionless; the next rent would do it anyway
+  const earned = await earningsInbox.collect().send();
   console.log(`   collected ${earned.map((e) => `${e.amount}`).join(', ') || '(nothing yet)'} from ${earningsInbox.inboxId}`);
 }
 

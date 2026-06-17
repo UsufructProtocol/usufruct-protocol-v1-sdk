@@ -65,8 +65,8 @@ async function main() {
   const alice = usufruct({ network: 'testnet', client, signer: ALICE });
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
-  const { escrow: e1 } = await alice.integrate({ asset: asset1, coin: DUMMY, market: MARKET });
-  const { escrow: e2 } = await alice.integrate({ asset: asset2, coin: DUMMY, market: MARKET });
+  const { escrow: e1 } = await alice.integrate({ asset: asset1, coin: DUMMY, market: MARKET }).send();
+  const { escrow: e2 } = await alice.integrate({ asset: asset2, coin: DUMMY, market: MARKET }).send();
   console.log(`listed ${e1.id} and ${e2.id}\n`);
 
   // ─────────── A · MULTI-TX: tx1 rent (deferred) → tx2 borrow with the real id ───────────
@@ -78,7 +78,7 @@ async function main() {
   if (cap.id == null || cap.receipt == null) throw new Error('A: rich result did NOT survive deferred execution');
 
   // tx2 — a SEPARATE transaction, using the cap whose real on-chain id came from tx1's effects.
-  const { digest: borrowDigest } = await cap.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress()));
+  const { digest: borrowDigest } = await cap.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress())).send();
   console.log(`   tx2 borrow  ${borrowDigest}  ← real id flowed tx1 → tx2\n`);
 
   // ─────────── B · THE SEAM: swap signing, rich result survives ───────────

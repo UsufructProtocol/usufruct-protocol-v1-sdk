@@ -54,22 +54,24 @@ async function main() {
       retireCommitment: 'immediate',
       ensembleCommitment: 'immediate',
     },
-  });
+  }).send();
   console.log(`① listed ${escrow.id}`);
 
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
   const sword = await bob.escrow(escrow.id);
-  const cap = await sword.rent({ tenures: 1 });
+  const cap = await sword.rent({ tenures: 1 }).send();
   console.log(`② rented — usufructCap ${cap.id}\n`);
 
   // ③ BORROW — the SAME recipe, composed multiple times in one bracket.
   // borrow is variadic: repeating a step repeats its commands, in order.
-  const { digest } = await cap.borrow(
-    inspectAsset, //                          read the use count  (&Asset)
-    useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
-    useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
-    useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
-  );
+  const { digest } = await cap
+    .borrow(
+      inspectAsset, //                          read the use count  (&Asset)
+      useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
+      useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
+      useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
+    )
+    .send();
   console.log('③ borrowed → inspect → use ×3 → return, one PTB');
   console.log(`   ${digest}`);
   console.log(`   suiscan.xyz/testnet/tx/${digest}`);

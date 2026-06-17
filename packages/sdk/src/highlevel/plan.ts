@@ -7,20 +7,21 @@
  * runs whoever signs — wallet, Ledger, sponsor, offline. `build` takes the sender
  * *address* (public, build-time), separate from the signer (execute-time).
  *
- * `Plan<T>` is also a `PromiseLike<T>`: `await escrow.rent(...)` still resolves to
- * the typed result (it delegates to `.send()` with the default signer), so the
- * one-liner is unchanged while the seam opens underneath.
+ * A `Plan` does nothing until you act on it: `.send()` runs all three phases (one
+ * tx); `.build(tx, sender)` appends to a tx you drive (batch many writes, then one
+ * execute); `.toTransaction()` hands you the unsigned PTB. Sending is always
+ * explicit — reads never send, writes never send until you say so.
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { NotConnected } from './errors.js';
 import type { Executor, ExecResult } from './send.js';
 
-export interface Plan<T> extends PromiseLike<T> {
+export interface Plan<T> {
   /** Phase 1 — append this write's commands to `tx` for `sender` (async: may source coins). */
   build(tx: Transaction, sender: string): Promise<void>;
   /** Phase 3 — reconstruct the typed result from the execution's effects. */
   decode(res: ExecResult): Promise<T>;
-  /** build → execute → decode. Defaults to the handle's signer; pass an `Executor` to swap signing. */
+  /** build → execute → decode. Defaults to the handle's executor; pass an `Executor` to swap signing. */
   send(exec?: Executor): Promise<T>;
   /** Build-only: a `Transaction` you sign/send yourself (wallet, Ledger, offline, batching). */
   toTransaction(sender: string): Promise<Transaction>;
@@ -56,14 +57,7 @@ export function makePlan<T>(spec: {
     return spec.decode(res);
   }
 
-  return {
-    build: spec.build,
-    decode: spec.decode,
-    send,
-    toTransaction,
-    // PromiseLike: awaiting a Plan runs it with the default executor.
-    then: (onFulfilled, onRejected) => send().then(onFulfilled, onRejected),
-  };
+  return { build: spec.build, decode: spec.decode, send, toTransaction };
 }
 
 /**
