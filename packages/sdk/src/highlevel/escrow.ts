@@ -76,6 +76,8 @@ export interface Escrow {
   readonly earningsInboxId: string;
   readonly feeInboxId: string;
   readonly activeUsufructCapId: string | null;
+  /** Who holds the asset now (the active usufructuary's address). Rented only. */
+  readonly activeUsufructuaryAddr: string | null;
 
   // always-liquid demand state — a challenger has bid on the occupied escrow.
   // Non-null only while `status === 'demand'`; otherwise all null / false.
@@ -88,11 +90,20 @@ export interface Escrow {
   /** When the sitting tenant's handover protection ends (the bid can then settle). */
   readonly handoverExpiresAt: Date | null;
 
+  // the seats' cap handles — resolvable by ANYONE for reading (built from the ids
+  // the escrow already names + its type args; no fetch, no possession). Ask the
+  // returned cap about itself: `await escrow.activeCap?.state()`.
+  /** The active seat's `UsufructCap` handle (for reads), or null if idle. */
+  readonly activeCap: UsufructCap | null;
+  /** The pending challenger's `UsufructCap` handle (for reads), or null. */
+  readonly pendingCap: UsufructCap | null;
+
   // the signer's holdings here, resolved in the same fetch (possession = role)
   readonly canRent: boolean;
   readonly canBorrow: boolean;
   readonly canGovern: boolean;
-  /** The active `UsufructCap`, if the signer holds it (sync). */
+  /** The active `UsufructCap`, **if the signer holds it** (write authority; sync).
+   *  For reading the active seat regardless of possession, use `activeCap`. */
   readonly usufructCap: UsufructCap | null;
   /** The `GovernanceCap`, if the signer holds it (sync). */
   readonly governanceCap: GovernanceCap | null;
@@ -282,9 +293,11 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // The demand-state views (pending challenger + handover) only exist in `demand`.
   // Seat economics (stake / time-remaining / accrued credit) are NOT here — they
   // belong to the seat's `UsufructCap` (`cap.state()`), object-centric.
+  const rented = status === 'occupied' || status === 'demand';
   const challenged = status === 'demand';
-  const [role, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
+  const [role, activeAddr, pendingCapId, pendingAddr, handoverMs] = await Promise.all([
     resolveRole(client, packageId, owner, activeCapId, govCapId, inboxId),
+    rented ? reader.activeUsufructuaryAddr() : Promise.resolve(null),
     challenged ? reader.pendingUsufructCapId() : Promise.resolve(null),
     challenged ? reader.pendingUsufructuaryAddr() : Promise.resolve(null),
     challenged ? reader.handoverExpiryMs() : Promise.resolve(null),
@@ -359,14 +372,17 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     return m == null ? null : price(m, coin);
   }
 
-  const usufructCap: UsufructCap | null = role.capId
-    ? createCap(ctx, {
-        capId: role.capId,
-        escrowId: idStr,
-        typeArguments,
-        receipt: null,
-      })
-    : null;
+  // Read-resolvable cap handles for the seats — built from the ids the escrow
+  // already names + its type args (no fetch, no possession). The simple seat read:
+  // `await escrow.activeCap?.state()`.
+  const capHandle = (capId: string | null): UsufructCap | null =>
+    capId == null ? null : createCap(ctx, { capId, escrowId: idStr, typeArguments, receipt: null });
+  const activeCap = capHandle(activeCapId);
+  const pendingCap = capHandle(pendingCapId);
+
+  // The signer's active cap, gated on possession (write authority) — a narrowing
+  // of `activeCap` to "if it's mine".
+  const usufructCap: UsufructCap | null = role.capId === activeCapId ? activeCap : null;
   const governanceCap: GovernanceCap | null = role.governs ? createGovernanceCap(ctx, govCapId) : null;
   const earningsInbox: EarningsInbox | null = role.holdsEarnings ? createInbox(ctx, inboxId, 'earnings') : null;
 
@@ -619,10 +635,13 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
     earningsInboxId: inboxId,
     feeInboxId,
     activeUsufructCapId: activeCapId,
+    activeUsufructuaryAddr: activeAddr,
     isChallenged: challenged,
     pendingUsufructCapId: pendingCapId,
     pendingUsufructuaryAddr: pendingAddr,
     handoverExpiresAt: handoverMs == null ? null : new Date(Number(handoverMs)),
+    activeCap,
+    pendingCap,
     canRent: owner != null && status !== 'retired',
     canBorrow: role.capId != null,
     canGovern: role.governs,

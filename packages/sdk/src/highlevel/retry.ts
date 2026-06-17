@@ -85,13 +85,18 @@ export function isTransientRequest(err: unknown): boolean {
 }
 
 /**
- * The truncated-`simulateTransaction` signature: a short `commandResults` makes
- * the reader index into `undefined`, throwing `TypeError … reading
- * 'returnValues'`. Transient — the same simulation succeeds on retry.
+ * An empty / truncated `simulateTransaction` — the read came back with nothing
+ * decodable. Two observed forms, both transient (the same sim succeeds on retry):
+ *   - the JSON-RPC client throws `Error: simulateTransaction failed: no results
+ *     from dryRun or devInspect` (confirmed live);
+ *   - a short `commandResults` makes the reader index into `undefined` →
+ *     `TypeError … reading 'returnValues'`.
+ * Distinct from a Move abort, which surfaces as `read(<name>) failed: <abort>`.
  */
 export function isTruncatedRead(err: unknown): boolean {
-  if (!(err instanceof TypeError)) return false;
-  return err.message.includes('returnValues') || err.message.includes('commandResults');
+  const msg = (err as { message?: string } | null)?.message ?? '';
+  if (msg.includes('no results from dryRun or devInspect')) return true;
+  return err instanceof TypeError && (msg.includes('returnValues') || msg.includes('commandResults'));
 }
 
 /** Any transient read fault — request (status/network) or truncated parse. */

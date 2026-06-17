@@ -80,12 +80,12 @@ async function main(): Promise<void> {
   console.log(`  coin=${e.coin.symbol}  govCap=${e.governanceCapId.slice(0, 10)}…`);
   check('handle covers status/floor/expiry/ids', true);
 
-  step('② the seat — via the cap handle (cap.state())');
-  const active = await (await a.usufructCap(e.activeUsufructCapId!)).state();
-  const pending = await (await a.usufructCap(e.pendingUsufructCapId!)).state();
-  console.log(`  active: stake=${active.stake?.format()} time=${active.timeRemainingMs}ms accrued=${active.accruedCredit?.format()} accruing=${active.creditAccruing}`);
+  step('② the seat — escrow.activeCap?.state() (no fetch dance, no possession)');
+  const active = await e.activeCap!.state(); // built from ids the handle already has
+  const pending = await e.pendingCap!.state();
+  console.log(`  active: who=${e.activeUsufructuaryAddr?.slice(0, 10)}… stake=${active.stake?.format()} time=${active.timeRemainingMs}ms accruing=${active.creditAccruing}`);
   console.log(`  pending: stake=${pending.stake?.format()} role=${pending.role}`);
-  check('cap.state covers seat economics + credit flags', active.role === 'active' && active.creditAccruing !== null);
+  check('escrow.activeCap/pendingCap resolve the seats', active.role === 'active' && pending.role === 'pending');
 
   step('③ the MARKET / policy — escrow.market() (one call, coin-aware)');
   const mkt = noCeremony('escrow.market()', await e.market());

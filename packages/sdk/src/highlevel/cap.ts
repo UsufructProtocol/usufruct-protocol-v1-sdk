@@ -19,6 +19,7 @@ import { createReader, type Reader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
+import { retryingReader } from './retry.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, type Escrow } from './escrow.js';
 import { NotConnected, mapAbort } from './errors.js';
@@ -126,7 +127,7 @@ export interface CapArgs {
 
 /** Build a `UsufructCap` handle bound to its escrow's type args. */
 export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
-  const { client, packageId, signer } = ctx;
+  const { client, packageId, signer, retry } = ctx;
   const ptbArgs = {
     pkg: { packageId },
     escrowId: toId<'Escrow'>(args.escrowId),
@@ -156,13 +157,16 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     typeArguments: args.typeArguments,
   };
 
-  /** A drift-free reader bound to this cap's escrow (cap reads route through it). */
-  const mkReader = (): Reader =>
-    createReader(client, {
+  /** A drift-free reader bound to this cap's escrow (cap reads route through it).
+   *  Retry-wrapped (like the escrow handle's) so cap reads survive node flakes. */
+  const mkReader = (): Reader => {
+    const r = createReader(client, {
       packageId,
       escrowId: toId<'Escrow'>(args.escrowId),
       typeArguments: args.typeArguments,
     });
+    return retry ? retryingReader(r, retry) : r;
+  };
 
   async function state(opts?: { at?: When }): Promise<UsufructCapState> {
     const reader = mkReader();

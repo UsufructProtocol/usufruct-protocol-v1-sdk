@@ -48,11 +48,14 @@ describe('highlevel/retry — predicates', () => {
     expect(isTransientRequest(new Error('deterministic'))).toBe(false);
   });
 
-  it('isTruncatedRead matches only the returnValues/commandResults TypeError', () => {
+  it('isTruncatedRead matches the empty/truncated simulateTransaction forms', () => {
     expect(isTruncatedRead(truncatedErr())).toBe(true);
     expect(isTruncatedRead(new TypeError('reading commandResults of undefined'))).toBe(true);
-    expect(isTruncatedRead(new Error("reading 'returnValues'"))).toBe(false); // not a TypeError
+    // the JSON-RPC client's empty-result form (a plain Error, confirmed live)
+    expect(isTruncatedRead(new Error('simulateTransaction failed: no results from dryRun or devInspect'))).toBe(true);
+    expect(isTruncatedRead(new Error("reading 'returnValues'"))).toBe(false); // TypeError-only for that form
     expect(isTruncatedRead(statusErr(429))).toBe(false);
+    expect(isTruncatedRead(new Error('read(accruedCreditMist) failed: move abort'))).toBe(false); // deterministic
     expect(isTruncatedRead(new TypeError('something unrelated'))).toBe(false);
   });
 
