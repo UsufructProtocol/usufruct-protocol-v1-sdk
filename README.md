@@ -8,7 +8,7 @@ with handover protection, lazy state transitions, and composable with any Sui
 protocol.
 
 - Protocol: https://github.com/UsufructProtocol/usufruct-protocol-v1
-- Live on Sui **testnet** (`v1.4.2`), source-verified on-chain.
+- Live on Sui **testnet** (`v1.4.3`), source-verified on-chain.
 
 ## Two packages, one drift-zero seam
 

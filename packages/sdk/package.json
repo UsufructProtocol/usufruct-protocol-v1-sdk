@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc -b",
     "prepack": "tsc -b",
-    "codegen": "sui-ts-codegen generate"
+    "codegen": "sui-ts-codegen generate && tsx scripts/gen-aborts.ts"
   },
   "keywords": ["sui", "usufruct", "sdk"],
   "author": "Antonio Jiménez <build@0xkurious.xyz>",

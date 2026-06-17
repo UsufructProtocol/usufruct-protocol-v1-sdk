@@ -10,10 +10,10 @@ export interface PackageIds {
   readonly feeRefId: string;
 }
 
-/** usufruct v1.4.2 on Sui testnet (source-verified, immutable). */
+/** usufruct v1.4.3 on Sui testnet (source-verified, immutable). */
 export const TESTNET: PackageIds = {
-  packageId: '0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d',
-  feeRefId: '0x41a7dee6e39f950fa2f7179464e400bb20cd6e620b5fcdbadf1db1b57ec87145',
+  packageId: '0xf5f039b85aad208f77ed5eec05df51dc889154a0491709c5a9cb4ecb17a62567',
+  feeRefId: '0xa9f5a89e419b52bba0db972ff896c36cf7e8464fc71addb7d1256b27c30fb17d',
 };
 
 /** System singletons (FFI artefacts — injected by the codegen layer). */

@@ -69,6 +69,28 @@ export function tenures(options: TenuresOptions) {
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
     });
 }
+export interface BasisPointsArguments {
+    bps: RawTransactionArgument<number | bigint>;
+}
+export interface BasisPointsOptions {
+    package?: string;
+    arguments: BasisPointsArguments | [
+        bps: RawTransactionArgument<number | bigint>
+    ];
+}
+export function basisPoints(options: BasisPointsOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64'
+    ] satisfies (string | null)[];
+    const parameterNames = ["bps"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'ensemble',
+        function: 'basis_points',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
 export interface NewDescentOffOptions {
     package?: string;
     arguments?: [

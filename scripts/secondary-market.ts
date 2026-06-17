@@ -11,8 +11,9 @@
  *   ⑤ RESELL LEASE— Bob resells his UsufructCap → Carol
  *
  * The point: earnings ≠ governance ≠ use. Each is a free-standing object with
- * its own holder; the handle's `canGovern` / `earningsInbox` / `usufructCap`
- * flip purely on who holds the object — no role registry, no permission table.
+ * its own holder; the handle's possession booleans `canGovern` / `holdsEarnings`
+ * / `canBorrow` flip purely on who holds the object — no role registry, no
+ * permission table.
  *
  * Run: `npm run secondary`.
  */
@@ -85,7 +86,7 @@ async function main() {
   const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
   console.log(`① Alice listed ${escrow.id}`);
   check('Alice governs after integrate', (await seenBy(ALICE, escrow.id)).canGovern);
-  check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).earningsInbox != null);
+  check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).holdsEarnings);
 
   // ════════════ ② RENT — Bob takes the right of use ════════════
   const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1 });
@@ -95,8 +96,8 @@ async function main() {
   // ════════════ ③ ASSIGN INCOME — EarningsInbox → Eve (governance stays Alice's) ════════════
   await earningsInbox.transfer(eve.toSuiAddress());
   console.log(`\n③ Alice assigned the income stream → Eve`);
-  check('Eve now holds the EarningsInbox', (await seenBy(eve, escrow.id)).earningsInbox != null);
-  check('Alice no longer holds the EarningsInbox', (await seenBy(ALICE, escrow.id)).earningsInbox == null);
+  check('Eve now holds the EarningsInbox', (await seenBy(eve, escrow.id)).holdsEarnings);
+  check('Alice no longer holds the EarningsInbox', !(await seenBy(ALICE, escrow.id)).holdsEarnings);
   check('Alice still governs (earnings ≠ governance)', (await seenBy(ALICE, escrow.id)).canGovern);
 
   // ════════════ ④ SELL GOVERNORSHIP — GovernanceCap → Dave (Alice fully exits) ════════════
@@ -104,7 +105,6 @@ async function main() {
   console.log(`\n④ Alice sold the governorship → Dave`);
   const aliceAfter = await seenBy(ALICE, escrow.id);
   check('Dave now governs', (await seenBy(dave, escrow.id)).canGovern);
-  check('Dave holds a GovernanceCap handle', (await seenBy(dave, escrow.id)).governanceCap != null);
   check('Alice no longer governs', !aliceAfter.canGovern);
   check('Alice holds nothing here (fully exited)', !aliceAfter.canGovern && !aliceAfter.holdsEarnings);
 
@@ -112,7 +112,6 @@ async function main() {
   await bobCap.transfer(carol.toSuiAddress());
   console.log(`\n⑤ Bob resold the right of use → Carol`);
   check('Carol can borrow (holds the active cap)', (await seenBy(carol, escrow.id)).canBorrow);
-  check('Carol holds a UsufructCap handle', (await seenBy(carol, escrow.id)).usufructCap != null);
   check('Bob can no longer borrow', !(await seenBy(bob, escrow.id)).canBorrow);
 
   finish();
