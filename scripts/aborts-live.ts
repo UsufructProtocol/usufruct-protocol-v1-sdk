@@ -148,9 +148,9 @@ async function main(): Promise<void> {
 
   step('setup — integrate three escrows (A: standard, B: state-machine, C: committed)');
   // Sequential, not Promise.all: parallel txs from one signer race on the gas coin.
-  const a = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market });
-  const b = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market });
-  const c = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: committedMarket });
+  const a = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const b = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const c = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: committedMarket }).send();
   const A = a.escrow,
     B = b.escrow,
     C = c.escrow;
@@ -182,7 +182,7 @@ async function main(): Promise<void> {
 
   step(`Tiers 1 & 2 — ${PATCHES.length} policy aborts via updateMarket (escrow A)`);
   for (const { label, patch, expect } of PATCHES) {
-    const e = await expectAbort(label, () => A.governanceCap.updateMarket(A.id, patch));
+    const e = await expectAbort(label, () => A.governanceCap.updateMarket(A.id, patch).send());
     assertAbort(label, e, expect);
   }
 
@@ -192,47 +192,47 @@ async function main(): Promise<void> {
   step('Tier 1b — commitment-floor-zero aborts (integrate-time)');
   const badAsset = await mintAsset();
   const e_rc = await expectAbort('integrate retireCommitment deferredFor 0', () =>
-    u.integrate({ asset: badAsset, coin: DUMMY, market: { ...market, retireCommitment: { deferredFor: 0 } } }),
+    u.integrate({ asset: badAsset, coin: DUMMY, market: { ...market, retireCommitment: { deferredFor: 0 } } }).send(),
   );
   assertAbort('integrate retireCommitment deferredFor 0', e_rc, { cls: InvalidMarket, abort: 'ERetireCommitmentFloorZero', module: 'retire_commitment_policy', code: 0 });
 
   const e_ec = await expectAbort('integrate ensembleCommitment deferredFor 0', () =>
-    u.integrate({ asset: badAsset, coin: DUMMY, market: { ...market, ensembleCommitment: { deferredFor: 0 } } }),
+    u.integrate({ asset: badAsset, coin: DUMMY, market: { ...market, ensembleCommitment: { deferredFor: 0 } } }).send(),
   );
   assertAbort('integrate ensembleCommitment deferredFor 0', e_ec, { cls: InvalidMarket, abort: 'EEnsembleCommitmentFloorZero', module: 'ensemble_commitment_policy', code: 0 });
 
   // ── Tier 3 — rent-path aborts (escrow A, state-preserving).
   step('Tier 3 — rent-path aborts (escrow A)');
-  const e_pay = await expectAbort('pay below floor', () => A.rent({ tenures: 1, pay: DUMMY(0.001) }));
+  const e_pay = await expectAbort('pay below floor', () => A.rent({ tenures: 1, pay: DUMMY(0.001) }).send());
   assertAbort('pay below floor', e_pay, { cls: InsufficientPayment, abort: 'EInsufficientPayment', module: 'asset_state', code: 1 });
 
-  const e_ten = await expectAbort('tenures = 0', () => A.rent({ tenures: 0, pay: DUMMY(0.01) }));
+  const e_ten = await expectAbort('tenures = 0', () => A.rent({ tenures: 0, pay: DUMMY(0.01) }).send());
   assertAbort('tenures = 0', e_ten, { abort: 'ETenuresZero', module: 'tenures', code: 0 });
 
   // ── Tier 4 — state machine on escrow B, in order (one success advances state).
   step('Tier 4 — state-machine sequence (escrow B)');
-  const e_claim = await expectAbort('claim before retire', () => B.governanceCap.claim(B.id));
+  const e_claim = await expectAbort('claim before retire', () => B.governanceCap.claim(B.id).send());
   assertAbort('claim before retire', e_claim, { cls: MoveAbortError, abort: 'ENotRetired', module: 'asset_state', code: 12 });
 
   console.log('  retire(B) — should SUCCEED (advances to Retired)');
-  await B.governanceCap.retire(B.id);
+  await B.governanceCap.retire(B.id).send();
   check('retire succeeded', true);
 
-  const e_retire2 = await expectAbort('retire twice', () => B.governanceCap.retire(B.id));
+  const e_retire2 = await expectAbort('retire twice', () => B.governanceCap.retire(B.id).send());
   assertAbort('retire twice', e_retire2, { cls: MoveAbortError, abort: 'EAlreadyRetired', module: 'asset_state', code: 5 });
 
-  const e_rentRetired = await expectAbort('rent after retire', () => B.rent({ tenures: 1 }));
+  const e_rentRetired = await expectAbort('rent after retire', () => B.rent({ tenures: 1 }).send());
   assertAbort('rent after retire', e_rentRetired, { cls: NotAvailable, abort: 'ERetiredNoBid', module: 'asset_state', code: 3 });
 
   // ── Tier 5 — commitments + multi-cycle (escrow C, all state-preserving).
   step('Tier 5 — commitment windows + multi-cycle (escrow C)');
-  const e_multi = await expectAbort('rent 2 tenures (multiTenure off)', () => C.rent({ tenures: 2 }));
+  const e_multi = await expectAbort('rent 2 tenures (multiTenure off)', () => C.rent({ tenures: 2 }).send());
   assertAbort('rent 2 tenures (multiTenure off)', e_multi, { abort: 'EMultiCycleNotAllowed', module: 'tenure_extend_policy', code: 0 });
 
-  const e_committedRetire = await expectAbort('retire before commitment elapses', () => C.governanceCap.retire(C.id));
+  const e_committedRetire = await expectAbort('retire before commitment elapses', () => C.governanceCap.retire(C.id).send());
   assertAbort('retire before commitment elapses', e_committedRetire, { cls: CommittedRetire, abort: 'ERetireCommitmentFloorNotElapsed', module: 'asset_state', code: 4 });
 
-  const e_committedEnsemble = await expectAbort('updateMarket before commitment elapses', () => C.governanceCap.updateMarket(C.id, { restPrice: DUMMY(0.02) }));
+  const e_committedEnsemble = await expectAbort('updateMarket before commitment elapses', () => C.governanceCap.updateMarket(C.id, { restPrice: DUMMY(0.02) }).send());
   assertAbort('updateMarket before commitment elapses', e_committedEnsemble, { cls: CommittedEnsemble, abort: 'EEnsembleCommitmentFloorNotElapsed', module: 'asset_state', code: 18 });
 
   // ── Tier 6 — the happy path the v1.4.3 fix unblocks: a VALID compound escalation
@@ -240,7 +240,7 @@ async function main(): Promise<void> {
   // runs last. This is the positive complement to the EBpsRange abort above.
   step('Tier 6 — compound escalation succeeds (v1.4.3 basis_points)');
   try {
-    const { digest } = await A.governanceCap.updateMarket(A.id, { escalation: { compound: { bps: 100, delta: DUMMY(0.001) } } });
+    const { digest } = await A.governanceCap.updateMarket(A.id, { escalation: { compound: { bps: 100, delta: DUMMY(0.001) } } }).send();
     check('compound escalation updateMarket committed', true, `${digest.slice(0, 12)}…`);
   } catch (err) {
     check('compound escalation updateMarket committed', false, (err as Error).message);
