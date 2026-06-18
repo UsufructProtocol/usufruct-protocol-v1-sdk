@@ -11,9 +11,9 @@ import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transac
 import { digestPlan, makePlan, type Plan } from './plan.js';
 import { withBorrowedAsset } from '../actions/borrow.js';
 import {
-  burnStaleUsufructCap,
+  burnStaleUsufructCapToPtb,
   burnUsufructCapToPtb,
-  updateUsufructuaryRefundAddress,
+  updateUsufructuaryRefundAddressToPtb,
 } from '../actions/governance.js';
 import { id as toId, type Mist } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
@@ -344,7 +344,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     if (!(await mkReader().usufructCapIsStale(args.capId))) return { burned: false, digest: null };
     const { digest } = await digestPlan(
       () => ctx.defaultExecutor,
-      (tx) => burnStaleUsufructCap({ usufructCapId: args.capId }).toPtb(tx, capPtbArgs),
+      (tx) => burnStaleUsufructCapToPtb({ usufructCapId: args.capId })(tx, capPtbArgs),
     ).send();
     return { burned: true, digest };
   }
@@ -359,7 +359,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     digestPlan(
       () => ctx.defaultExecutor,
       (tx) =>
-        updateUsufructuaryRefundAddress({ usufructCapId: args.capId, newAddress: addr }).toPtb(
+        updateUsufructuaryRefundAddressToPtb({ usufructCapId: args.capId, newAddress: addr })(
           tx,
           capPtbArgs,
         ),

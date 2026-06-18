@@ -20,34 +20,33 @@ import type { Ms } from './brand.js';
  */
 
 /**
- * The core (drift-zero) interpretation of an action: a PTB builder, and
- * nothing else. In the core SDK an "action" is *only* its on-chain
- * interpretation — `toPtb`. The second interpretation, `step` (an off-chain
- * re-derivation of the contract's effect), is a mirror concern: it lives in
- * the opt-in `sim` layer, which composes a full `Origin/Transition/Terminal`
- * action (below) by pairing a `step` with the core's `toPtb`. Confining the
- * core's action surface to `toPtb` is what makes the core impossible to drift.
+ * The core (drift-zero) interpretation of an action: **a PTB builder, and
+ * nothing else** — so it is literally a function `(tx, args) => TransactionResult`,
+ * not an object. A core "action" IS its `toPtb`. The second interpretation,
+ * `step` (an off-chain re-derivation of the contract's effect), is a mirror
+ * concern: the opt-in `sim` layer composes a full `Origin/Transition/Terminal`
+ * action (below) by pairing a `step` with one of these builders. Confining the
+ * core's action surface to the builder function is what makes it impossible to
+ * drift. `R` defaults to a single `TransactionResult`; `collect` uses `[]`.
  */
-export interface PtbAction<P> {
-  readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
-}
+export type PtbAction<P, R = TransactionResult> = (tx: Transaction, args: P) => R;
 
 /** Creates a state aggregate (only `integrate` for escrows). */
 export interface OriginAction<R, P, S> {
   readonly step: (t: Ms) => { state: S; result: R };
-  readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
+  readonly toPtb: PtbAction<P>;
 }
 
 /** Mutates a state aggregate. */
 export interface TransitionAction<R, P, S> {
   readonly step: (state: S, t: Ms) => { state: S; result: R };
-  readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
+  readonly toPtb: PtbAction<P>;
 }
 
 /** Consumes a state aggregate — no successor state. */
 export interface TerminalAction<R, P, S> {
   readonly step: (state: S, t: Ms) => { result: R };
-  readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
+  readonly toPtb: PtbAction<P>;
 }
 
 /**

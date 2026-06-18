@@ -31,8 +31,8 @@ export interface BorrowPtbArgs {
   readonly typeArguments: [string, string];
 }
 
-/** Appends `borrow_asset`. Returns `[asset, receipt]` — both consumed in-PTB. */
-export function borrowToPtb(): PtbAction<BorrowPtbArgs>['toPtb'] {
+/** The `borrow_asset` PTB builder. Returns `[asset, receipt]` — both consumed in-PTB. */
+export function borrowToPtb(): PtbAction<BorrowPtbArgs> {
   return (tx, args) =>
     tx.add(
       borrowCall({
@@ -41,13 +41,6 @@ export function borrowToPtb(): PtbAction<BorrowPtbArgs>['toPtb'] {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function borrowAsset(_params: {
-  /** The cap attempting the borrow — must be the active cap. */
-  readonly usufructCapId: string;
-}): PtbAction<BorrowPtbArgs> {
-  return { toPtb: borrowToPtb() };
 }
 
 export interface ReturnPtbArgs {
@@ -74,10 +67,6 @@ export function returnAssetToPtb(tx: Transaction, args: ReturnPtbArgs): Transact
   );
 }
 
-export function returnAsset(): PtbAction<ReturnPtbArgs> {
-  return { toPtb: returnAssetToPtb };
-}
-
 /**
  * The composability bracket: borrow → user commands → return, in one PTB.
  *
@@ -96,7 +85,7 @@ export function withBorrowedAsset<T>(
   args: BorrowPtbArgs,
   use: (asset: TransactionObjectArgument, tx: Transaction) => T,
 ): T {
-  const handles = borrowAsset({ usufructCapId: args.usufructCapId }).toPtb(tx, args);
+  const handles = borrowToPtb()(tx, args);
   const asset = handles[0]! as TransactionObjectArgument;
   const result = use(asset, tx);
   returnAssetToPtb(tx, {

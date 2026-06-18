@@ -12,8 +12,8 @@ import { createReader, type Reader } from '../read/reader.js';
 import { SPEC_BY_NAME, runSpecsMulti, type ReadCtx } from '../read/spec.js';
 import { escrowTypeArgs } from '../primitives/state.js';
 import { retryingReader } from './retry.js';
-import { applyPendingTransitionStates } from '../actions/apply.js';
-import { rent as rentAction } from '../actions/rent.js';
+import { applyToPtb } from '../actions/apply.js';
+import { rentToPtb as rentAction } from '../actions/rent.js';
 import { escrowEventStream } from '../primitives/grpc-source.js';
 import { subscribeEscrowVersion } from './watch.js';
 import { createCap, type UsufructCap } from './cap.js';
@@ -366,7 +366,7 @@ export async function createEscrow(
     digestPlan(
       () => defaultExecutor,
       (tx) =>
-        applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments }),
+        applyToPtb()(tx, { pkg: { packageId }, escrowId, typeArguments }),
     );
 
   // Live reader wrappers (zero cost unless called), typed in the escrow's coin / as Dates.
@@ -451,7 +451,7 @@ export async function createEscrow(
       // phase 1 — build: source the payment from `sender`, mint, keep the cap.
       build: async (tx, sender) => {
         const payment = await sourceCoin(tx, client, sender, { coinType, amountMist: paidMist });
-        const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
+        const minted = rentAction({ tenures: tenureCount(count) })(tx, {
           pkg: { packageId },
           escrowId,
           payment,

@@ -51,8 +51,8 @@ export interface ApplyResult {
   readonly tenureSettlement?: TenureSettlement;
 }
 
-/** Appends the `apply_pending_transition_states` Move call. */
-export function applyToPtb(): PtbAction<ApplyPtbArgs>['toPtb'] {
+/** The `apply_pending_transition_states` PTB builder. */
+export function applyToPtb(): PtbAction<ApplyPtbArgs> {
   return (tx, args) =>
     tx.add(
       applyCall({
@@ -61,8 +61,4 @@ export function applyToPtb(): PtbAction<ApplyPtbArgs>['toPtb'] {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function applyPendingTransitionStates(): PtbAction<ApplyPtbArgs> {
-  return { toPtb: applyToPtb() };
 }

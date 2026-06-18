@@ -10,7 +10,7 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
-import { integrate as integrateAction } from '../actions/integrate.js';
+import { integrateToPtb as integrateAction } from '../actions/integrate.js';
 import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
 import { indexerSource, type IndexerSource } from '../indexer/index.js';
@@ -343,7 +343,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
             ...(ensembleCommitment ? { ensembleCommitment } : {}),
             assetType,
             coinType,
-          }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
+          })(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
           tx.transferObjects([created[0]!, created[1]!], sender); // [GovernanceCap, EarningsInbox]
         },
         // decode: the three created objects → resolved handles.

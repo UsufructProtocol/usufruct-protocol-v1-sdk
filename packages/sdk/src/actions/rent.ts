@@ -36,8 +36,8 @@ export interface RentPtbArgs {
   readonly typeArguments: [string, string];
 }
 
-/** Appends the `rent` Move call. Returns the freshly-minted `UsufructCap`. */
-export function rentToPtb(params: RentParams): PtbAction<RentPtbArgs>['toPtb'] {
+/** The `rent` PTB builder. Appends the Move call; returns the minted `UsufructCap`. */
+export function rentToPtb(params: RentParams): PtbAction<RentPtbArgs> {
   return (tx, args) =>
     tx.add(
       rentCall({
@@ -50,8 +50,4 @@ export function rentToPtb(params: RentParams): PtbAction<RentPtbArgs>['toPtb'] {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function rent(params: RentParams): PtbAction<RentPtbArgs> {
-  return { toPtb: rentToPtb(params) };
 }

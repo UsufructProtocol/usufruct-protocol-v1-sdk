@@ -17,8 +17,8 @@ export interface RetirePtbArgs {
   readonly typeArguments: [string, string];
 }
 
-/** Appends the `retire` Move call. */
-export function retireToPtb(): PtbAction<RetirePtbArgs>['toPtb'] {
+/** The `retire` PTB builder. */
+export function retireToPtb(): PtbAction<RetirePtbArgs> {
   return (tx, args) =>
     tx.add(
       retireCall({
@@ -27,8 +27,4 @@ export function retireToPtb(): PtbAction<RetirePtbArgs>['toPtb'] {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function retire(): PtbAction<RetirePtbArgs> {
-  return { toPtb: retireToPtb() };
 }
