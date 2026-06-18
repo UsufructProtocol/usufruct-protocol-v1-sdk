@@ -143,6 +143,13 @@ export interface Reader {
    * views are included only when `t` is given; cap views only with `capId`.
    */
   snapshot(opts?: SnapshotOpts): Promise<Record<string, unknown>>;
+  /**
+   * Read a *named subset* of views in one (chunked) `simulateTransaction` — the
+   * targeted twin of `snapshot`. Returns a record keyed by view name. Only batch
+   * views valid in the current state: a view that aborts (e.g. a rented-only view
+   * on an idle escrow) fails the whole simulation.
+   */
+  batch(names: readonly string[], opts?: SnapshotOpts): Promise<Record<string, unknown>>;
 }
 
 export function createReader(client: ClientWithCoreApi, target: ReaderTarget): Reader {
@@ -261,6 +268,16 @@ export function createReader(client: ClientWithCoreApi, target: ReaderTarget): R
         ...(opts.capId != null ? { probeCapId: opts.capId } : {}),
       };
       return runSpecs(client, selected, ctx).then((m) => Object.fromEntries(m));
+    },
+
+    batch: (names, opts = {}) => {
+      const ctx: ReadCtx = {
+        ...base(),
+        ...(opts.t != null ? { nowMs: opts.t } : {}),
+        ...(opts.capId != null ? { probeCapId: opts.capId } : {}),
+      };
+      const specs = names.map((n) => SPEC_BY_NAME.get(n)!);
+      return runSpecs(client, specs, ctx).then((m) => Object.fromEntries(m));
     },
   };
 }

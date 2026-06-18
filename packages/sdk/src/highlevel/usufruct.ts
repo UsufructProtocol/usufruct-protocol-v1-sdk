@@ -20,7 +20,7 @@ import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import { createCap, type UsufructCap } from './cap.js';
 import type { HandleCtx } from './ctx.js';
-import { createEscrow, type Escrow } from './escrow.js';
+import { createEscrow, createEscrowMany, type Escrow } from './escrow.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
 import { resolveFeeInboxId } from './feeref.js';
@@ -102,6 +102,14 @@ export interface Usufruct {
 
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+
+  /**
+   * Resolve MANY escrow handles in a few round-trips — the cross-escrow batch
+   * (dashboards, portfolios). One `getObjects` + two interleaved view
+   * simulations + role deduped across the set, vs one `escrow(id)` worth of IO
+   * *per* escrow. Same handles, same values; just fewer trips.
+   */
+  escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
 
   /**
    * React to changes across *many* escrows over **one** gRPC firehose. `onChange`
@@ -307,6 +315,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
     escrow(idStr, opts) {
       return createEscrow(ctx(), idStr, opts?.at);
+    },
+
+    escrows(ids, opts) {
+      return createEscrowMany(ctx(), ids, opts?.at);
     },
 
     watchMany(escrowIds, onChange, opts) {
