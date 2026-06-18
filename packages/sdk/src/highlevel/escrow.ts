@@ -169,7 +169,15 @@ export interface Escrow {
   integratedAt(): Promise<Date>;
   /** When the current cycle phase started, or `null`. */
   phaseStartAt(): Promise<Date | null>;
-  /** When the next lazy transition is due at/after `at` (default now), or `null`. */
+  /**
+   * The timestamp of a lazy transition that is **already overdue and unapplied** at
+   * `at` (default now), or `null` when none is due yet — the "is there keeper work
+   * *now*?" check (twin of the Move `transition_is_ready`). NOT a future-boundary
+   * oracle: mid-tenure/mid-handover this is `null` because nothing is overdue. To
+   * schedule a wake-up on the *next* boundary, read the phase fields instead
+   * (`expiresAt` when occupied, `handoverExpiresAt` when in demand). See
+   * `examples/keeper-bot`.
+   */
   nextTransitionAt(at?: When): Promise<Date | null>;
   /** The wrapped asset object's id. */
   assetId(): Promise<string>;

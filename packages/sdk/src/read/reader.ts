@@ -84,6 +84,8 @@ export interface Reader {
   phaseStartMs(): Promise<Ms | null>;
   tenureExpiryMs(): Promise<Ms | null>;
   transitionIsReady(t: Ms): Promise<boolean>;
+  /** Timestamp of an **overdue, unapplied** lazy transition at `t`, or `null` if none
+   *  is due yet (the keeper's "work now?" check — NOT a future boundary; see escrow.ts). */
   nextTransitionMs(t: Ms): Promise<Ms | null>;
   handoverExpiryMs(): Promise<Ms | null>;
   activeUsufructuaryTimeRemainingMs(t: Ms): Promise<Ms | null>;
