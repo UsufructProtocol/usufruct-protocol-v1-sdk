@@ -43,7 +43,7 @@ So a keeper can't *wait for an event* to learn a boundary passed; it must **sche
 on the chain clock**, `apply`, and that apply is what emits the queued event. The
 demo asserts this directly: 0 `watch` fires across each boundary wait.
 
-### 2. The collision: `nextTransitionAt()` means "overdue NOW", not "next boundary" ⚠️
+### 2. The collision (now resolved): `nextTransitionAt()` means "overdue NOW", not "next boundary"
 The obvious keeper design — "ask the SDK for the next boundary and sleep to it" —
 **did not work**. `escrow.nextTransitionAt()` returned **`null` in both `occupied`
 and `demand`**, even mid-tenure with a known expiry.
@@ -65,16 +65,20 @@ says "nothing pending → null". This is correct, intentional contract behavior;
 trap was the SDK JSDoc wording *"when the next lazy transition is **due**"* — "due"
 means *overdue*, not *scheduled*.
 
-So the keeper reads the **future** boundary from the phase fields, sleeps to it, and
-only then is `nextTransitionAt(now)` non-null (confirming it's due) before `apply`:
+**Resolution (shipped).** The keeper needs the *future* boundary, so the protocol
+now exposes one — `next_boundary_ms` (+ `descent_expiry_ms`), the ungated twin of
+`next_transition_ms` — and the SDK surfaces it as `escrow.nextBoundaryAt()`. The
+keeper reads that single oracle, sleeps to it, and applies:
 
 ```ts
-const boundary = escrow.handoverExpiresAt   // Date — future boundary, when 'demand'
-              ?? escrow.expiresAt;           // Date — the tenure end, when 'occupied'
-// sleep to `boundary` on the chain clock, then apply (nextTransitionAt(now) is now Some).
+const at = await escrow.nextBoundaryAt();   // future boundary, ALL phases, drift-zero
+// sleep to `at` on the chain clock, then apply.
 ```
 
-**Not a gap — a naming/doc trap.** Registered as an SDK improvement (below).
+This also closes a latent **descent blind spot**: the old hand-composition
+(`handoverExpiresAt ?? expiresAt`) was `null` in the auction phase; `nextBoundaryAt()`
+covers it, and keeps the boundary math on-chain. **Not a gap — a missing view, now
+added** (see SDK improvement below).
 
 ### 3. read projects / write applies, on the chain clock
 The keeper reads with the now_ms-parameterized views (the handle resolves at the
@@ -83,22 +87,48 @@ we hit earlier in `chainNowMs`). It decides from the projection, then `apply`
 materializes it.
 
 ### 4. The keeper is ~30 lines of composition
-`watch` (event) + a phase-field boundary + `waitForChainTime` + `applyPendingTransitionStates`.
-No core changes. A `keeper(escrows)` loop helper would be reasonable sugar.
+`watch` (event) + `nextBoundaryAt()` + `waitForChainTime` + `applyPendingTransitionStates`.
+No core logic changes. A `keeper(escrows)` loop helper would be reasonable sugar.
 
-## Registered SDK improvement (from this probe)
+## SDK improvements from this probe (shipped)
 
-1. **Done here — disambiguate the JSDoc.** `escrow.nextTransitionAt()` (and the
-   `Reader.nextTransitionMs`) said "*when the next lazy transition is **due***". The
-   doc now states it returns the **overdue-and-unapplied** transition's timestamp (or
-   `null` when none is due yet) — a keeper's "is there work *now*?" check, twin of
-   `transition_is_ready` — **not** a future-boundary oracle. (Tightened in
-   `packages/sdk/src/highlevel/escrow.ts` + `read/reader.ts`.)
-2. **Proposed (API, not yet built).** Add `escrow.nextBoundaryAt(): Promise<Date | null>`
-   that returns the next *future* boundary regardless of crossing — i.e.
-   `handoverExpiresAt ?? expiresAt ?? <auction descent end>` — so a keeper has one
-   call to schedule on, instead of composing phase fields by hand. Pure composition
-   over existing reads; deferred as a separate ergonomics PR.
+1. **Disambiguated the JSDoc.** `escrow.nextTransitionAt()` / `Reader.nextTransitionMs`
+   now say they return the **overdue-and-unapplied** transition's timestamp (or `null`
+   when none is due) — a keeper's "is there work *now*?" check, twin of
+   `transition_is_ready` — **not** a future-boundary oracle.
+2. **Added the future-boundary view.** The protocol gained `next_boundary_ms`
+   (+ `descent_expiry_ms`), the ungated twin of `next_transition_ms`; the SDK surfaces
+   them as `escrow.nextBoundaryAt()` / `escrow.descentExpiresAt()`. One drift-zero call
+   for the next boundary across all phases — the keeper schedules on it directly. The
+   auction-descent boundary computation stays on-chain (no off-chain re-derivation).
+   Deployed to testnet and live-validated here.
+
+## Beyond keepers: the same primitive powers frontends
+
+A keeper is just the first consumer that cares about *time*. The two-signal pattern
+— `watch` for events, `nextBoundaryAt()` for the clock — generalizes to **any**
+reactive consumer, and a UI is the obvious next one. With a single call, a frontend
+knows *when* an escrow's state will change next, across all phases, drift-zero:
+
+```ts
+const at = await escrow.nextBoundaryAt();   // Date | null — the next state change
+// countdown:        "tenure ends in 04:32" / "auction hits the floor in 01:15"
+// availability:     "free to rent in 2m"   (descent → idle)
+// efficient refetch: setTimeout(refetch, at - Date.now())  // re-render exactly on change,
+//                                                           // instead of blind polling
+// dashboards:        sort a portfolio by "expiring soonest"
+```
+
+Same duality as the keeper: `watch`/`subscribe` re-renders on a bid/rent (an event),
+and a timer at `nextBoundaryAt()` re-fetches on the lazy transition (which fires no
+event). The keeper settles on the boundary; the UI just re-renders on it — one
+primitive, two consumers.
+
+What it gives is *when*, not *what*: a countdown needs only the timestamp; to label
+the next state ("→ auction" vs "→ free") the UI also reads `status` + config off the
+handle. And exposing it as a view (not SDK-side composition) means a frontend dev
+never has to know the phase machine or re-derive the descent end — one
+`nextBoundaryAt()`, backed by the chain, not a client guess.
 
 ## Run it
 
