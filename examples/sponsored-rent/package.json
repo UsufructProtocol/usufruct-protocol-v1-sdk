@@ -1,0 +1,16 @@
+{
+  "name": "usufruct-sponsored-rent",
+  "private": true,
+  "type": "module",
+  "description": "Probe D — a gas station: sender ≠ gas payer, through the Executor seam",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@usufruct-protocol/sdk": "file:../../packages/sdk"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}
