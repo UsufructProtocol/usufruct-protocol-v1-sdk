@@ -17,9 +17,10 @@
  */
 import type { Id, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { activeUsufructuaryAddr } from '../views/identity.js';
-import type { OriginAction, TerminalAction, TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
-import { channel, type Predicate, type Source, type SubscribeOpts } from '@usufruct-protocol/sdk/primitives/source.js';
+import type { OriginAction, TerminalAction, TransitionAction } from './action.js';
+import type { AssetSchema, uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from './state.js';
+import { channel, type Predicate, type SubscribeOpts } from '@usufruct-protocol/sdk/primitives/source.js';
 
 /** Canonical id form (`0x`-insensitive), matching the other sources. */
 function normId(s: string): string {
@@ -27,13 +28,23 @@ function normId(s: string): string {
 }
 
 /**
- * A `Source` backed by an in-memory store, plus a testbed control surface to
- * seed states and advance them through `Action.step`.
+ * An in-memory store of decoded `EscrowState` (the mirror's testbed), plus a
+ * control surface to seed states and advance them through `Action.step`. It is
+ * `Source`-shaped — `fetch`/`subscribe`/`query` — but, being the mirror's own
+ * testbed, it yields the *decoded* `EscrowState` directly (the chain `Source`
+ * yields raw snapshots that the mirror decodes; here the store already holds
+ * decoded state, so it skips the round-trip).
  */
 export interface MemorySource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
-> extends Source<A, C> {
+> {
+  readonly fetch: (id: Id<'Escrow'>) => Promise<EscrowState<A, C>>;
+  readonly subscribe: (
+    id: Id<'Escrow'>,
+    opts?: SubscribeOpts,
+  ) => AsyncIterable<EscrowState<A, C>>;
+  readonly query: (predicate: Predicate) => AsyncIterable<EscrowState<A, C>>;
   /**
    * Insert or replace an escrow's state (notifies subscribers). `governor`
    * tags it so `query({ byGovernor })` can find it — the governor address is

@@ -42,7 +42,7 @@ export type UpdateEnsembleResult = { readonly applied: 'immediate' | 'scheduled'
 
 export function extendRetireCommitmentToPtb(
   cfg: RetireCommitmentConfig,
-): PtbAction<GovernancePtbArgs>['toPtb'] {
+): PtbAction<GovernancePtbArgs> {
   return (tx, args) =>
     tx.add(
       extendRetireCall({
@@ -53,15 +53,9 @@ export function extendRetireCommitmentToPtb(
     );
 }
 
-export function extendRetireCommitment(
-  cfg: RetireCommitmentConfig,
-): PtbAction<GovernancePtbArgs> {
-  return { toPtb: extendRetireCommitmentToPtb(cfg) };
-}
-
 export function extendEnsembleCommitmentToPtb(
   cfg: EnsembleCommitmentConfig,
-): PtbAction<GovernancePtbArgs>['toPtb'] {
+): PtbAction<GovernancePtbArgs> {
   return (tx, args) =>
     tx.add(
       extendEnsembleCall({
@@ -72,15 +66,7 @@ export function extendEnsembleCommitmentToPtb(
     );
 }
 
-export function extendEnsembleCommitment(
-  cfg: EnsembleCommitmentConfig,
-): PtbAction<GovernancePtbArgs> {
-  return { toPtb: extendEnsembleCommitmentToPtb(cfg) };
-}
-
-export function updateEnsembleToPtb(
-  cfg: EnsembleConfig,
-): PtbAction<GovernancePtbArgs>['toPtb'] {
+export function updateEnsembleToPtb(cfg: EnsembleConfig): PtbAction<GovernancePtbArgs> {
   return (tx, args) =>
     tx.add(
       updateEnsembleCall({
@@ -89,10 +75,6 @@ export function updateEnsembleToPtb(
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function updateEnsemble(cfg: EnsembleConfig): PtbAction<GovernancePtbArgs> {
-  return { toPtb: updateEnsembleToPtb(cfg) };
 }
 
 export interface CapHolderPtbArgs {
@@ -105,7 +87,7 @@ export interface CapHolderPtbArgs {
 export function updateUsufructuaryRefundAddressToPtb(params: {
   readonly usufructCapId: string;
   readonly newAddress: string;
-}): PtbAction<CapHolderPtbArgs>['toPtb'] {
+}): PtbAction<CapHolderPtbArgs> {
   return (tx, args) =>
     tx.add(
       updateRefundCall({
@@ -122,16 +104,9 @@ export function updateUsufructuaryRefundAddressToPtb(params: {
     );
 }
 
-export function updateUsufructuaryRefundAddress(params: {
-  readonly usufructCapId: string;
-  readonly newAddress: string;
-}): PtbAction<CapHolderPtbArgs> {
-  return { toPtb: updateUsufructuaryRefundAddressToPtb(params) };
-}
-
 export function burnStaleUsufructCapToPtb(_params: {
   readonly usufructCapId: string;
-}): PtbAction<CapHolderPtbArgs>['toPtb'] {
+}): PtbAction<CapHolderPtbArgs> {
   return (tx, args) =>
     tx.add(
       burnStaleCall({
@@ -140,12 +115,6 @@ export function burnStaleUsufructCapToPtb(_params: {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function burnStaleUsufructCap(params: {
-  readonly usufructCapId: string;
-}): PtbAction<CapHolderPtbArgs> {
-  return { toPtb: burnStaleUsufructCapToPtb(params) };
 }
 
 // ── cap.move consumers — they act on the cap object, not on any EscrowState

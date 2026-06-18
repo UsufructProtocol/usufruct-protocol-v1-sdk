@@ -4,15 +4,20 @@
  * pending first, requires a Retired escrow, then reads the asset id.
  */
 import { claimAssetToPtb, type ClaimAssetPtbArgs, type ClaimResult } from '@usufruct-protocol/sdk/actions/claimAsset.js';
-import type { TerminalAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TerminalAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import { assetId } from '../../views/identity.js';
 import { applyPendingTransitionStates } from './apply.js';
 
 export type { ClaimAssetPtbArgs, ClaimResult };
 
-export function claimAsset(): TerminalAction<ClaimResult, ClaimAssetPtbArgs> {
+export function claimAsset(): TerminalAction<
+  ClaimResult,
+  ClaimAssetPtbArgs,
+  EscrowState<AssetSchema>
+> {
   return {
     step: (state: EscrowState<AssetSchema>, t: Ms) => {
       const settled = applyPendingTransitionStates().step(state, t).state;

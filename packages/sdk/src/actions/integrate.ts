@@ -52,8 +52,8 @@ export interface IntegrateIntoPortfolioPtbArgs extends IntegratePtbArgs {
   readonly earningsInboxId: string;
 }
 
-/** Appends the `integrate` Move call. Returns `[escrow, governanceCap, …]`. */
-export function integrateToPtb(params: IntegrateParams): PtbAction<IntegratePtbArgs>['toPtb'] {
+/** The `integrate` PTB builder. Returns `[escrow, governanceCap, …]`. */
+export function integrateToPtb(params: IntegrateParams): PtbAction<IntegratePtbArgs> {
   return (tx, args) =>
     tx.add(
       integrateCall({
@@ -70,14 +70,10 @@ export function integrateToPtb(params: IntegrateParams): PtbAction<IntegratePtbA
     );
 }
 
-export function integrate(params: IntegrateParams): PtbAction<IntegratePtbArgs> {
-  return { toPtb: integrateToPtb(params) };
-}
-
-/** Appends `integrate_into_portfolio` — attach to an existing cap + inbox. */
+/** The `integrate_into_portfolio` PTB builder — attach to an existing cap + inbox. */
 export function integrateIntoPortfolioToPtb(
   params: IntegrateParams,
-): PtbAction<IntegrateIntoPortfolioPtbArgs>['toPtb'] {
+): PtbAction<IntegrateIntoPortfolioPtbArgs> {
   return (tx, args) =>
     tx.add(
       integrateIntoPortfolioCall({
@@ -94,10 +90,4 @@ export function integrateIntoPortfolioToPtb(
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function integrateIntoPortfolio(
-  params: IntegrateParams,
-): PtbAction<IntegrateIntoPortfolioPtbArgs> {
-  return { toPtb: integrateIntoPortfolioToPtb(params) };
 }

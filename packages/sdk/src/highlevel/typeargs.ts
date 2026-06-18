@@ -5,7 +5,8 @@
  * (`[assetType, coinType]`) — never the decoded asset bytes. Those come from the
  * object's *type string*, so we read them with a plain `getObject` (no
  * `content`, no BCS, no asset schema). This is why the high-level works for any
- * asset without the developer supplying an `assetSchema`.
+ * asset without ever decoding it — an asset BCS schema is only needed in the
+ * opt-in mirror (`decodeEscrowState(snapshot, schema)`), never in the core.
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from '../primitives/brand.js';

@@ -15,8 +15,9 @@ import {
   type TenureSettlement,
 } from '@usufruct-protocol/sdk/actions/apply.js';
 import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
-import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { TransitionAction } from '../../primitives/action.js';
+import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import { collapseCurveShape } from '../../views/config.js';
 import { resolveCycleParams } from '../../views/internal.js';
 import {
@@ -38,7 +39,7 @@ export type {
 type State = EscrowState<AssetSchema>;
 type AssetStateData = NonNullable<State['escrow']['state']>;
 
-export function applyPendingTransitionStates(): TransitionAction<ApplyResult, ApplyPtbArgs> {
+export function applyPendingTransitionStates(): TransitionAction<ApplyResult, ApplyPtbArgs, State> {
   return {
     step: (state: State, t) => {
       const s = state.escrow.state;

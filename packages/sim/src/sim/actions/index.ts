@@ -13,6 +13,9 @@ export * from './retire.js';
 export * from './claimAsset.js';
 export * from './borrow.js';
 export * from './governance.js';
-// `collect` is core-clean (drift-free arithmetic over MessageGroups) and ships
-// whole in core; re-export it so this facade is a complete superset.
+// `collect` is split: the core ships the drift-free `toPtb` builder
+// (`collectMessagesToPtb`) plus the discovery + types; the mirror adds the
+// step-bearing `collectMessages`. Re-export both so this facade is a complete
+// superset — no name clash, as the core no longer exports `collectMessages`.
 export * from '@usufruct-protocol/sdk/actions/collect.js';
+export * from './collect.js';

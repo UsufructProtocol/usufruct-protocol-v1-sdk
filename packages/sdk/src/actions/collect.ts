@@ -12,15 +12,17 @@
  * groups. Inbox actions do not operate on an `EscrowState` but on a second
  * aggregate — `MessageGroups` — so they are a `Transition` over that aggregate
  * (`Action<R, P, S = EscrowState>` generalized, §4.3). The off-chain mirror of
- * that aggregate is `memoryInbox`.
+ * that aggregate is `memoryInbox`. The core ships only the `toPtb` builder
+ * (`collectMessagesToPtb`); the step-bearing `collectMessages` lives in the
+ * `sim` mirror (`@usufruct-protocol/sim`).
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
-import type { Transaction, TransactionResult } from '@mysten/sui/transactions';
+import type { TransactionResult } from '@mysten/sui/transactions';
 import { normalizeStructTag } from '@mysten/sui/utils';
 import { collectEarningsMessages } from '../codegen/usufruct/earnings.js';
 import { EarningsMessage } from '../codegen/usufruct/earnings_message.js';
 import { collectFeeMessages } from '../codegen/usufruct/fees.js';
-import type { TransitionAction } from '../primitives/action.js';
+import type { PtbAction } from '../primitives/action.js';
 import type { Id, Mist } from '../primitives/brand.js';
 import { mist } from '../primitives/brand.js';
 import type { PackageIds } from '../config/network.js';
@@ -106,65 +108,44 @@ export interface CollectParams {
   readonly groups: MessageGroups;
 }
 
-export interface CollectStepResult {
-  readonly byCoin: ReadonlyArray<{
-    readonly coinType: string;
-    readonly count: number;
-    readonly amountMist: Mist;
-  }>;
-}
-
-export interface CollectAction
-  extends Omit<TransitionAction<CollectStepResult, CollectPtbArgs, MessageGroups>, 'toPtb'> {
-  /**
-   * Emits one collect call per discovered coin type in a single PTB and
-   * returns the resulting `Coin<C>` per coin (insertion order of `groups`);
-   * the caller transfers or consumes them. (Variant deviation: the PTB
-   * interpretation yields one result per coin, hence the array.)
-   */
-  readonly toPtb: (tx: Transaction, args: CollectPtbArgs) => TransactionResult[];
-}
-
 /**
- * `Transition` over the inbox aggregate (`MessageGroups`, SPEC §4.3 as
- * amended): `step` drains the discovered groups and totals per coin —
- * the pure mirror of what the partitioned PTB does on-chain.
+ * The core (drift-free) `toPtb` builder for inbox collection. Emits one
+ * `MakeMoveVec` + one collect call per discovered coin type in a single PTB and
+ * returns the resulting `Coin<C>` per coin (insertion order of `groups`); the
+ * caller transfers or consumes them. (Variant deviation: the PTB interpretation
+ * yields one result per coin, hence the array.) Never mixes coin types in a
+ * ticket vector — the §5.2 discipline that prevents the `receive_impl` abort.
+ *
+ * The off-chain `step` mirror that pairs with this builder is
+ * `collectMessages` in `@usufruct-protocol/sim`.
  */
-export function collectMessages(params: CollectParams): CollectAction {
+export function collectMessagesToPtb(
+  params: CollectParams,
+): PtbAction<CollectPtbArgs, TransactionResult[]> {
   const { module, struct } = MESSAGE_TYPE[params.kind];
-  return {
-    step: (groups) => {
-      const byCoin = [...groups].map(([coinType, refs]) => ({
-        coinType,
-        count: refs.length,
-        amountMist: mist(refs.reduce((a, r) => a + r.amountMist, 0n)),
-      }));
-      return { state: new Map(), result: { byCoin } };
-    },
-    toPtb: (tx, args) => {
-      const coins: TransactionResult[] = [];
-      for (const [coinType, refs] of params.groups) {
-        if (refs.length === 0) continue;
-        const tickets = refs.map((r) => tx.receivingRef(r));
-        const vec = tx.makeMoveVec({
-          type: `0x2::transfer::Receiving<${args.pkg.packageId}::${module}::${struct}<${coinType}>>`,
-          elements: tickets,
-        });
-        const call =
-          params.kind === 'earnings'
-            ? collectEarningsMessages({
-                package: args.pkg.packageId,
-                arguments: [args.inboxId, vec],
-                typeArguments: [coinType],
-              })
-            : collectFeeMessages({
-                package: args.pkg.packageId,
-                arguments: [args.inboxId, vec],
-                typeArguments: [coinType],
-              });
-        coins.push(tx.add(call));
-      }
-      return coins;
-    },
+  return (tx, args) => {
+    const coins: TransactionResult[] = [];
+    for (const [coinType, refs] of params.groups) {
+      if (refs.length === 0) continue;
+      const tickets = refs.map((r) => tx.receivingRef(r));
+      const vec = tx.makeMoveVec({
+        type: `0x2::transfer::Receiving<${args.pkg.packageId}::${module}::${struct}<${coinType}>>`,
+        elements: tickets,
+      });
+      const call =
+        params.kind === 'earnings'
+          ? collectEarningsMessages({
+              package: args.pkg.packageId,
+              arguments: [args.inboxId, vec],
+              typeArguments: [coinType],
+            })
+          : collectFeeMessages({
+              package: args.pkg.packageId,
+              arguments: [args.inboxId, vec],
+              typeArguments: [coinType],
+            });
+      coins.push(tx.add(call));
+    }
+    return coins;
   };
 }

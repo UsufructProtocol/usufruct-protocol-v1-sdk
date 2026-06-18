@@ -12,27 +12,42 @@ import {
   returnAssetToPtb,
   withBorrowedAsset,
   type BorrowPtbArgs,
-  type BorrowReceipt,
-  type BorrowResult,
   type ReturnPtbArgs,
 } from '@usufruct-protocol/sdk/actions/borrow.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
-import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
+import type { TransitionAction } from '../../primitives/action.js';
+import type { Id, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import { applyPendingTransitionStates } from './apply.js';
 
 export { withBorrowedAsset };
-export type { BorrowPtbArgs, BorrowReceipt, BorrowResult, ReturnPtbArgs };
+export type { BorrowPtbArgs, ReturnPtbArgs };
 
 type State = EscrowState;
 type AssetStateData = NonNullable<State['escrow']['state']>;
 type RentingData = Extract<AssetStateData, { $kind: 'Renting' }>['Renting'];
 
+/**
+ * Off-chain mirror of `AssetReceipt`: the extracted renting state. The on-chain
+ * receipt is a hot-potato consumed in-PTB; this is the *mirror's* off-chain
+ * record (the decoded model lives in `sim`, so this does too).
+ */
+export interface BorrowReceipt {
+  readonly escrowId: Id<'Escrow'>;
+  readonly assetId: Id<'Asset'>;
+  /** The decoded asset value travelling outside the escrow. */
+  readonly asset: unknown;
+  readonly renting: RentingData;
+}
+
+export interface BorrowResult {
+  readonly receipt: BorrowReceipt;
+}
+
 export function borrowAsset(params: {
   /** The cap attempting the borrow — must be the active cap. */
   readonly usufructCapId: string;
-}): TransitionAction<BorrowResult, BorrowPtbArgs> {
+}): TransitionAction<BorrowResult, BorrowPtbArgs, State> {
   return {
     step: (state, t) => {
       // The engine settles pending transitions before borrowing.
@@ -77,7 +92,9 @@ export function borrowAsset(params: {
   };
 }
 
-export function returnAsset(receipt: BorrowReceipt): TransitionAction<null, ReturnPtbArgs> {
+export function returnAsset(
+  receipt: BorrowReceipt,
+): TransitionAction<null, ReturnPtbArgs, State> {
   return {
     step: (state) => {
       if (state.escrow.state != null) {

@@ -1,9 +1,13 @@
 # SDK Architecture
 
-The `@usufruct-protocol/sdk` is built from four primitives. Every capability
-the SDK exposes is a composition of these four — none is implemented as
-additional core code. This document explains what each primitive is, how they
-relate, and what composability emerges from combining them.
+The SDK is built from four primitives, **split across a drift-zero seam** into two
+packages: the **core** (`@usufruct-protocol/sdk`) holds the three that cannot drift
+— `Source` (yielding a raw `EscrowSnapshot`), the on-chain `Reader`, and
+`Action.toPtb` — while the decoded `EscrowState`, `View`, and `Action.step` live in
+the opt-in **mirror** (`@usufruct-protocol/sim`). Every capability the SDK exposes
+is a composition of these — none is implemented as additional core code. This
+document explains what each primitive is, where it lives, how they relate, and what
+composability emerges from combining them.
 
 ---
 
@@ -48,9 +52,12 @@ the effective value is exactly the mirror. `Reader.snapshot({ t })` batches the
 whole view table into a few `simulateTransaction` calls, so reading everything
 on-chain stays cheap — without the stale-state footgun.
 
-The four primitives below describe the **mirror kernel** (`EscrowState` is the
-shared decode target; `View`/`Action.step` and `MemorySource` are the mirror).
-The core is `EscrowState` + `Source` + the `Reader` + `Action.toPtb`.
+The four primitives below are split across the **drift-zero seam**. The **core**
+(`@usufruct-protocol/sdk`) is `Source` (which yields a raw `EscrowSnapshot`) + the
+`Reader` (on-chain views) + `Action.toPtb` — it never decodes an escrow, so it
+never names `EscrowState`. The **mirror** (`@usufruct-protocol/sim`) owns the
+decoded `EscrowState` (`decodeEscrowState`), `View`, `Action.step`, and
+`MemorySource`. The dependency arrow is sim → sdk.
 
 ---
 
@@ -66,7 +73,7 @@ The core is `EscrowState` + `Source` + the `Reader` + `Action.toPtb`.
 │                                 │                               │
 │              fetch / subscribe / query                          │
 └─────────────────────────────────┬───────────────────────────────┘
-                                  │ Promise<EscrowState>
+                                  │ Promise<EscrowSnapshot>  (raw; mirror decodes)
                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       ESCROW STATE  (data)                      │
@@ -97,15 +104,16 @@ The core is `EscrowState` + `Source` + the `Reader` + `Action.toPtb`.
 
 ---
 
-### `EscrowState<A, C>` — data
+### `EscrowState<A, C>` — data *(mirror)*
 
 The BCS-decoded snapshot of an `Escrow<Asset, CoinType>` shared object. It is
 plain data: immutable, serializable, carrying no reference to a network client,
-clock, or event stream.
+clock, or event stream. **It lives in the mirror** (`@usufruct-protocol/sim`): a
+`Source` yields the raw `EscrowSnapshot`, and `decodeEscrowState(snapshot)`
+produces an `EscrowState`. The core never decodes — it reads via the `Reader`.
 
-`EscrowState` is the SDK's single representation of "what the chain currently
-knows about this escrow". Every View and Action consumes it; every Source
-produces it.
+`EscrowState` is the *mirror's* representation of "what the chain currently knows
+about this escrow"; the mirror's `View`/`Action.step` consume it.
 
 ---
 
@@ -158,9 +166,9 @@ after it.
 
 ```ts
 interface Source {
-  fetch:     (id: Id<Escrow>) => Promise<EscrowState>
-  subscribe: (id: Id<Escrow>) => Observable<EscrowState>
-  query:     (predicate: Predicate) => AsyncIterable<EscrowState>
+  fetch:     (id: Id<Escrow>) => Promise<EscrowSnapshot>          // raw; mirror decodes
+  subscribe: (id: Id<Escrow>) => AsyncIterable<EscrowSnapshot>
+  query:     (predicate: Predicate) => AsyncIterable<EscrowSnapshot>
 }
 ```
 
@@ -193,17 +201,21 @@ from combining what already exists — no new core code required.
 
 ### Data flow
 
+The **core** read path never decodes — it asks the chain:
+
 ```
-Source.fetch(id)
-  → EscrowState
-      → View(state, t)              // read anything, pure
-      → Action.step(state, t)       // predict next state, pure
-          → state'
-              → View(state', t)     // read predicted state
-              → Action.step(state', t) → state'' // chain transitions
-      → Action.toPtb(tx)            // execute on-chain
-          → chain confirms
-              → Source.fetch(id)    // loop: new ground truth
+Reader.snapshot({ t })            // on-chain views via simulateTransaction → typed values
+Action.toPtb(tx, args)            // build the write; execute → chain confirms
+```
+
+The **mirror** flow (opt-in) decodes a snapshot and folds `step` forward off-chain:
+
+```
+Source.fetch(id)                  → EscrowSnapshot           (raw ids + type + bytes)
+  → decodeEscrowState(snapshot)   → EscrowState              (mirror)
+      → View(state, t)            // read anything, pure
+      → Action.step(state, t)     // predict next state, pure
+          → state' → View(state', t) → Action.step(state', t) → state''  // chain transitions
 ```
 
 ### Emergent capabilities
@@ -220,9 +232,9 @@ factory (`sim.actions.*`) where `step` appears:
 
 **Simulator / time-travel**
 ```ts
-// Fetch state once, then fold actions forward in time — no network needed.
-const state1 = await source.fetch(escrowId)
-const state2 = Rent(payment).step(state1, t).state
+// Fetch a snapshot once, decode it, then fold actions forward in time — no network needed.
+const state1 = decodeEscrowState(await source.fetch(escrowId))
+const state2 = rent(payment).step(state1, t).state
 const state3 = ApplyPendingTransitions.step(state2, t + oneDay).state
 const price   = currentPrice(state3, t + oneDay)
 ```
@@ -230,9 +242,11 @@ const price   = currentPrice(state3, t + oneDay)
 **Reactive UI**
 ```ts
 // Subscribe once. Between emissions, Views over the last known state are exact.
-source.subscribe(escrowId).subscribe(state => {
+// Source yields a raw EscrowSnapshot; decodeEscrowState (mirror) gives the state.
+for await (const snapshot of source.subscribe(escrowId)) {
+  const state = decodeEscrowState(snapshot)
   render(isIdle(state, now()), currentPrice(state, now()))
-})
+}
 ```
 
 **Settler bot**
@@ -256,9 +270,10 @@ await source.seed(escrowId, initialState)
 
 **Asset-agnostic marketplace**
 ```ts
-// query() returns any escrow that matches — the SDK is generic over A and C.
-for await (const state of source.query(byOwner(address))) {
-  listings.push(toListing(state, now()))
+// query() yields a raw EscrowSnapshot for any escrow that matches — the SDK is
+// generic over A and C. decodeEscrowState (mirror) gives the typed state.
+for await (const snapshot of source.query(byOwner(address))) {
+  listings.push(toListing(decodeEscrowState(snapshot), now()))
 }
 ```
 

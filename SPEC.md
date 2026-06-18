@@ -67,11 +67,14 @@ The SDK is therefore two tiers, in priority order:
    against (§8). A mirror without golden coverage is not shipped — the
    consumer falls back to the wrapper.
 
-The four primitives (§4) describe **tier 2**. Tier 1 needs no new primitives:
-it is generated calls plus IO. The error most SDKs make — re-implementing the
-contract's read logic in the client, then drifting from it — is avoided by
-making tier 1 the default and confining tier 2's re-derivation to the cases
-that genuinely need off-chain computation.
+The two tiers map onto the drift-zero package split (§4): **tier 1 is the core**
+(`@usufruct-protocol/sdk` — `Source` for IO, the `Reader` over the codegen
+substrate, and `Action.toPtb`), and **tier 2 is the mirror** (`@usufruct-protocol/
+sim` — `EscrowState` + `decodeEscrowState`, `View`, `Action.step`). Tier 1 needs
+no decoded model: it is generated calls + IO + on-chain views. The error most
+SDKs make — re-implementing the contract's read logic in the client, then
+drifting from it — is avoided by making tier 1 the default and confining tier 2's
+re-derivation to the cases that genuinely need off-chain computation.
 
 ---
 
@@ -109,10 +112,22 @@ The SDK is built from exactly four primitives, sitting on a codegen substrate
 (§4.5). Every capability listed in §6 is a composition of these primitives;
 none is implemented as additional core code.
 
-### §4.1 — `EscrowState<A, C>` (data)
+> **Drift-zero split (where each primitive lives).** The default read is the
+> on-chain view (§6.1), so the **core** (`@usufruct-protocol/sdk`) never decodes
+> an escrow. The core holds **`Source`** (yielding a raw `EscrowSnapshot`),
+> **`Action.toPtb`**, and the **`Reader`** (§6.1). The *decoded* model and its
+> re-derivations are the **mirror** (`@usufruct-protocol/sim`): **`EscrowState`**
+> + `decodeEscrowState`, **`View`**, and **`Action.step`**. The dependency arrow
+> is sim → sdk. The four concepts below are unchanged; they are split by where
+> drift can occur. (See §12 decision log.)
+
+### §4.1 — `EscrowState<A, C>` (data) — *mirror*
 
 The BCS-decoded snapshot of an `Escrow<Asset, CoinType>` shared object,
-including its full `AssetContext` subtree.
+including its full `AssetContext` subtree. **Lives in the mirror**
+(`@usufruct-protocol/sim`): a `Source` yields the raw `EscrowSnapshot` (ids +
+type tag + BCS bytes), and `decodeEscrowState(snapshot, assetSchema)` produces
+an `EscrowState`. The core never names it — it reads via the `Reader` (§6.1).
 
 Properties:
 
@@ -121,16 +136,18 @@ Properties:
 - Contains no reference to an RPC client, clock, or event stream.
 - Parameterized over `A` (asset BCS schema) and `C` (coin type marker).
 
-`EscrowState` is the *only* data shape that views and actions consume. It is
-the SDK's representation of "what the chain currently knows about this escrow".
+`EscrowState` is the data shape the mirror's views and `step`s consume — the
+mirror's representation of "what the chain currently knows about this escrow".
 
-### §4.2 — `View<T>` (read)
+### §4.2 — `View<T>` (read) — *mirror*
 
 ```
 View<T> = (state: EscrowState, t: Ms) => T
 ```
 
 Free function. One `View` per public view function in `usufruct/sources/escrow.move`.
+Lives in the mirror (`@usufruct-protocol/sim`); the core's default read is the
+on-chain view via the `Reader` (§6.1), not a `View` over a decoded `EscrowState`.
 
 Properties:
 
@@ -146,12 +163,18 @@ mapping.
 ### §4.3 — `Action<R>` (write)
 
 The most distinctive primitive. An `Action` is a **value** carrying two
-interpretations of a single semantic operation:
+interpretations of a single semantic operation — **split across the drift-zero
+seam**:
 
-- `step` — off-chain pure interpretation. Given current state and time,
-  return next state and result. Used by simulator, testbed, calendar.
 - `toPtb` — on-chain interpretation. Append the corresponding Move call to a
-  `Transaction`. Used by live execution.
+  `Transaction`. Used by live execution. **Core** (`@usufruct-protocol/sdk`): the
+  core action surface is `PtbAction` = `{ toPtb }`, nothing else.
+- `step` — off-chain pure interpretation `(state, t) => next`. Used by simulator,
+  testbed, calendar. **Mirror** (`@usufruct-protocol/sim`): pairs a `step` with
+  the core's `toPtb` into the lifecycle types (`Origin`/`Transition`/`Terminal`
+  Action, generic over the state aggregate `S` — `EscrowState` for escrows,
+  `MessageGroups` for inboxes). Confining the core to `toPtb` is what makes it
+  impossible to drift.
 
 Every public mutating function of `usufruct` is classified by its lifecycle
 role, which determines its `Action` variant:
@@ -206,18 +229,21 @@ versions also threaded `&Random` for stochastic policies; that feature was
 removed — the protocol is now fully deterministic, so no `step` consumes
 randomness. See §8.)
 
-### §4.4 — `Source` (IO)
+### §4.4 — `Source` (IO) — *core*
 
 ```
 interface Source {
-  fetch:     (id: Id<Escrow>) => Promise<EscrowState>;
-  subscribe: (id: Id<Escrow>, opts?) => AsyncIterable<EscrowState>;
-  query:     (predicate: Predicate) => AsyncIterable<EscrowState>;
+  fetch:     (id: Id<Escrow>) => Promise<EscrowSnapshot>;
+  subscribe: (id: Id<Escrow>, opts?) => AsyncIterable<EscrowSnapshot>;
+  query:     (predicate: Predicate) => AsyncIterable<EscrowSnapshot>;
 }
 ```
 
-The single point of impurity in the SDK. All network IO is mediated through
-`Source` implementations. `subscribe`/`query` are `AsyncIterable` (not an
+The single point of impurity in the SDK. It yields the **raw `EscrowSnapshot`**
+(ids + type tag + BCS bytes); turning that into a decoded `EscrowState` is a
+mirror step (`decodeEscrowState`, §4.1), so the core's IO boundary does not
+depend on the decoded model. All network IO is mediated through `Source`
+implementations. `subscribe`/`query` are `AsyncIterable` (not an
 Observable) to avoid a reactive-library dependency. `chainSource(client)`
 works over any `ClientWithCoreApi` (gRPC or JSON-RPC), constrained by what
 that transport-agnostic core API actually offers:
@@ -496,12 +522,12 @@ core code, the design has failed.
 
 | Capability                          | Composition                                                                                       |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Simulator / time-travel             | `Source::fetch` → `EscrowState`; then `View(state, t)` and `Action::step(state, t).state` chain.  |
+| Simulator / time-travel             | `decodeEscrowState(Source::fetch(id))` → `EscrowState` (mirror); then `View(state, t)` and `Action::step(state, t).state` chain.  |
 | Settler bot                         | `View=nextPending` returns `t*`; timer fires `ApplyPendingTransitionStates::toPtb` + execute.     |
 | Calendar / temporal index           | Iterate `nextPending` + `step(ApplyPendingTransitionStates)` recursively until horizon.           |
 | Reactive single-writer state        | `Source::subscribe(id)` emits new `EscrowState`. Between emissions, `View(state, t)` is correct.  |
 | Whole-protocol off-chain testbed    | Substitute `Source = MemorySource()`. Identical `View` and `Action` code; no chain touched.       |
-| Asset-agnostic marketplace          | `Source::query(byOwner(addr))` returns `AsyncIterable<EscrowState<A, C>>`; the SDK is asset-agnostic. |
+| Asset-agnostic marketplace          | `Source::query(byOwner(addr))` yields `AsyncIterable<EscrowSnapshot>`; `decodeEscrowState` (mirror) gives `EscrowState<A, C>` — the SDK is asset-agnostic. |
 | DSL config builder                  | Typed builder produces `IntegrationConfig` value; consumed by `Integrate(asset, cfg)::toPtb`.     |
 
 The reason these emerge: the four primitives are closed under composition.
@@ -742,7 +768,9 @@ default and already complete, "no golden test yet" degrades gracefully to
 
 ## §11 — Repository layout
 
-The SDK lives at the repository root as a sibling of the Move package:
+The SDK is a workspace monorepo, split across the **drift-zero seam** (the §12
+2026-06-16 decision; Phase B is the physical move below). The dependency arrow is
+**sim → sdk** — the mirror imports the core, never the reverse:
 
 ```
 usufruct/                 # Move package (existing)
@@ -750,35 +778,40 @@ usufruct/                 # Move package (existing)
   tests/
   Move.toml
 
-sdk/                      # TypeScript SDK (this branch and onward)
-  SPEC.md                 # this document
-  package.json
-  src/
-    read/                 # TIER 1 (default): thin wrapper over on-chain views
-      spec.ts             #   view-spec table (call + BCS decode) — single source
-      reader.ts           #   createReader → typed Reader + snapshot()
-    codegen/              # ❺ auto-generated; do not edit by hand — used by both tiers
-      types.ts / bcs.ts / calls.ts
-    actions/              # write path: Action.toPtb (+ opt-in step, tier 2)
-    config/               # DSL config builder
-    primitives/           # TIER 2 (opt-in) kernel — the four primitives
-      state.ts            # ❶ EscrowState type and BCS decoding
-      view.ts             # ❷ View<T> type alias
-      action.ts           # ❸ Action<R> variants (step + toPtb)
-      source.ts           # ❹ Source interface + ChainSource impl
-    views/                # hand-written View<T> functions (the mirror), one file per banner
-    sim/                  # facade re-exporting the tier-2 mirror (views + state + step)
-  fixtures/               # cross-runtime golden fixtures (the mirror's oracle = tier 1)
-  test/                   # tests; parity-cases.ts imports src/read/spec.ts
+packages/
+  sdk/                    # the drift-zero CORE (@usufruct-protocol/sdk)
+    src/
+      read/               # the default read: the Reader over on-chain views
+        spec.ts           #   view-spec table (call + BCS decode) — single source
+        reader.ts         #   createReader → typed Reader + snapshot()
+      codegen/            # ❺ auto-generated; do not edit by hand — used by both packages
+        types.ts / bcs.ts / calls.ts
+      actions/            # write path: Action.toPtb (the core's PtbAction surface)
+      highlevel/          # Layer 2 handles (usufruct, escrow, cap, …) — Reader-based
+      config/             # DSL config builder
+      primitives/         # CORE primitives: EscrowSnapshot + Source, Action.toPtb
+        snapshot.ts       #   raw EscrowSnapshot (ids + type tag + BCS bytes)
+        action.ts         #   PtbAction = { toPtb }
+        source.ts         #   Source interface + ChainSource impl
+  sim/                    # the opt-in MIRROR (@usufruct-protocol/sim) — sim → sdk
+    src/
+      primitives/         # EscrowState + decodeEscrowState, View<T>, lifecycle step-types
+      views/              # hand-written View<T> functions (one file per banner)
+      sim/                # Action.step + curve.ts (the only thing that can drift)
+SPEC.md                   # this document
+fixtures/                 # cross-runtime golden fixtures (the mirror's oracle = the Reader)
+test/                     # tests; parity-cases.ts imports the core's read spec
 ```
 
-The package surface: `read` (default), `actions` (write), `sim` (opt-in
-mirror). The `read` spec table is the *single* source of the on-chain decode
-logic — the golden/parity tests import it as the oracle, so the wrapper and
-the test that keeps the mirror honest are the same code.
+The core surface: `read` (default), `actions` (`Action.toPtb` write path), plus the
+Layer 2 handles — all Reader-based, so drift-zero. The mirror surface: `EscrowState`
++ `decodeEscrowState`, the compute `View`s, and `Action.step` — opt-in. The `read`
+spec table is the *single* source of the on-chain decode logic; the golden/parity
+tests import it as the oracle, so the wrapper and the test that keeps the mirror
+honest are the same code.
 
-Convenience layers (settler runtime, marketplace helpers, etc.) ship as
-distinct packages under `sdk/packages/` once core stabilises.
+Further convenience layers (settler runtime, marketplace helpers, etc.) ship as
+additional workspace packages alongside `sdk`/`sim`.
 
 ---
 

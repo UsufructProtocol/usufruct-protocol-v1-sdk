@@ -12,11 +12,11 @@ import {
   type IntegratePtbArgs,
   type IntegrateIntoPortfolioPtbArgs,
 } from '@usufruct-protocol/sdk/actions/integrate.js';
-import type { OriginAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { OriginAction } from '../../primitives/action.js';
 import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import type { EnsembleConfig } from '@usufruct-protocol/sdk/config/ensemble.js';
-import type { EnsembleData } from '@usufruct-protocol/sdk/types/state-views.js';
+import type { EnsembleData } from '../../types/state-views.js';
 import { resolveCycleParams } from '../../views/internal.js';
 
 export type { IntegrateParams, IntegratePtbArgs, IntegrateIntoPortfolioPtbArgs };
@@ -82,7 +82,9 @@ export function ensembleConfigToData(cfg: EnsembleConfig): EnsembleData {
   } as EnsembleData;
 }
 
-export function integrate(params: IntegrateParams): OriginAction<null, IntegratePtbArgs> {
+export function integrate(
+  params: IntegrateParams,
+): OriginAction<null, IntegratePtbArgs, EscrowState> {
   return {
     step: (t) => {
       const ids = params.identities ?? {};
@@ -160,7 +162,7 @@ export function integrate(params: IntegrateParams): OriginAction<null, Integrate
  */
 export function integrateIntoPortfolio(
   params: IntegrateParams,
-): OriginAction<null, IntegrateIntoPortfolioPtbArgs> {
+): OriginAction<null, IntegrateIntoPortfolioPtbArgs, EscrowState> {
   const base = integrate(params);
   return {
     step: base.step,

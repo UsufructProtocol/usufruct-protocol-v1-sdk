@@ -22,8 +22,8 @@ export interface ClaimResult {
   readonly assetId: Id<'Asset'>;
 }
 
-/** Appends the `claim_asset` Move call. Returns the unwrapped `Asset`. */
-export function claimAssetToPtb(): PtbAction<ClaimAssetPtbArgs>['toPtb'] {
+/** The `claim_asset` PTB builder. Returns the unwrapped `Asset`. */
+export function claimAssetToPtb(): PtbAction<ClaimAssetPtbArgs> {
   return (tx, args) =>
     tx.add(
       claimAssetCall({
@@ -32,8 +32,4 @@ export function claimAssetToPtb(): PtbAction<ClaimAssetPtbArgs>['toPtb'] {
         typeArguments: args.typeArguments,
       }),
     );
-}
-
-export function claimAsset(): PtbAction<ClaimAssetPtbArgs> {
-  return { toPtb: claimAssetToPtb() };
 }

@@ -14,12 +14,8 @@
  * the live e2e proves (`collected == posted`) becomes an offline assertion.
  */
 import { normalizeStructTag } from '@mysten/sui/utils';
-import {
-  collectMessages,
-  type CollectStepResult,
-  type MessageGroups,
-  type MessageRef,
-} from '@usufruct-protocol/sdk/actions/collect.js';
+import type { MessageGroups, MessageRef } from '@usufruct-protocol/sdk/actions/collect.js';
+import { collectMessages, type CollectStepResult } from '../sim/actions/collect.js';
 import type { Mist, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
 

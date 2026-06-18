@@ -1,11 +1,5 @@
 export { indexerSource } from './source.js';
-export type {
-  IndexerSource,
-  IndexerOpts,
-  EventRecord,
-  EventsFilter,
-  TimelineOpts,
-} from './source.js';
+export type { IndexerSource, IndexerOpts, EventsFilter, TimelineOpts } from './source.js';
 export {
   ESCROW_KEYED,
   decodeEvent,

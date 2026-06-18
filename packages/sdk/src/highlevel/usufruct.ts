@@ -10,13 +10,12 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
-import { integrate as integrateAction } from '../actions/integrate.js';
+import { integrateToPtb as integrateAction } from '../actions/integrate.js';
 import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
 import { indexerSource, type IndexerSource } from '../indexer/index.js';
 import { fetchTypeArgs } from './typeargs.js';
 import { chainSource, type Source } from '../primitives/source.js';
-import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import { createCap, type UsufructCap } from './cap.js';
 import type { HandleCtx } from './ctx.js';
@@ -75,8 +74,6 @@ export interface UsufructConfig {
   readonly packageId?: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
   readonly feeRefId?: string;
-  /** Asset BCS schema for non-uid assets (SPEC §10); defaults to uid-only. */
-  readonly assetSchema?: AssetSchema;
   /** GraphQL endpoint (URL or client) — enables discovery (`governor.escrows()`). */
   readonly graphql?: string | SuiGraphQLClient;
   /**
@@ -217,7 +214,7 @@ export interface Usufruct {
   /** The escrows priced in a given coin (payment `CoinType`), as `EscrowListing`s. */
   escrowsByCoinType(coinType: string): Promise<EscrowListing[]>;
 
-  /** The four primitives, untouched. */
+  /** The core primitives (`Source` + `Reader`), untouched. */
   readonly primitives: Primitives;
 }
 
@@ -242,7 +239,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const client = retry ? retryingClient(rawClient, retry) : rawClient;
   const packageId = config.packageId ?? TESTNET.packageId;
   const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
-  const assetSchema = config.assetSchema;
   // Identity (account) and signing (executor) are separate axes; `signer` is sugar
   // for both. All three are mutable via `connect`. `ctx()` resolves them live.
   let signer: Signer | null = config.signer ?? null;
@@ -253,7 +249,11 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const resolveExecutor = (): Executor | null =>
     executor ?? (signer ? signerExecutor(client, signer) : null);
 
-  const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
+  // The core never decodes: the `Source` yields raw snapshots and the `Reader`
+  // reads drift-zero (on-chain views). Decoding to a typed `EscrowState` is the
+  // opt-in mirror's job (`decodeEscrowState(snapshot, schema)`). `chainSource`
+  // only needs `packageId`.
+  const source = chainSource(client, { packageId });
 
   const rawGraphql =
     config.graphql == null
@@ -264,7 +264,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   // Discovery/history (paginated GraphQL) get the same transient-status retry.
   const graphqlClient = rawGraphql && retry ? retryingGraphqlClient(rawGraphql, retry) : rawGraphql;
   const indexer: IndexerSource | null = graphqlClient
-    ? indexerSource(graphqlClient, { packageId, ...(assetSchema ? { assetSchema } : {}) })
+    ? indexerSource(graphqlClient, { packageId })
     : null;
 
   // A gRPC client for server-push subscriptions (`escrow.watch`): reuse the
@@ -291,8 +291,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     feeRefId,
     account: resolveAccount(),
     defaultExecutor: resolveExecutor(),
-    signer,
-    ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
     ...(grpcClient ? { grpcClient } : {}),
     ...(retry ? { retry } : {}),
@@ -340,7 +338,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
             ...(ensembleCommitment ? { ensembleCommitment } : {}),
             assetType,
             coinType,
-          }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
+          })(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
           tx.transferObjects([created[0]!, created[1]!], sender); // [GovernanceCap, EarningsInbox]
         },
         // decode: the three created objects → resolved handles.

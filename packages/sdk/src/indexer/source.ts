@@ -16,7 +16,7 @@
 import type { SuiGraphQLClient } from '@mysten/sui/graphql';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from '../primitives/brand.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from '../primitives/state.js';
+import { escrowTypeArgs, type EscrowSnapshot } from '../primitives/state.js';
 import {
   chainSource,
   isMissingObject,
@@ -25,9 +25,6 @@ import {
   type SubscribeOpts,
 } from '../primitives/source.js';
 import { ESCROW_KEYED, eventKey, normEscrowId, toTypedEvent, type TypedEvent } from './events.js';
-
-/** @deprecated use `TypedEvent` (a superset). Kept for source compatibility. */
-export type EventRecord = TypedEvent;
 
 export interface EventsFilter {
   /** Fully-qualified event type, e.g. `${pkg}::asset_state::HandoverCompleted`. */
@@ -55,10 +52,7 @@ export interface TimelineOpts {
   readonly pageSize?: number;
 }
 
-export interface IndexerSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
-> extends Source<A, C> {
+export interface IndexerSource extends Source {
   /** Event history of one type (typed, BCS-decoded). */
   readonly events: (filter: EventsFilter) => AsyncIterable<TypedEvent>;
   /** An escrow's full timeline: fan out the escrow-keyed events, merge, sort by time. */
@@ -68,9 +62,8 @@ export interface IndexerSource<
   ) => Promise<TypedEvent[]>;
 }
 
-export interface IndexerOpts<A extends AssetSchema> {
+export interface IndexerOpts {
   readonly packageId: string;
-  readonly assetSchema?: A;
   /** GraphQL page size for discovery (default 50). */
   readonly pageSize?: number;
 }
@@ -136,13 +129,9 @@ function normalizeType(t: string): string {
   return t.replace(/^0x/, '').replace(/<0x/g, '<').toLowerCase();
 }
 
-export function indexerSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
->(gql: SuiGraphQLClient, opts: IndexerOpts<A>): IndexerSource<A, C> {
+export function indexerSource(gql: SuiGraphQLClient, opts: IndexerOpts): IndexerSource {
   const first = opts.pageSize ?? 50;
-  const base = chainSource<A, C>(gql as unknown as ClientWithCoreApi, {
-    ...(opts.assetSchema !== undefined ? { assetSchema: opts.assetSchema } : {}),
+  const base = chainSource(gql as unknown as ClientWithCoreApi, {
     packageId: opts.packageId,
   });
 
@@ -153,8 +142,8 @@ export function indexerSource<
     return res.data;
   }
 
-  /** Fetch+decode an escrow id, skipping ones already consumed (deleted). */
-  async function* fetchEach(ids: Iterable<string>): AsyncIterable<EscrowState<A, C>> {
+  /** Fetch an escrow id's raw snapshot, skipping ones already consumed (deleted). */
+  async function* fetchEach(ids: Iterable<string>): AsyncIterable<EscrowSnapshot> {
     for (const escrowId of ids) {
       try {
         yield await base.fetch(escrowId as Id<'Escrow'>);
@@ -165,7 +154,7 @@ export function indexerSource<
     }
   }
 
-  async function* byType(assetFilter?: string): AsyncIterable<EscrowState<A, C>> {
+  async function* byType(assetFilter?: string): AsyncIterable<EscrowSnapshot> {
     const type = `${opts.packageId}::escrow::Escrow`;
     const want = assetFilter ? normalizeType(assetFilter) : null;
     let after: string | null = null;
@@ -174,14 +163,14 @@ export function indexerSource<
       const { objects }: ObjectsResult = await run(OBJECTS_DOC, { type, after, first });
       const ids = objects.nodes.map((n) => n.address).filter((a) => !seen.has(a) && seen.add(a));
       for await (const st of fetchEach(ids)) {
-        if (want && normalizeType(st.assetType) !== want) continue;
+        if (want && normalizeType(escrowTypeArgs(st.type)[0]) !== want) continue;
         yield st;
       }
       after = objects.pageInfo.hasNextPage ? objects.pageInfo.endCursor : null;
     } while (after);
   }
 
-  async function* byGovernor(governor: string): AsyncIterable<EscrowState<A, C>> {
+  async function* byGovernor(governor: string): AsyncIterable<EscrowSnapshot> {
     const type = `${opts.packageId}::asset_state::AssetIntegrated`;
     let after: string | null = null;
     const seen = new Set<string>();

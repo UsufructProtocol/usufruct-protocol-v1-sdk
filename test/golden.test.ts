@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { bcs } from '@mysten/sui/bcs';
 import { describe, expect, it } from 'vitest';
 import { ms } from '@usufruct-protocol/sdk/primitives/brand.js';
-import { decodeEscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import { decodeEscrowState } from '@usufruct-protocol/sim/primitives/state.js';
 import { PARITY_CASES, parityEqual, stable, type ParityCtx } from './parity-cases.js';
 
 interface Fixture {

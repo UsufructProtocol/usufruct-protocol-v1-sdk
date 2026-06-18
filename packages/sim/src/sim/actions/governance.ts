@@ -16,9 +16,9 @@ import {
   type UpdateEnsembleResult,
   type CapHolderPtbArgs,
 } from '@usufruct-protocol/sdk/actions/governance.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import type {
   EnsembleCommitmentConfig,
   EnsembleConfig,
@@ -65,7 +65,7 @@ function extendSlot(slot: CommitmentSlot, cfg: RetireCommitmentConfig): Commitme
 
 export function extendRetireCommitment(
   cfg: RetireCommitmentConfig,
-): TransitionAction<null, GovernancePtbArgs> {
+): TransitionAction<null, GovernancePtbArgs, State> {
   return {
     step: (state, t) => {
       const settled = settle(state, t);
@@ -86,7 +86,7 @@ export function extendRetireCommitment(
 
 export function extendEnsembleCommitment(
   cfg: EnsembleCommitmentConfig,
-): TransitionAction<null, GovernancePtbArgs> {
+): TransitionAction<null, GovernancePtbArgs, State> {
   return {
     step: (state, t) => {
       const settled = settle(state, t);
@@ -113,7 +113,7 @@ export function extendEnsembleCommitment(
 
 export function updateEnsemble(
   cfg: EnsembleConfig,
-): TransitionAction<UpdateEnsembleResult, GovernancePtbArgs> {
+): TransitionAction<UpdateEnsembleResult, GovernancePtbArgs, State> {
   return {
     step: (state, t) => {
       // Guard order mirrors the engine: commitment check precedes settling.
@@ -166,7 +166,7 @@ export function updateEnsemble(
 export function updateUsufructuaryRefundAddress(params: {
   readonly usufructCapId: string;
   readonly newAddress: string;
-}): TransitionAction<null, CapHolderPtbArgs> {
+}): TransitionAction<null, CapHolderPtbArgs, State> {
   return {
     step: (state, t) => {
       const settled = settle(state, t);
@@ -214,7 +214,7 @@ export function updateUsufructuaryRefundAddress(params: {
 
 export function burnStaleUsufructCap(params: {
   readonly usufructCapId: string;
-}): TransitionAction<null, CapHolderPtbArgs> {
+}): TransitionAction<null, CapHolderPtbArgs, State> {
   return {
     step: (state, t) => {
       const settled = settle(state, t);

@@ -13,8 +13,6 @@
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Bps, Id, Mist, Ms, TenureCount } from '../primitives/brand.js';
-import type { AssetSchema, EscrowState } from '../primitives/state.js';
-import { decodeEscrowState, uidAssetSchema } from '../primitives/state.js';
 import type {
   AuctionWindow,
   Commitment,
@@ -32,8 +30,6 @@ export interface ReaderTarget {
   readonly packageId: string;
   readonly escrowId: Id<'Escrow'>;
   readonly typeArguments: [string, string];
-  /** Asset BCS schema for `fetch()`; defaults to uid-only (SPEC §10). */
-  readonly assetSchema?: AssetSchema;
 }
 
 export interface HandoverSettlement {
@@ -135,9 +131,7 @@ export interface Reader {
   nextFloorPriceMist(totalBidMist: Mist, tenures: TenureCount): Promise<Mist>;
   handoverSettlement(boundaryMs: Ms): Promise<HandoverSettlement>;
   tenureSettlement(): Promise<TenureSettlement>;
-  // envelope + batch
-  /** The structural envelope (ids, type args) — one getObject, no per-field call. */
-  fetch(): Promise<EscrowState>;
+  // batch
   /**
    * Every nullary view in one (or few) simulation(s). Time-parameterised
    * views are included only when `t` is given; cap views only with `capId`.
@@ -245,17 +239,6 @@ export function createReader(client: ClientWithCoreApi, target: ReaderTarget): R
       run('nextFloorPriceMist', { totalBidMist, tenures }),
     handoverSettlement: (boundaryMs) => run('handoverSettlement', { boundaryMs }),
     tenureSettlement: () => run('tenureSettlement'),
-
-    fetch: async () => {
-      const { object } = await client.core.getObject({
-        objectId: target.escrowId,
-        include: { content: true },
-      });
-      return decodeEscrowState(
-        { objectId: object.objectId, type: object.type, content: object.content },
-        target.assetSchema ?? uidAssetSchema,
-      );
-    },
 
     snapshot: (opts = {}) => {
       const provided = new Set<string>();

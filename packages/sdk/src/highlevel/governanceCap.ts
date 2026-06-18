@@ -9,15 +9,15 @@
  * because the two are independently transferable.
  */
 import { Transaction } from '@mysten/sui/transactions';
-import { claimAsset } from '../actions/claimAsset.js';
+import { claimAssetToPtb } from '../actions/claimAsset.js';
 import {
-  extendEnsembleCommitment as extendEnsembleAction,
-  extendRetireCommitment as extendRetireAction,
+  extendEnsembleCommitmentToPtb as extendEnsembleAction,
+  extendRetireCommitmentToPtb as extendRetireAction,
   renounceGovernanceToPtb,
-  updateEnsemble,
+  updateEnsembleToPtb,
 } from '../actions/governance.js';
-import { integrateIntoPortfolio } from '../actions/integrate.js';
-import { retire as retireAction } from '../actions/retire.js';
+import { integrateIntoPortfolioToPtb } from '../actions/integrate.js';
+import { retireToPtb as retireAction } from '../actions/retire.js';
 import { type Id, id as toId } from '../primitives/brand.js';
 import { createReader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
@@ -105,7 +105,7 @@ interface RefInfo {
 
 /** Build a `GovernanceCap` handle. Authority = the signer currently holding it. */
 export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCap {
-  const { client, packageId, feeRefId, assetSchema } = ctx;
+  const { client, packageId, feeRefId } = ctx;
   const pkg = { packageId, feeRefId };
   const govId = toId<'GovernanceCap'>(capId);
 
@@ -142,31 +142,30 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
             packageId,
             escrowId: r.escrowId,
             typeArguments: r.typeArguments,
-            ...(assetSchema ? { assetSchema } : {}),
           });
           // Decimals are irrelevant to the merge (only mist is sent), so the fallback coin tag is fine.
           const current = await readMarket(reader, coinTag(coinInfo(r.typeArguments[1])));
           const { ensemble } = toEnsembleConfig({ ...current, ...changes });
-          updateEnsemble(ensemble).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
+          updateEnsembleToPtb(ensemble)(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
         },
       );
     },
 
     retire(ref) {
       return write(ref, (tx, r) =>
-        retireAction().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
+        retireAction()(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendRetireCommitment(ref, until) {
       return write(ref, (tx, r) =>
-        extendRetireAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
+        extendRetireAction(toCommitmentConfig(until))(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
     extendEnsembleCommitment(ref, until) {
       return write(ref, (tx, r) =>
-        extendEnsembleAction(toCommitmentConfig(until)).toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
+        extendEnsembleAction(toCommitmentConfig(until))(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments }),
       );
     },
 
@@ -182,10 +181,9 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
             packageId,
             escrowId: r.escrowId,
             typeArguments: r.typeArguments,
-            ...(assetSchema ? { assetSchema } : {}),
           });
           assetId = String(await reader.assetId());
-          const asset = claimAsset().toPtb(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
+          const asset = claimAssetToPtb()(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
           tx.transferObjects([asset], sender);
         },
         decode: async (res) => ({ assetId, digest: res.digest }),
@@ -209,13 +207,13 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
         build: async (tx) => {
           const { object } = await client.core.getObject({ objectId: asset });
           const assetType = object.type;
-          integrateIntoPortfolio({
+          integrateIntoPortfolioToPtb({
             ensemble,
             ...(retireCommitment ? { retireCommitment } : {}),
             ...(ensembleCommitment ? { ensembleCommitment } : {}),
             assetType,
             coinType,
-          }).toPtb(tx, {
+          })(tx, {
             pkg,
             asset,
             typeArguments: [assetType, coinType],

@@ -4,9 +4,10 @@
  * settle pending first, then immediate (Waiting) or flag (Renting).
  */
 import { retireToPtb, type RetirePtbArgs } from '@usufruct-protocol/sdk/actions/retire.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '../../primitives/state.js';
 import { applyPendingTransitionStates } from './apply.js';
 
 export type { RetirePtbArgs };
@@ -23,7 +24,7 @@ function withRetiring<T extends { terms: { retire: { $kind: string } } }>(rentin
   };
 }
 
-export function retire(): TransitionAction<null, RetirePtbArgs> {
+export function retire(): TransitionAction<null, RetirePtbArgs, State> {
   return {
     step: (state: State, t: Ms) => {
       const settled = applyPendingTransitionStates().step(state, t).state;

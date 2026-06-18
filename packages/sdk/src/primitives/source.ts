@@ -1,18 +1,19 @@
 /**
- * ❹ Source (SPEC §4.4) — the single point of IO. Everything below it
- * (`View`, `Action.step`) is pure; nothing downstream knows which transport
- * produced a given `EscrowState`.
+ * ❹ Source (SPEC §4.4) — the single point of IO. It yields the RAW
+ * `EscrowSnapshot` (ids + type tag + BCS bytes); decoding into an `EscrowState`
+ * is a mirror step (`@usufruct-protocol/sim`), so the core's IO boundary never
+ * depends on the decoded model. Nothing downstream knows which transport
+ * produced a snapshot.
  *
- * Three IO shapes: `fetch` (the state now), `subscribe` (the state as it
- * changes), `query` (which states exist for a caller). `subscribe` is the
+ * Three IO shapes: `fetch` (the snapshot now), `subscribe` (snapshots as the
+ * object changes), `query` (which escrows exist for a caller). `subscribe` is a
  * standard `AsyncIterable` rather than SPEC's Observable sketch, to avoid a
  * reactive-library dependency.
  */
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { UsufructCap } from '../codegen/usufruct/usufruct_cap.js';
 import type { Id } from './brand.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
-import { decodeEscrowState } from './state.js';
+import type { EscrowSnapshot } from './state.js';
 
 /**
  * Discovery predicate for `query`. Escrows are *shared* objects, so they
@@ -35,21 +36,21 @@ export interface SubscribeOpts {
   readonly signal?: AbortSignal;
 }
 
-export interface Source<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
-> {
-  readonly fetch: (id: Id<'Escrow'>) => Promise<EscrowState<A, C>>;
+/**
+ * A `Source` yields the RAW `EscrowSnapshot` (ids + type tag + BCS bytes);
+ * decoding to a typed `EscrowState` is the mirror's step (`decodeEscrowState`).
+ * No `A`/`C` type params — the snapshot is not parameterized by the asset/coin.
+ */
+export interface Source {
+  readonly fetch: (id: Id<'Escrow'>) => Promise<EscrowSnapshot>;
   readonly subscribe: (
     id: Id<'Escrow'>,
     opts?: SubscribeOpts,
-  ) => AsyncIterable<EscrowState<A, C>>;
-  readonly query: (predicate: Predicate) => AsyncIterable<EscrowState<A, C>>;
+  ) => AsyncIterable<EscrowSnapshot>;
+  readonly query: (predicate: Predicate) => AsyncIterable<EscrowSnapshot>;
 }
 
-export interface ChainSourceOpts<A extends AssetSchema> {
-  /** Asset BCS schema (defaults to uid-only, SPEC §10). */
-  readonly assetSchema?: A;
+export interface ChainSourceOpts {
   /** Deployed package id — required by `query` to build the cap type filter. */
   readonly packageId?: string;
 }
@@ -128,22 +129,19 @@ export function channel<T>(): { push: (v: T) => void; close: () => void } & Asyn
  * has no push stream — that is gRPC-only, a convenience layer). `query`
  * walks the caller's owned `UsufructCap`s to the escrows they reference.
  */
-export function chainSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
->(client: ClientWithCoreApi, opts?: ChainSourceOpts<A>): Source<A, C> {
-  const decode = (object: { objectId: string; type: string; content: Uint8Array }) =>
-    decodeEscrowState<A, C>(
-      { objectId: object.objectId, type: object.type, content: object.content },
-      opts?.assetSchema,
-    );
+export function chainSource(client: ClientWithCoreApi, opts?: ChainSourceOpts): Source {
+  const snap = (object: { objectId: string; type: string; content: Uint8Array }): EscrowSnapshot => ({
+    objectId: object.objectId,
+    type: object.type,
+    content: object.content,
+  });
 
-  const fetch = async (escrowId: Id<'Escrow'>): Promise<EscrowState<A, C>> => {
+  const fetch = async (escrowId: Id<'Escrow'>): Promise<EscrowSnapshot> => {
     const { object } = await client.core.getObject({
       objectId: escrowId,
       include: { content: true },
     });
-    return decode(object);
+    return snap(object);
   };
 
   return {
@@ -160,7 +158,7 @@ export function chainSource<
         });
         if (object.version !== lastVersion) {
           lastVersion = object.version;
-          yield decode(object);
+          yield snap(object);
         }
         if (signal?.aborted) break;
         await sleep(interval, signal);
@@ -198,7 +196,7 @@ export function chainSource<
           // Discovery yields current escrows; skip targets that no longer
           // exist. (Other failures still surface — only a missing object is
           // swallowed.)
-          let state: EscrowState<A, C>;
+          let state: EscrowSnapshot;
           try {
             state = await fetch(escrowId as Id<'Escrow'>);
           } catch (e) {
