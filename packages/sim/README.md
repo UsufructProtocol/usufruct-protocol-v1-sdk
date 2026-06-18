@@ -32,7 +32,7 @@ npm i @usufruct-protocol/sim @usufruct-protocol/sdk @mysten/sui
 ## Use
 
 ```ts
-import { decodeEscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import { decodeEscrowState } from '@usufruct-protocol/sim/primitives/state.js';
 import { actions, curve, memorySource } from '@usufruct-protocol/sim';
 
 // Re-derive a view / fold an action over a hypothetical future, off-chain:

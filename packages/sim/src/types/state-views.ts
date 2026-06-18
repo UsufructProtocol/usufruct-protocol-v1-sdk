@@ -1,10 +1,11 @@
 /**
  * Projection TYPE aliases over the decoded `EscrowState` — the shapes the
- * mirror's view/step helpers consume. Pure type-level derivations of
- * `primitives/state.ts`; no runtime. Live in core so the mirror imports them
- * from one place. See `types/config-types.ts` for the rationale.
+ * mirror's view/step helpers consume. Pure type-level derivations of the
+ * mirror's `primitives/state.ts`; no runtime. Live in the mirror (`sim`)
+ * because the decoded model lives here; the core never names `EscrowData`.
  */
-import type { AssetSchema, EscrowData } from '../primitives/state.js';
+import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowData } from '../primitives/state.js';
 
 type Escrow = EscrowData<AssetSchema>;
 

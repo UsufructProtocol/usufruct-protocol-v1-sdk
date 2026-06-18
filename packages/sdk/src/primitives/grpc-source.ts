@@ -25,8 +25,7 @@
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from './brand.js';
-import { decodeEscrowState } from './state.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from './state.js';
+import type { AssetSchema, EscrowSnapshot, uidAssetSchema } from './state.js';
 import {
   eventKey,
   normEscrowId,
@@ -47,13 +46,15 @@ function normId(s: string): string {
   return s.replace(/^0x/, '').toLowerCase().replace(/^0+/, '');
 }
 
-/** A tagged push emission — which escrow changed, and its new state. */
+/** A tagged push emission — which escrow changed, and its new raw snapshot. */
 export interface EscrowUpdate<
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   A extends AssetSchema = typeof uidAssetSchema,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   C extends string = string,
 > {
   readonly escrowId: Id<'Escrow'>;
-  readonly state: EscrowState<A, C>;
+  readonly state: EscrowSnapshot;
 }
 
 /**
@@ -389,23 +390,25 @@ export function escrowVersionChangesMany(
 export function grpcSource<
   A extends AssetSchema = typeof uidAssetSchema,
   C extends string = string,
->(client: SuiGrpcClient, opts?: ChainSourceOpts<A>): GrpcSource<A, C> {
+>(client: SuiGrpcClient, opts?: ChainSourceOpts): GrpcSource<A, C> {
   const core = client as unknown as ClientWithCoreApi;
   const base = chainSource<A, C>(core, opts);
 
   // Like `chainSource.fetch`, but keeps the object version — subscriptions
-  // dedupe on it (the decoded `EscrowState` carries no version).
+  // dedupe on it (the raw `EscrowSnapshot` carries no version). Decoding into
+  // an `EscrowState` is the mirror's step; the core yields the raw snapshot.
   const fetchVersioned = async (
     escrowId: Id<'Escrow'>,
-  ): Promise<{ state: EscrowState<A, C>; version: string }> => {
+  ): Promise<{ state: EscrowSnapshot; version: string }> => {
     const { object } = await core.core.getObject({
       objectId: escrowId,
       include: { content: true },
     });
-    const state = decodeEscrowState<A, C>(
-      { objectId: object.objectId, type: object.type, content: object.content },
-      opts?.assetSchema,
-    );
+    const state: EscrowSnapshot = {
+      objectId: object.objectId,
+      type: object.type,
+      content: object.content,
+    };
     return { state, version: object.version };
   };
 

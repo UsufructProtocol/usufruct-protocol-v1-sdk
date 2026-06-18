@@ -5,7 +5,8 @@
  * that keeps the mirror honest (SPEC §8). One table, two consumers.
  */
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { AssetSchema, EscrowState } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import type { EscrowState } from '@usufruct-protocol/sim/primitives/state.js';
 import { VIEW_SPECS, type ReadCtx, type ViewSpec } from '@usufruct-protocol/sdk/read/spec.js';
 import * as views from '@usufruct-protocol/sim/views/index.js';
 

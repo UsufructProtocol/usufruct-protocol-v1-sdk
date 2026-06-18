@@ -13,7 +13,10 @@
 export * as curve from './curve.js';
 export * as actions from './actions/index.js';
 export * from '../views/index.js';
+// The raw snapshot model + asset schema config come from the core; the decoded
+// model (`EscrowState`/`EscrowData`) and its decoder are the mirror's own.
 export * from '@usufruct-protocol/sdk/primitives/state.js';
+export * from '../primitives/state.js';
 export * from '../primitives/view.js';
 export * from '@usufruct-protocol/sdk/primitives/source.js';
 export { grpcSource } from '@usufruct-protocol/sdk/primitives/grpc-source.js';

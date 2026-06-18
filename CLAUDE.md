@@ -36,33 +36,45 @@ If in doubt about a behavior, check the live object or submit a test PTB rather 
 
 **`SPEC.md` in this directory is the authoritative design document.** Read it before writing any TypeScript. Any proposed module, type, or function must fit one of the four primitives defined there, or it must justify amending the spec.
 
-Summary of the four primitives:
+The four primitives, split by the **drift-zero seam** — the core never decodes an
+escrow (it reads on-chain via the `Reader`), so the *decoded* model and its
+re-derivations live in the **mirror** (`@usufruct-protocol/sim`):
 
-| Primitive | Role |
-|---|---|
-| `EscrowState<A, C>` | BCS-decoded snapshot of an on-chain escrow. Immutable, no network reference. |
-| `View<T>` | Pure function `(state, t: Ms) => T`. One per public view in `escrow.move`. |
-| `Action<R>` | Value with two interpretations: `step` (off-chain pure) and `toPtb` (on-chain PTB). |
-| `Source` | Single point of IO: `fetch`, `subscribe`, `query`. |
+| Primitive | Role | Where |
+|---|---|---|
+| `Source` | Single point of IO: `fetch`/`subscribe`/`query`, yielding a raw **`EscrowSnapshot`** (ids + type tag + BCS bytes). | core (`@usufruct-protocol/sdk`) |
+| `Action.toPtb` | The on-chain interpretation: append the Move call to a PTB. | core |
+| `Reader` | Drift-zero reads: on-chain views via `simulateTransaction` (not in the original four; the core's read surface). | core |
+| `EscrowState<A, C>` | BCS-**decoded** snapshot. Immutable, no network reference. `decodeEscrowState` turns a `Source` `EscrowSnapshot` into it. | mirror (`@usufruct-protocol/sim`) |
+| `View<T>` | Pure function `(state, t: Ms) => T`. One per public view in `escrow.move`. | mirror |
+| `Action.step` | The off-chain pure interpretation `(state, t) => …`. | mirror |
+
+The dependency arrow is **sim → sdk** (the mirror imports the core, never the
+reverse). The kernel is unchanged in spirit; it is split by where drift can occur.
 
 ## Project structure
 
 ```
-src/
-  primitives/     # EscrowState, View, Action, Source
-  codegen/        # auto-generated types + BCS schemas + bare PTB calls
-  views/          # hand-written View<T> functions
-  actions/        # hand-written Action constructors
-  config/         # DSL config builder
-fixtures/         # cross-runtime golden test fixtures (Move → TS)
-test/             # TypeScript tests consuming fixtures
+packages/sdk/src/   # the drift-zero CORE
+  primitives/       # EscrowSnapshot + Source, Action.toPtb (no decoded EscrowState)
+  read/             # the Reader — on-chain views via simulateTransaction
+  codegen/          # auto-generated types + BCS schemas + bare PTB calls
+  actions/          # hand-written Action.toPtb constructors
+  highlevel/        # Layer 2 handles (usufruct, escrow, cap, …)
+  config/           # DSL config builder
+packages/sim/src/   # the MIRROR (opt-in, sim → sdk)
+  primitives/       # EscrowState, decodeEscrowState, View, the lifecycle step-types
+  views/            # hand-written View<T> functions
+  sim/actions/      # Action.step constructors (paired with the core's toPtb)
+fixtures/           # cross-runtime golden test fixtures (Move → TS)
+test/               # TypeScript tests consuming fixtures
 ```
 
 ## Key development rules
 
 - **`SPEC.md` governs.** Capabilities emerge from composing the four primitives; no new core primitives.
-- **Read strategy:** Pattern B (fetch + TypeScript mirror) is the default. Pattern A (`devInspect`) is used only for curve/settlement math where bit-exact replication carries drift risk.
-- **No methods on `EscrowState`.** State is data, not object.
+- **Read strategy:** the **on-chain view** is the default — the `Reader` runs the deployed views via `simulateTransaction`, so reads are **drift-zero** by construction (the core never decodes an `EscrowState`). The TypeScript **mirror** (`@usufruct-protocol/sim`: `EscrowState` + `View`/`Action.step`) is **opt-in** for local computation (simulation, what-if, off-chain agendas); it re-derives logic and so carries drift risk, gated by golden coverage (`SPEC.md §8.2`).
+- **`EscrowState` is a mirror type, not core.** A `Source` yields a raw `EscrowSnapshot`; `decodeEscrowState` (in `sim`) turns it into the decoded `EscrowState`. The core reasons via the `Reader`, never by decode-and-derive. (Still: no methods on `EscrowState` — state is data, not object.)
 - **Time is always an explicit parameter** (`t: Ms`). No ambient `now()`.
 - **`@mysten/sui` v2 — choose the right client per use case.** Do not assume one client fits all operations. Evaluate before picking:
   - `SuiGrpcClient` (`@mysten/sui/grpc`) — recommended default; best for object fetches and event streaming (`ChainSource`).

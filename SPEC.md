@@ -109,10 +109,22 @@ The SDK is built from exactly four primitives, sitting on a codegen substrate
 (§4.5). Every capability listed in §6 is a composition of these primitives;
 none is implemented as additional core code.
 
-### §4.1 — `EscrowState<A, C>` (data)
+> **Drift-zero split (where each primitive lives).** The default read is the
+> on-chain view (§6.1), so the **core** (`@usufruct-protocol/sdk`) never decodes
+> an escrow. The core holds **`Source`** (yielding a raw `EscrowSnapshot`),
+> **`Action.toPtb`**, and the **`Reader`** (§6.1). The *decoded* model and its
+> re-derivations are the **mirror** (`@usufruct-protocol/sim`): **`EscrowState`**
+> + `decodeEscrowState`, **`View`**, and **`Action.step`**. The dependency arrow
+> is sim → sdk. The four concepts below are unchanged; they are split by where
+> drift can occur. (See §12 decision log.)
+
+### §4.1 — `EscrowState<A, C>` (data) — *mirror*
 
 The BCS-decoded snapshot of an `Escrow<Asset, CoinType>` shared object,
-including its full `AssetContext` subtree.
+including its full `AssetContext` subtree. **Lives in the mirror**
+(`@usufruct-protocol/sim`): a `Source` yields the raw `EscrowSnapshot` (ids +
+type tag + BCS bytes), and `decodeEscrowState(snapshot, assetSchema)` produces
+an `EscrowState`. The core never names it — it reads via the `Reader` (§6.1).
 
 Properties:
 
@@ -121,16 +133,18 @@ Properties:
 - Contains no reference to an RPC client, clock, or event stream.
 - Parameterized over `A` (asset BCS schema) and `C` (coin type marker).
 
-`EscrowState` is the *only* data shape that views and actions consume. It is
-the SDK's representation of "what the chain currently knows about this escrow".
+`EscrowState` is the data shape the mirror's views and `step`s consume — the
+mirror's representation of "what the chain currently knows about this escrow".
 
-### §4.2 — `View<T>` (read)
+### §4.2 — `View<T>` (read) — *mirror*
 
 ```
 View<T> = (state: EscrowState, t: Ms) => T
 ```
 
 Free function. One `View` per public view function in `usufruct/sources/escrow.move`.
+Lives in the mirror (`@usufruct-protocol/sim`); the core's default read is the
+on-chain view via the `Reader` (§6.1), not a `View` over a decoded `EscrowState`.
 
 Properties:
 
@@ -146,12 +160,18 @@ mapping.
 ### §4.3 — `Action<R>` (write)
 
 The most distinctive primitive. An `Action` is a **value** carrying two
-interpretations of a single semantic operation:
+interpretations of a single semantic operation — **split across the drift-zero
+seam**:
 
-- `step` — off-chain pure interpretation. Given current state and time,
-  return next state and result. Used by simulator, testbed, calendar.
 - `toPtb` — on-chain interpretation. Append the corresponding Move call to a
-  `Transaction`. Used by live execution.
+  `Transaction`. Used by live execution. **Core** (`@usufruct-protocol/sdk`): the
+  core action surface is `PtbAction` = `{ toPtb }`, nothing else.
+- `step` — off-chain pure interpretation `(state, t) => next`. Used by simulator,
+  testbed, calendar. **Mirror** (`@usufruct-protocol/sim`): pairs a `step` with
+  the core's `toPtb` into the lifecycle types (`Origin`/`Transition`/`Terminal`
+  Action, generic over the state aggregate `S` — `EscrowState` for escrows,
+  `MessageGroups` for inboxes). Confining the core to `toPtb` is what makes it
+  impossible to drift.
 
 Every public mutating function of `usufruct` is classified by its lifecycle
 role, which determines its `Action` variant:
@@ -206,18 +226,21 @@ versions also threaded `&Random` for stochastic policies; that feature was
 removed — the protocol is now fully deterministic, so no `step` consumes
 randomness. See §8.)
 
-### §4.4 — `Source` (IO)
+### §4.4 — `Source` (IO) — *core*
 
 ```
 interface Source {
-  fetch:     (id: Id<Escrow>) => Promise<EscrowState>;
-  subscribe: (id: Id<Escrow>, opts?) => AsyncIterable<EscrowState>;
-  query:     (predicate: Predicate) => AsyncIterable<EscrowState>;
+  fetch:     (id: Id<Escrow>) => Promise<EscrowSnapshot>;
+  subscribe: (id: Id<Escrow>, opts?) => AsyncIterable<EscrowSnapshot>;
+  query:     (predicate: Predicate) => AsyncIterable<EscrowSnapshot>;
 }
 ```
 
-The single point of impurity in the SDK. All network IO is mediated through
-`Source` implementations. `subscribe`/`query` are `AsyncIterable` (not an
+The single point of impurity in the SDK. It yields the **raw `EscrowSnapshot`**
+(ids + type tag + BCS bytes); turning that into a decoded `EscrowState` is a
+mirror step (`decodeEscrowState`, §4.1), so the core's IO boundary does not
+depend on the decoded model. All network IO is mediated through `Source`
+implementations. `subscribe`/`query` are `AsyncIterable` (not an
 Observable) to avoid a reactive-library dependency. `chainSource(client)`
 works over any `ClientWithCoreApi` (gRPC or JSON-RPC), constrained by what
 that transport-agnostic core API actually offers:

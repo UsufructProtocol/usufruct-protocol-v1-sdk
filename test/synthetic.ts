@@ -4,11 +4,8 @@
  * tests exercise the real decoding pipeline, not a mock.
  */
 import { Escrow } from '@usufruct-protocol/sdk/codegen/usufruct/escrow.js';
-import {
-  decodeEscrowState,
-  uidAssetSchema,
-  type EscrowState,
-} from '@usufruct-protocol/sdk/primitives/state.js';
+import { uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
+import { decodeEscrowState, type EscrowState } from '@usufruct-protocol/sim/primitives/state.js';
 
 export const ESCROW_ID = '0x' + 'ab'.repeat(32);
 export const ASSET_ID = '0x' + 'cd'.repeat(32);

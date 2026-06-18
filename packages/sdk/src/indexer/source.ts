@@ -16,7 +16,12 @@
 import type { SuiGraphQLClient } from '@mysten/sui/graphql';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from '../primitives/brand.js';
-import type { AssetSchema, EscrowState, uidAssetSchema } from '../primitives/state.js';
+import {
+  escrowTypeArgs,
+  type AssetSchema,
+  type EscrowSnapshot,
+  type uidAssetSchema,
+} from '../primitives/state.js';
 import {
   chainSource,
   isMissingObject,
@@ -142,7 +147,6 @@ export function indexerSource<
 >(gql: SuiGraphQLClient, opts: IndexerOpts<A>): IndexerSource<A, C> {
   const first = opts.pageSize ?? 50;
   const base = chainSource<A, C>(gql as unknown as ClientWithCoreApi, {
-    ...(opts.assetSchema !== undefined ? { assetSchema: opts.assetSchema } : {}),
     packageId: opts.packageId,
   });
 
@@ -153,8 +157,8 @@ export function indexerSource<
     return res.data;
   }
 
-  /** Fetch+decode an escrow id, skipping ones already consumed (deleted). */
-  async function* fetchEach(ids: Iterable<string>): AsyncIterable<EscrowState<A, C>> {
+  /** Fetch an escrow id's raw snapshot, skipping ones already consumed (deleted). */
+  async function* fetchEach(ids: Iterable<string>): AsyncIterable<EscrowSnapshot> {
     for (const escrowId of ids) {
       try {
         yield await base.fetch(escrowId as Id<'Escrow'>);
@@ -165,7 +169,7 @@ export function indexerSource<
     }
   }
 
-  async function* byType(assetFilter?: string): AsyncIterable<EscrowState<A, C>> {
+  async function* byType(assetFilter?: string): AsyncIterable<EscrowSnapshot> {
     const type = `${opts.packageId}::escrow::Escrow`;
     const want = assetFilter ? normalizeType(assetFilter) : null;
     let after: string | null = null;
@@ -174,14 +178,14 @@ export function indexerSource<
       const { objects }: ObjectsResult = await run(OBJECTS_DOC, { type, after, first });
       const ids = objects.nodes.map((n) => n.address).filter((a) => !seen.has(a) && seen.add(a));
       for await (const st of fetchEach(ids)) {
-        if (want && normalizeType(st.assetType) !== want) continue;
+        if (want && normalizeType(escrowTypeArgs(st.type)[0]) !== want) continue;
         yield st;
       }
       after = objects.pageInfo.hasNextPage ? objects.pageInfo.endCursor : null;
     } while (after);
   }
 
-  async function* byGovernor(governor: string): AsyncIterable<EscrowState<A, C>> {
+  async function* byGovernor(governor: string): AsyncIterable<EscrowSnapshot> {
     const type = `${opts.packageId}::asset_state::AssetIntegrated`;
     let after: string | null = null;
     const seen = new Set<string>();

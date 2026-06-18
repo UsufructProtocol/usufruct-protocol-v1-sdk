@@ -18,25 +18,11 @@ import {
 } from '../codegen/usufruct/escrow.js';
 import type { PtbAction } from '../primitives/action.js';
 import type { Id } from '../primitives/brand.js';
-import type { EscrowState } from '../primitives/state.js';
 import type { PackageIds } from '../config/network.js';
 
-type State = EscrowState;
-type AssetStateData = NonNullable<State['escrow']['state']>;
-type RentingData = Extract<AssetStateData, { $kind: 'Renting' }>['Renting'];
-
-/** Off-chain mirror of `AssetReceipt`: the extracted renting state. */
-export interface BorrowReceipt {
-  readonly escrowId: Id<'Escrow'>;
-  readonly assetId: Id<'Asset'>;
-  /** The decoded asset value travelling outside the escrow. */
-  readonly asset: unknown;
-  readonly renting: RentingData;
-}
-
-export interface BorrowResult {
-  readonly receipt: BorrowReceipt;
-}
+// The off-chain `BorrowReceipt`/`BorrowResult` (decoded renting state) are a
+// mirror concern — they live in `@usufruct-protocol/sim` with the `step` pair.
+// Core keeps only the PTB builders below.
 
 export interface BorrowPtbArgs {
   readonly pkg: Pick<PackageIds, 'packageId'>;

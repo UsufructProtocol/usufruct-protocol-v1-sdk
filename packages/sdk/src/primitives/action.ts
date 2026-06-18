@@ -6,17 +6,17 @@
  */
 import type { Transaction, TransactionResult } from '@mysten/sui/transactions';
 import type { Ms } from './brand.js';
-import type { EscrowState } from './state.js';
 
 /**
  * `step` is an unconditionally deterministic function of `(state, t)`. The
  * protocol carries no stochastic policy — every transition is fixed-point
  * integer math over the state and the clock (SPEC §8). There is no `Rng`.
  *
- * The lifecycle variants are generic over the state aggregate they govern
- * (SPEC §4.3). `EscrowState` is the default — the aggregate of all escrow
- * actions. Inbox actions transition over `MessageGroups`. The kernel gains
- * no primitive: only genericity.
+ * The lifecycle variants are generic over the state aggregate `S` they govern
+ * (SPEC §4.3) — there is NO default. The escrow mirror passes `EscrowState`
+ * (which lives in `@usufruct-protocol/sim`, with the `step` interpretations);
+ * inbox actions pass `MessageGroups`. The core never names `EscrowState`, so it
+ * cannot depend on the mirror — the dependency arrow stays sim → sdk.
  */
 
 /**
@@ -33,19 +33,19 @@ export interface PtbAction<P> {
 }
 
 /** Creates a state aggregate (only `integrate` for escrows). */
-export interface OriginAction<R, P, S = EscrowState> {
+export interface OriginAction<R, P, S> {
   readonly step: (t: Ms) => { state: S; result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }
 
 /** Mutates a state aggregate. */
-export interface TransitionAction<R, P, S = EscrowState> {
+export interface TransitionAction<R, P, S> {
   readonly step: (state: S, t: Ms) => { state: S; result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }
 
 /** Consumes a state aggregate — no successor state. */
-export interface TerminalAction<R, P, S = EscrowState> {
+export interface TerminalAction<R, P, S> {
   readonly step: (state: S, t: Ms) => { result: R };
   readonly toPtb: (tx: Transaction, args: P) => TransactionResult;
 }

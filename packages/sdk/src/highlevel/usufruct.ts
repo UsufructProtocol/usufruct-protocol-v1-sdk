@@ -253,7 +253,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const resolveExecutor = (): Executor | null =>
     executor ?? (signer ? signerExecutor(client, signer) : null);
 
-  const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
+  // `assetSchema` no longer feeds the core read path — the `Source` yields raw
+  // snapshots and the `Reader` reads drift-zero. It stays on the config/ctx for
+  // the opt-in mirror to decode with. (`chainSource` only needs `packageId`.)
+  const source = chainSource(client, { packageId });
 
   const rawGraphql =
     config.graphql == null

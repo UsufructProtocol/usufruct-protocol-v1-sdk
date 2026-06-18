@@ -39,8 +39,11 @@ describe('Reader surface', () => {
     }
   });
 
-  it('exposes the envelope + batch helpers', () => {
-    expect(typeof r.fetch).toBe('function');
+  it('exposes the batch helpers', () => {
+    // `fetch()` (the decoded-`EscrowState` producer) moved out of the core
+    // Reader: decoding is now a mirror step (`@usufruct-protocol/sim`). The
+    // core Reader reads drift-zero via on-chain views — `snapshot`/`batch`.
     expect(typeof r.snapshot).toBe('function');
+    expect(typeof r.batch).toBe('function');
   });
 });
