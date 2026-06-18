@@ -3,7 +3,7 @@
  * for both bearer inboxes: the `EarningsInbox` (per-governor income) and the
  * `ProtocolFeeInbox` (the deployer's fee pool). Authority = holding the object.
  */
-import { collectMessages, discoverInboxMessages, type InboxKind, type MessageGroups } from '../actions/collect.js';
+import { collectMessagesToPtb, discoverInboxMessages, type InboxKind, type MessageGroups } from '../actions/collect.js';
 import { packageEventStream } from '../primitives/grpc-source.js';
 import { normEscrowId } from '../indexer/events.js';
 import { transferOf } from './bearer.js';
@@ -89,7 +89,7 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
         build: async (tx, sender) => {
           groups = await discoverInboxMessages(client, inboxId, kind);
           if (groups.size === 0) return;
-          const coins = collectMessages({ kind, groups }).toPtb(tx, { pkg, inboxId });
+          const coins = collectMessagesToPtb({ kind, groups })(tx, { pkg, inboxId });
           tx.transferObjects(coins, sender);
         },
         decode: async () => sumGroups(client, groups),

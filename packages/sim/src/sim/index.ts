@@ -29,5 +29,5 @@ export type {
   OriginAction,
   TransitionAction,
   TerminalAction,
-} from '@usufruct-protocol/sdk/primitives/action.js';
-export { NotImplementedStepError } from '@usufruct-protocol/sdk/primitives/action.js';
+} from '../primitives/action.js';
+export { NotImplementedStepError } from '../primitives/action.js';

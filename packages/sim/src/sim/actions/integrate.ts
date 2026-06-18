@@ -12,7 +12,7 @@ import {
   type IntegratePtbArgs,
   type IntegrateIntoPortfolioPtbArgs,
 } from '@usufruct-protocol/sdk/actions/integrate.js';
-import type { OriginAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { OriginAction } from '../../primitives/action.js';
 import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { EscrowState } from '../../primitives/state.js';
 import type { EnsembleConfig } from '@usufruct-protocol/sdk/config/ensemble.js';

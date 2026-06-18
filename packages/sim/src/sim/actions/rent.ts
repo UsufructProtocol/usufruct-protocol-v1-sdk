@@ -5,7 +5,7 @@
  * validates the payment, and assembles the successor state.
  */
 import { rentToPtb, type RentParams, type RentPtbArgs, type RentResult } from '@usufruct-protocol/sdk/actions/rent.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';

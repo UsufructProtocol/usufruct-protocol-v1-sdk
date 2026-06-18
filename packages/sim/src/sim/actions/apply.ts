@@ -15,7 +15,7 @@ import {
   type TenureSettlement,
 } from '@usufruct-protocol/sdk/actions/apply.js';
 import { mist } from '@usufruct-protocol/sdk/primitives/brand.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import type { EscrowState } from '../../primitives/state.js';
 import { collapseCurveShape } from '../../views/config.js';

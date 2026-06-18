@@ -14,7 +14,7 @@ import {
   type BorrowPtbArgs,
   type ReturnPtbArgs,
 } from '@usufruct-protocol/sdk/actions/borrow.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Id, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { id } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { EscrowState } from '../../primitives/state.js';

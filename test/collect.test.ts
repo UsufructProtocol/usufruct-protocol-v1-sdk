@@ -1,6 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
-import { collectMessages, type MessageRef } from '@usufruct-protocol/sdk/actions/collect.js';
+import { collectMessagesToPtb, type MessageRef } from '@usufruct-protocol/sdk/actions/collect.js';
+import { collectMessages } from '@usufruct-protocol/sim/sim/actions/collect.js';
 import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
 
 const INBOX = '0x' + '88'.repeat(32);
@@ -21,7 +22,7 @@ describe('coin-polymorphic collect (§5.2)', () => {
       [SUI, [ref(3)]],
     ]);
     const tx = new Transaction();
-    const coins = collectMessages({ kind: 'earnings', groups }).toPtb(tx, {
+    const coins = collectMessagesToPtb({ kind: 'earnings', groups })(tx, {
       pkg: TESTNET,
       inboxId: INBOX,
     });
@@ -53,7 +54,7 @@ describe('coin-polymorphic collect (§5.2)', () => {
 
   it('fees kind targets fees::collect_fee_messages with FeeMessage tickets', () => {
     const tx = new Transaction();
-    collectMessages({ kind: 'fees', groups: new Map([[SUI, [ref(4)]]]) }).toPtb(tx, {
+    collectMessagesToPtb({ kind: 'fees', groups: new Map([[SUI, [ref(4)]]]) })(tx, {
       pkg: TESTNET,
       inboxId: INBOX,
     });
@@ -84,10 +85,10 @@ describe('coin-polymorphic collect (§5.2)', () => {
 
   it('skips empty groups', () => {
     const tx = new Transaction();
-    const coins = collectMessages({
+    const coins = collectMessagesToPtb({
       kind: 'earnings',
       groups: new Map([[SUI, []]]),
-    }).toPtb(tx, { pkg: TESTNET, inboxId: INBOX });
+    })(tx, { pkg: TESTNET, inboxId: INBOX });
     expect(coins).toHaveLength(0);
     expect(tx.getData().commands).toHaveLength(0);
   });

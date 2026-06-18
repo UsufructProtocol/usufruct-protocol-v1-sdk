@@ -4,7 +4,7 @@
  * settle pending first, then immediate (Waiting) or flag (Renting).
  */
 import { retireToPtb, type RetirePtbArgs } from '@usufruct-protocol/sdk/actions/retire.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { AssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import type { EscrowState } from '../../primitives/state.js';

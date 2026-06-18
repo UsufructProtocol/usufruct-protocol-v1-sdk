@@ -16,7 +16,7 @@ import {
   type UpdateEnsembleResult,
   type CapHolderPtbArgs,
 } from '@usufruct-protocol/sdk/actions/governance.js';
-import type { TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { TransitionAction } from '../../primitives/action.js';
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import type { EscrowState } from '../../primitives/state.js';
 import type {

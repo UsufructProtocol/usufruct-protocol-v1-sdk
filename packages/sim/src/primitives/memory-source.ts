@@ -17,7 +17,7 @@
  */
 import type { Id, Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { activeUsufructuaryAddr } from '../views/identity.js';
-import type { OriginAction, TerminalAction, TransitionAction } from '@usufruct-protocol/sdk/primitives/action.js';
+import type { OriginAction, TerminalAction, TransitionAction } from './action.js';
 import type { AssetSchema, uidAssetSchema } from '@usufruct-protocol/sdk/primitives/state.js';
 import type { EscrowState } from './state.js';
 import { channel, type Predicate, type SubscribeOpts } from '@usufruct-protocol/sdk/primitives/source.js';
