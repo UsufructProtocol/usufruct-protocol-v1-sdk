@@ -354,6 +354,109 @@ write().toTransaction(me)   → YOU drive: unsigned PTB; sign elsewhere, then de
 read()                      → never .send(); never touches the chain to write
 ```
 
+## Enabling use cases — a multisig governor collecting earnings
+
+A governor is often a **DAO or a multisig**, and `EarningsInbox.collect()` is the
+write they run most. A multisig is just *how a transaction is signed* — the
+`Executor` axis — so `collect()` never changes; only the executor does. Three
+shapes the build/execute/decode split unlocks, from simplest to fully offline.
+
+```ts
+import { MultiSigPublicKey, MultiSigSigner } from '@mysten/sui/multisig';
+import { usufruct, signerExecutor, type Executor, type ExecResult } from '@usufruct-protocol/sdk';
+
+// the governor's 2-of-3 multisig (the address that holds the EarningsInbox)
+const mpk = MultiSigPublicKey.fromPublicKeys({ threshold: 2, publicKeys: [
+  { publicKey: pkA, weight: 1 }, { publicKey: pkB, weight: 1 }, { publicKey: pkC, weight: 1 },
+]});
+const INBOX = '0x…'; // the EarningsInbox object the multisig governs
+```
+
+### Case 1 — the multisig keys are on hand: it's just a `Signer`
+
+`MultiSigSigner` implements `Signer`, so it drops into the `signer` slot
+(`signer = account + executor`) and `collect()` is one line. **Multisig needs no
+special handling** — that is the whole point.
+
+```ts
+const governor = new MultiSigSigner(mpk, [kpA, kpB]);          // 2 of 3 present → meets threshold
+const u = usufruct({ network: 'testnet', client, signer: governor });
+
+const earnings = await u.earningsInbox(INBOX).collect().send();
+console.log(earnings);                                          // [{ coin, amount }] per coin (§5.2)
+```
+
+### Case 2 — co-signers are separate: a custom `Executor`
+
+When the signers are different people/devices online at submit time, the multisig
+is an `Executor` that gathers partial signatures and combines them. The session
+holds only the identity; the executor is passed to `.send()`.
+
+```ts
+const multisigExecutor: Executor = {
+  address: mpk.toSuiAddress(),                       // identity = the multisig address
+  execute: async (tx): Promise<ExecResult> => {
+    const bytes = await tx.build({ client });        // freeze the PTB
+    const sigA = (await kpA.signTransaction(bytes)).signature;  // from co-signer A
+    const sigB = (await kpB.signTransaction(bytes)).signature;  // from co-signer B
+    const signature = mpk.combinePartialSignatures([sigA, sigB]);
+    const res = await client.core.executeTransaction({
+      transaction: bytes, signature, include: { effects: true, objectTypes: true },
+    });
+    await client.core.waitForTransaction({ digest: res.Transaction.digest });
+    return res.Transaction;
+  },
+};
+
+const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() }); // identity only
+const earnings = await u.earningsInbox(INBOX).collect().send(multisigExecutor);
+```
+
+### Case 3 — build now, sign later (offline / asynchronous multisig)
+
+The governance flow: propose the `collect` now, gather signatures over hours or
+days across devices, then submit. `toTransaction()` gives the unsigned PTB; the
+multisig signature binds to **those exact bytes**, so freeze once and distribute.
+
+```ts
+import { toBase64, fromBase64 } from '@mysten/sui/utils';
+
+const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() });
+
+// ① NOW — build and freeze; carry away the bytes
+const plan  = u.earningsInbox(INBOX).collect();
+const tx    = await plan.toTransaction(mpk.toSuiAddress());
+const bytes = await tx.build({ client });
+const b64   = toBase64(bytes);                          // the portable artifact → distribute
+
+// ② LATER — each co-signer signs the SAME bytes, on their own device
+const sigA = (await kpA.signTransaction(fromBase64(b64))).signature;  // today
+const sigB = (await kpB.signTransaction(fromBase64(b64))).signature;  // tomorrow
+
+// ③ WHEN ≥ threshold — combine and submit
+const signature = mpk.combinePartialSignatures([sigA, sigB]);
+const res = await client.core.executeTransaction({
+  transaction: bytes, signature, include: { effects: true, objectTypes: true },
+});
+const earnings = await plan.decode(res.Transaction);   // typed result (keep `plan` to decode)
+```
+
+The three `Plan` phases spread **across time and machines**: `build` now (one
+machine), `execute` later (partial signatures, combine, submit), `decode` at the
+end. The write — `collect()` — is byte-for-byte the same in all three; only the
+executor moved.
+
+**Caveats (the chain is the arbiter).**
+- A combined signature is valid only for the exact built `bytes` — freeze once,
+  never rebuild before submitting.
+- Gas coins are pinned at build; if spent before submit, the tx expires — rebuild
+  and re-sign. "Sign later" has a freshness window.
+- `decode` for `collect` needs the `plan` (it carries the messages discovered at
+  build). From a fresh process, decode from effects yourself, or re-derive the sums.
+- The exact pre-signed submit surface (`client.core.executeTransaction({ transaction,
+  signature })`, `toBase64`/`fromBase64`) is `@mysten/sui` v2 API — confirm it when
+  implementing; `signerExecutor` uses `signAndExecuteTransaction` for the held-key path.
+
 ## The principle
 
 > A write is **build → execute → decode**. `send()` does all three (the common
