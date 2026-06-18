@@ -1644,6 +1644,33 @@ export function handoverExpiryMs(options: HandoverExpiryMsOptions) {
         typeArguments: options.typeArguments
     });
 }
+export interface DescentExpiryMsArguments {
+    escrow: RawTransactionArgument<string>;
+}
+export interface DescentExpiryMsOptions {
+    package?: string;
+    arguments: DescentExpiryMsArguments | [
+        escrow: RawTransactionArgument<string>
+    ];
+    typeArguments: [
+        string,
+        string
+    ];
+}
+export function descentExpiryMs(options: DescentExpiryMsOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        null
+    ] satisfies (string | null)[];
+    const parameterNames = ["escrow"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'descent_expiry_ms',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+        typeArguments: options.typeArguments
+    });
+}
 export interface ActiveUsufructuaryTimeRemainingMsArguments {
     escrow: RawTransactionArgument<string>;
     nowMs: RawTransactionArgument<number | bigint>;
@@ -2048,6 +2075,33 @@ export function nextTransitionMs(options: NextTransitionMsOptions) {
         package: packageAddress,
         module: 'escrow',
         function: 'next_transition_ms',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+        typeArguments: options.typeArguments
+    });
+}
+export interface NextBoundaryMsArguments {
+    escrow: RawTransactionArgument<string>;
+}
+export interface NextBoundaryMsOptions {
+    package?: string;
+    arguments: NextBoundaryMsArguments | [
+        escrow: RawTransactionArgument<string>
+    ];
+    typeArguments: [
+        string,
+        string
+    ];
+}
+export function nextBoundaryMs(options: NextBoundaryMsOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        null
+    ] satisfies (string | null)[];
+    const parameterNames = ["escrow"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'next_boundary_ms',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });

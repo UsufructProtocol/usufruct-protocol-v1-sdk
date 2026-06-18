@@ -85,7 +85,9 @@ export interface Reader {
   tenureExpiryMs(): Promise<Ms | null>;
   transitionIsReady(t: Ms): Promise<boolean>;
   nextTransitionMs(t: Ms): Promise<Ms | null>;
+  nextBoundaryMs(): Promise<Ms | null>;
   handoverExpiryMs(): Promise<Ms | null>;
+  descentExpiryMs(): Promise<Ms | null>;
   activeUsufructuaryTimeRemainingMs(t: Ms): Promise<Ms | null>;
   handoverExpiryIfBidAt(bidTimeMs: Ms): Promise<Ms | null>;
   tenureCeilingMs(): Promise<Ms>;
@@ -192,7 +194,9 @@ export function createReader(client: ClientWithCoreApi, target: ReaderTarget): R
     tenureExpiryMs: () => run('tenureExpiryMs'),
     transitionIsReady: (t) => atT('transitionIsReady', t),
     nextTransitionMs: (t) => atT('nextTransitionMs', t),
+    nextBoundaryMs: () => run('nextBoundaryMs'),
     handoverExpiryMs: () => run('handoverExpiryMs'),
+    descentExpiryMs: () => run('descentExpiryMs'),
     activeUsufructuaryTimeRemainingMs: (t) => atT('activeUsufructuaryTimeRemainingMs', t),
     handoverExpiryIfBidAt: (bidTimeMs) => atT('handoverExpiryIfBidAt', bidTimeMs),
     tenureCeilingMs: () => run('tenureCeilingMs'),

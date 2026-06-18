@@ -171,6 +171,15 @@ export interface Escrow {
   phaseStartAt(): Promise<Date | null>;
   /** When the next lazy transition is due at/after `at` (default now), or `null`. */
   nextTransitionAt(at?: When): Promise<Date | null>;
+  /**
+   * The next phase boundary (tenure end / handover end / auction descent end), or
+   * `null` when idle/retired — the future boundary a keeper schedules on, across all
+   * phases. Unlike `nextTransitionAt` (which is non-null only once a transition is
+   * already overdue), this is the *scheduled* boundary, present before it is crossed.
+   */
+  nextBoundaryAt(): Promise<Date | null>;
+  /** When the current Dutch-auction descent ends (status `descent`), else `null`. */
+  descentExpiresAt(): Promise<Date | null>;
   /** The wrapped asset object's id. */
   assetId(): Promise<string>;
   /** The last acquisition price (auction memory), or `null` if never rented. */
@@ -417,6 +426,14 @@ export async function createEscrow(
   };
   async function nextTransitionAt(at?: When): Promise<Date | null> {
     const m = await reader.nextTransitionMs(await resolveWhen(client, at));
+    return m == null ? null : new Date(Number(m));
+  }
+  async function nextBoundaryAt(): Promise<Date | null> {
+    const m = await reader.nextBoundaryMs();
+    return m == null ? null : new Date(Number(m));
+  }
+  async function descentExpiresAt(): Promise<Date | null> {
+    const m = await reader.descentExpiryMs();
     return m == null ? null : new Date(Number(m));
   }
   const assetId = (): Promise<string> => reader.assetId();
@@ -667,6 +684,8 @@ export async function createEscrow(
     integratedAt,
     phaseStartAt,
     nextTransitionAt,
+    nextBoundaryAt,
+    descentExpiresAt,
     assetId,
     lastRentPrice,
     applyPendingTransitionStates: applyPending,
