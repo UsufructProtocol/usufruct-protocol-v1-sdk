@@ -46,10 +46,11 @@ Full quickstart in the [core package README](./packages/sdk/README.md).
 
 ## Design & reference
 
-- [`SPEC.md`](./SPEC.md) — authoritative design: the four primitives
-  (`EscrowState`, `View`, `Action`, `Source`) and the drift-zero split. The core is
-  `EscrowState + Source + Reader + Action.toPtb`; `View` and `Action.step` are the
-  mirror.
+- [`SPEC.md`](./SPEC.md) — authoritative design: the drift-zero split. The **core**
+  (`@usufruct-protocol/sdk`) is three primitives — `Source` (raw `EscrowSnapshot`),
+  the `Reader` (on-chain views), and `Action.toPtb`; it never decodes an escrow. The
+  decoded `EscrowState` (`decodeEscrowState`), `View`, and `Action.step` are the
+  **mirror** (`@usufruct-protocol/sim`).
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the primitives, how they compose, and the
   drift-zero seam.
 - [`journeys/`](./journeys) — the object model (authority = possession), the

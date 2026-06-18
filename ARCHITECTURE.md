@@ -1,9 +1,13 @@
 # SDK Architecture
 
-The `@usufruct-protocol/sdk` is built from four primitives. Every capability
-the SDK exposes is a composition of these four — none is implemented as
-additional core code. This document explains what each primitive is, how they
-relate, and what composability emerges from combining them.
+The SDK is built from four primitives, **split across a drift-zero seam** into two
+packages: the **core** (`@usufruct-protocol/sdk`) holds the three that cannot drift
+— `Source` (yielding a raw `EscrowSnapshot`), the on-chain `Reader`, and
+`Action.toPtb` — while the decoded `EscrowState`, `View`, and `Action.step` live in
+the opt-in **mirror** (`@usufruct-protocol/sim`). Every capability the SDK exposes
+is a composition of these — none is implemented as additional core code. This
+document explains what each primitive is, where it lives, how they relate, and what
+composability emerges from combining them.
 
 ---
 
@@ -238,9 +242,11 @@ const price   = currentPrice(state3, t + oneDay)
 **Reactive UI**
 ```ts
 // Subscribe once. Between emissions, Views over the last known state are exact.
-source.subscribe(escrowId).subscribe(state => {
+// Source yields a raw EscrowSnapshot; decodeEscrowState (mirror) gives the state.
+for await (const snapshot of source.subscribe(escrowId)) {
+  const state = decodeEscrowState(snapshot)
   render(isIdle(state, now()), currentPrice(state, now()))
-})
+}
 ```
 
 **Settler bot**
@@ -264,9 +270,10 @@ await source.seed(escrowId, initialState)
 
 **Asset-agnostic marketplace**
 ```ts
-// query() returns any escrow that matches — the SDK is generic over A and C.
-for await (const state of source.query(byOwner(address))) {
-  listings.push(toListing(state, now()))
+// query() yields a raw EscrowSnapshot for any escrow that matches — the SDK is
+// generic over A and C. decodeEscrowState (mirror) gives the typed state.
+for await (const snapshot of source.query(byOwner(address))) {
+  listings.push(toListing(decodeEscrowState(snapshot), now()))
 }
 ```
 
