@@ -31,16 +31,93 @@ build(tx, me)       =  append to YOUR tx                        →  you run exe
 `send` is `build` + execute + decode on a fresh transaction. `build` is the open
 seam everything else is composed from.
 
+The two paths are two narratives:
+
+- **The SDK drives** (`send`) — you hand over a `Plan`; the SDK builds a fresh tx,
+  signs it with the session's executor (or one you pass), waits, and gives you the
+  typed result. You write one line.
+- **You drive** (`build` / `toTransaction`) — the SDK only contributes the write's
+  commands to a transaction *you* hold; you decide when to execute, with what, and
+  you decode. You get control: compose many writes, mix raw Sui commands, sign with
+  a wallet/Ledger/sponsor, or sign offline.
+
+## Identity and signing — `signer`, `account`, `executor`
+
+A write touches **two** concerns, and the SDK keeps them separate because they are
+needed at different moments:
+
+- **Identity** (`account`) — *who I am*, an address. Needed at **build** time (the
+  transaction sender; sourcing the payment coin) and by **reads** (role resolution:
+  am I the governor? the active renter?). It is public — a wallet exposes its
+  address without handing over keys.
+- **Signing** (`executor`) — *how a transaction is executed*: `{ address, execute(tx) }`.
+  Needed only at **execute** time. A keypair, a browser wallet, a Ledger, a sponsor
+  flow, an offline signer — each is just a different `Executor`.
+
+`signer` is **sugar for both**: a held keypair both *is* an identity and *can* sign.
+
+```
+signer  =  account  +  executor
+           (address)    (signerExecutor(client, signer))
+```
+
+And note the asymmetry: an `Executor` already carries its own `address`, so
+**`executor` contains `account`**, but `account` alone cannot sign. That is why a
+standalone `account` is the read-only / external-wallet case — identity now, the
+executor supplied per `.send(executor)`.
+
+```
+account   =  "who I am"        (address; build + reads)
+executor  =  "how I sign"      ( = address + execute )   → contains account
+signer    =  "I hold the key"  ( → account + executor )  → sugar for both
+```
+
+### How the session resolves them
+
+`usufruct({...})` resolves identity and the default executor live (so `connect`
+can rebind either). From `usufruct.ts`:
+
+```ts
+resolveAccount  = () => account ?? executor?.address ?? signer?.toSuiAddress() ?? null;
+resolveExecutor = () => executor ?? (signer ? signerExecutor(client, signer) : null);
+```
+
+### The three ways to configure
+
+```ts
+import { usufruct, signerExecutor } from '@usufruct-protocol/sdk';
+
+usufruct({ network: 'testnet', client, signer });    // keypair: SDK can sign by itself
+usufruct({ network: 'testnet', client, executor });  // wallet/Ledger adapter as the default signer
+usufruct({ network: 'testnet', client, account });   // identity only — .send() requires .send(executor)
+```
+
+| Config | `account` (identity) | default executor | `.send()` with no args |
+|---|---|---|---|
+| `{ signer }` | `signer.address` | `signerExecutor(client, signer)` | signs with the keypair |
+| `{ executor }` | `executor.address` | `executor` | signs with the adapter |
+| `{ account }` | `account` | **none** | throws `NotConnected` — pass `.send(executor)` |
+| `{ client }` only | `null` | none | reads that need a role fail; writes need `.send(executor)` |
+
+So the executor a write uses is: **the one you pass to `.send(executor)`**, else
+**the session default**, else `NotConnected`. The `account` (build-time sender) is
+always the session identity (or the address of the executor you pass).
+
 ## Path 1 — `send()`: let the SDK drive (the 90%)
 
 ```ts
-const cap = await escrow.rent({ tenures: 1 }).send();
-await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+const cap     = await escrow.rent({ tenures: 1 }).send();
 const amounts = await earningsInbox.collect().send();
+await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+
+const { digest } = await cap.borrow((asset, tx) => {
+  tx.transferObjects([tx.moveCall({ target: `${PKG}::asset::use`, arguments: [asset] })], BOB);
+}).send();
 ```
 
-One write, one transaction. `build`/`decode` stay hidden. `.send()` uses the
-executor configured on the session (`usufruct({ signer })`); pass one to override:
+One write, one transaction. `build`/`decode` stay hidden — you get the typed
+result (`UsufructCap`, amounts, a digest). `.send()` uses the executor configured
+on the session (`usufruct({ signer })`); pass one to override:
 
 ```ts
 // sign with a wallet / Ledger / sponsor instead of the configured signer —
@@ -162,6 +239,16 @@ await cap.borrow(recipe).send();                         // tx2 — cannot share
 This is not a limitation of the SDK but of the protocol (the handover window): two
 real transactions, two honest `send()`s.
 
+## Reads — for contrast
+
+Reads never send and never carry `.send()`. They return data, eagerly. The `.send()`
+on a write is exactly what tells write from read at a glance:
+
+```ts
+await escrow.market();        escrow.status;        await cap.state();
+await earningsInbox.balance(); const e = await u.escrow(id);   // resolver, not a write
+```
+
 ## Decision guide
 
 | You want… | Path |
@@ -172,6 +259,17 @@ real transactions, two honest `send()`s.
 | Several independent writes, one atomic tx | `await u.batch(planA, planB).send()` |
 | Same, with full control / raw commands / external wallet | `build()` each → `execute` once → `decode` each |
 | Writes that depend on each other's chain result | separate `send()`s (multi-tx) |
+
+## At a glance
+
+```
+write().send()              → SDK drives: build + sign + decode (one tx)
+write().send(executor)      → SDK drives, YOU choose how it signs (wallet/Ledger/sponsor)
+u.batch(a, b).send()        → SDK drives: many writes, ONE atomic tx, tuple of results
+write().build(tx, me)       → YOU drive: append to your tx; you execute + decode
+write().toTransaction(me)   → YOU drive: unsigned PTB; sign elsewhere, then decode
+read()                      → never .send(); never touches the chain to write
+```
 
 ## The principle
 
