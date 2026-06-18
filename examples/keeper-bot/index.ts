@@ -16,9 +16,11 @@
  *   • event-driven — `escrow.watch(cb)` fires on a version change (a rent/bid, or
  *     the apply that flushes a queued event). It does NOT fire when wall-clock time
  *     merely crosses a boundary.
- *   • time-driven  — `escrow.nextTransitionAt()` returns the next boundary as a
- *     `Date` on the CHAIN clock (not local). The keeper schedules on that, applies,
- *     and the apply is what flushes the lazy event.
+ *   • time-driven  — `escrow.nextBoundaryAt()` returns the next FUTURE boundary
+ *     (tenure / handover / auction descent end) as a `Date` on the CHAIN clock. The
+ *     keeper schedules on that, applies, and the apply flushes the lazy event.
+ *     (`nextTransitionAt()` is the wrong tool here — it is null until a transition
+ *     is already overdue; see the README.)
  *
  * This runs one keeper over one escrow's whole lifecycle, acting in two quiet
  * windows: ② the challenge handover, then ③ the tenure expiry — each time the
@@ -71,11 +73,12 @@ async function mintAsset(): Promise<string> {
  */
 async function settleAtNextBoundary(u: ReturnType<typeof usufruct>, escrowId: string, label: string) {
   let e = await u.escrow(escrowId);
-  // FINDING (see README): to SCHEDULE we need the next *future* boundary, which
-  // lives on the phase fields — `handoverExpiresAt` (demand) / `expiresAt` (tenure).
-  // NOT `nextTransitionAt()`: that reports an *overdue, unapplied* transition (null
-  // until the boundary is crossed), so mid-phase it is null by design.
-  const at = e.handoverExpiresAt ?? e.expiresAt;
+  // The scheduling oracle: the next FUTURE boundary across all phases (tenure end /
+  // handover end / auction descent end), via the on-chain `next_boundary_ms` view.
+  // (This used to compose `handoverExpiresAt ?? expiresAt` by hand — blind in
+  // descent; `nextBoundaryAt()` covers it, drift-zero. NOT `nextTransitionAt()`,
+  // which is null until a transition is already overdue.)
+  const at = await e.nextBoundaryAt();
   if (!at) {
     console.log(`   [keeper] ${label}: no boundary on this phase (status=${e.status})`);
     return e;
