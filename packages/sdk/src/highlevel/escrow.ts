@@ -311,7 +311,7 @@ export async function createEscrow(
   at?: When,
   pre?: ResolvedEscrow,
 ): Promise<Escrow> {
-  const { client, packageId, account, defaultExecutor, assetSchema, retry } = ctx;
+  const { client, packageId, account, defaultExecutor, retry } = ctx;
   const owner = account; // identity for role resolution + the build-time sender
   const escrowId = toId<'Escrow'>(idStr);
 
@@ -324,7 +324,6 @@ export async function createEscrow(
     packageId,
     escrowId,
     typeArguments: [assetType, coinType],
-    ...(assetSchema ? { assetSchema } : {}),
   });
   // Retry the truncated-`simulateTransaction` shape the client proxy can't see
   // (it throws inside the reader's own parse). Status is handled by the client.

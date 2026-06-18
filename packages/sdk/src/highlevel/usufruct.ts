@@ -16,7 +16,6 @@ import { TESTNET } from '../config/network.js';
 import { indexerSource, type IndexerSource } from '../indexer/index.js';
 import { fetchTypeArgs } from './typeargs.js';
 import { chainSource, type Source } from '../primitives/source.js';
-import type { AssetSchema } from '../primitives/state.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
 import { createCap, type UsufructCap } from './cap.js';
 import type { HandleCtx } from './ctx.js';
@@ -75,8 +74,6 @@ export interface UsufructConfig {
   readonly packageId?: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
   readonly feeRefId?: string;
-  /** Asset BCS schema for non-uid assets (SPEC §10); defaults to uid-only. */
-  readonly assetSchema?: AssetSchema;
   /** GraphQL endpoint (URL or client) — enables discovery (`governor.escrows()`). */
   readonly graphql?: string | SuiGraphQLClient;
   /**
@@ -242,7 +239,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const client = retry ? retryingClient(rawClient, retry) : rawClient;
   const packageId = config.packageId ?? TESTNET.packageId;
   const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
-  const assetSchema = config.assetSchema;
   // Identity (account) and signing (executor) are separate axes; `signer` is sugar
   // for both. All three are mutable via `connect`. `ctx()` resolves them live.
   let signer: Signer | null = config.signer ?? null;
@@ -253,9 +249,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const resolveExecutor = (): Executor | null =>
     executor ?? (signer ? signerExecutor(client, signer) : null);
 
-  // `assetSchema` no longer feeds the core read path — the `Source` yields raw
-  // snapshots and the `Reader` reads drift-zero. It stays on the config/ctx for
-  // the opt-in mirror to decode with. (`chainSource` only needs `packageId`.)
+  // The core never decodes: the `Source` yields raw snapshots and the `Reader`
+  // reads drift-zero (on-chain views). Decoding to a typed `EscrowState` is the
+  // opt-in mirror's job (`decodeEscrowState(snapshot, schema)`). `chainSource`
+  // only needs `packageId`.
   const source = chainSource(client, { packageId });
 
   const rawGraphql =
@@ -267,7 +264,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   // Discovery/history (paginated GraphQL) get the same transient-status retry.
   const graphqlClient = rawGraphql && retry ? retryingGraphqlClient(rawGraphql, retry) : rawGraphql;
   const indexer: IndexerSource | null = graphqlClient
-    ? indexerSource(graphqlClient, { packageId, ...(assetSchema ? { assetSchema } : {}) })
+    ? indexerSource(graphqlClient, { packageId })
     : null;
 
   // A gRPC client for server-push subscriptions (`escrow.watch`): reuse the
@@ -295,7 +292,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     account: resolveAccount(),
     defaultExecutor: resolveExecutor(),
     signer,
-    ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
     ...(grpcClient ? { grpcClient } : {}),
     ...(retry ? { retry } : {}),

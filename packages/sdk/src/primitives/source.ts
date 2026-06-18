@@ -13,7 +13,7 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { UsufructCap } from '../codegen/usufruct/usufruct_cap.js';
 import type { Id } from './brand.js';
-import type { AssetSchema, EscrowSnapshot, uidAssetSchema } from './state.js';
+import type { EscrowSnapshot } from './state.js';
 
 /**
  * Discovery predicate for `query`. Escrows are *shared* objects, so they
@@ -36,15 +36,12 @@ export interface SubscribeOpts {
   readonly signal?: AbortSignal;
 }
 
-// `A`/`C` are phantom now (kept so callers can keep writing `Source<A, C>`): a
-// `Source` yields the RAW `EscrowSnapshot`; decoding to a typed `EscrowState<A,C>`
-// is the mirror's step.
-export interface Source<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  A extends AssetSchema = typeof uidAssetSchema,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  C extends string = string,
-> {
+/**
+ * A `Source` yields the RAW `EscrowSnapshot` (ids + type tag + BCS bytes);
+ * decoding to a typed `EscrowState` is the mirror's step (`decodeEscrowState`).
+ * No `A`/`C` type params — the snapshot is not parameterized by the asset/coin.
+ */
+export interface Source {
   readonly fetch: (id: Id<'Escrow'>) => Promise<EscrowSnapshot>;
   readonly subscribe: (
     id: Id<'Escrow'>,
@@ -132,10 +129,7 @@ export function channel<T>(): { push: (v: T) => void; close: () => void } & Asyn
  * has no push stream — that is gRPC-only, a convenience layer). `query`
  * walks the caller's owned `UsufructCap`s to the escrows they reference.
  */
-export function chainSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
->(client: ClientWithCoreApi, opts?: ChainSourceOpts): Source<A, C> {
+export function chainSource(client: ClientWithCoreApi, opts?: ChainSourceOpts): Source {
   const snap = (object: { objectId: string; type: string; content: Uint8Array }): EscrowSnapshot => ({
     objectId: object.objectId,
     type: object.type,

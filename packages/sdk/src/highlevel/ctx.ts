@@ -7,7 +7,6 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { IndexerSource } from '../indexer/source.js';
-import type { AssetSchema } from '../primitives/state.js';
 import type { RetryOptions } from './retry.js';
 import type { Executor } from './send.js';
 
@@ -30,8 +29,6 @@ export interface HandleCtx {
   readonly defaultExecutor: Executor | null;
   /** @deprecated transitional — folded into `account` + `defaultExecutor`. */
   readonly signer: Signer | null;
-  /** Asset BCS schema for decode/reads; defaults to uid-only when omitted. */
-  readonly assetSchema?: AssetSchema;
   /** GraphQL-backed discovery (for `governor.escrows()` byGovernor); optional. */
   readonly indexer?: IndexerSource;
   /** gRPC client for server-push subscriptions (`escrow.watch`); optional. */

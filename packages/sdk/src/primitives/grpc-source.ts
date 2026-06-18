@@ -25,7 +25,7 @@
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from './brand.js';
-import type { AssetSchema, EscrowSnapshot, uidAssetSchema } from './state.js';
+import type { EscrowSnapshot } from './state.js';
 import {
   eventKey,
   normEscrowId,
@@ -47,12 +47,7 @@ function normId(s: string): string {
 }
 
 /** A tagged push emission — which escrow changed, and its new raw snapshot. */
-export interface EscrowUpdate<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  A extends AssetSchema = typeof uidAssetSchema,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  C extends string = string,
-> {
+export interface EscrowUpdate {
   readonly escrowId: Id<'Escrow'>;
   readonly state: EscrowSnapshot;
 }
@@ -63,24 +58,18 @@ export interface EscrowUpdate<
  * `add` emits the new escrow's initial state; `remove` stops watching (no
  * emission); `close` ends the iteration cleanly. `opts.signal` also closes it.
  */
-export interface ManySubscription<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
-> extends AsyncIterable<EscrowUpdate<A, C>> {
+export interface ManySubscription extends AsyncIterable<EscrowUpdate> {
   add(escrowId: Id<'Escrow'>): Promise<void>;
   remove(escrowId: Id<'Escrow'>): void;
   close(): void;
 }
 
 /** `grpcSource` is a `Source` plus the gRPC-only multiplexed `subscribeMany`. */
-export type GrpcSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
-> = Source<A, C> & {
+export type GrpcSource = Source & {
   readonly subscribeMany: (
     escrowIds: readonly Id<'Escrow'>[],
     opts?: SubscribeOpts,
-  ) => ManySubscription<A, C>;
+  ) => ManySubscription;
 };
 
 /**
@@ -387,12 +376,9 @@ export function escrowVersionChangesMany(
  * `subscribeMany` for watching many escrows over one stream. `fetch`, `query`,
  * and decode are delegated to an internal `chainSource` over the same client.
  */
-export function grpcSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
->(client: SuiGrpcClient, opts?: ChainSourceOpts): GrpcSource<A, C> {
+export function grpcSource(client: SuiGrpcClient, opts?: ChainSourceOpts): GrpcSource {
   const core = client as unknown as ClientWithCoreApi;
-  const base = chainSource<A, C>(core, opts);
+  const base = chainSource(core, opts);
 
   // Like `chainSource.fetch`, but keeps the object version — subscriptions
   // dedupe on it (the raw `EscrowSnapshot` carries no version). Decoding into
@@ -477,11 +463,11 @@ export function grpcSource<
       }
     },
 
-    subscribeMany(escrowIds, subOpts): ManySubscription<A, C> {
+    subscribeMany(escrowIds, subOpts): ManySubscription {
       const signal = subOpts?.signal;
       const watched = new Map<string, Id<'Escrow'>>(); // normId → branded id
       const seen = new Map<string, string>(); // normId → last post-tx version
-      const out = channel<EscrowUpdate<A, C>>();
+      const out = channel<EscrowUpdate>();
       const ac = new AbortController(); // stops the firehose on close
 
       const add = async (escrowId: Id<'Escrow'>): Promise<void> => {

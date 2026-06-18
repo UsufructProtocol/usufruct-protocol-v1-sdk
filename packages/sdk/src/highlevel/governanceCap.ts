@@ -105,7 +105,7 @@ interface RefInfo {
 
 /** Build a `GovernanceCap` handle. Authority = the signer currently holding it. */
 export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCap {
-  const { client, packageId, feeRefId, assetSchema } = ctx;
+  const { client, packageId, feeRefId } = ctx;
   const pkg = { packageId, feeRefId };
   const govId = toId<'GovernanceCap'>(capId);
 
@@ -142,7 +142,6 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
             packageId,
             escrowId: r.escrowId,
             typeArguments: r.typeArguments,
-            ...(assetSchema ? { assetSchema } : {}),
           });
           // Decimals are irrelevant to the merge (only mist is sent), so the fallback coin tag is fine.
           const current = await readMarket(reader, coinTag(coinInfo(r.typeArguments[1])));
@@ -182,7 +181,6 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
             packageId,
             escrowId: r.escrowId,
             typeArguments: r.typeArguments,
-            ...(assetSchema ? { assetSchema } : {}),
           });
           assetId = String(await reader.assetId());
           const asset = claimAssetToPtb()(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });

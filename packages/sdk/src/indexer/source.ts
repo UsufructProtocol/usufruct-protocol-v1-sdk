@@ -16,12 +16,7 @@
 import type { SuiGraphQLClient } from '@mysten/sui/graphql';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Id } from '../primitives/brand.js';
-import {
-  escrowTypeArgs,
-  type AssetSchema,
-  type EscrowSnapshot,
-  type uidAssetSchema,
-} from '../primitives/state.js';
+import { escrowTypeArgs, type EscrowSnapshot } from '../primitives/state.js';
 import {
   chainSource,
   isMissingObject,
@@ -60,10 +55,7 @@ export interface TimelineOpts {
   readonly pageSize?: number;
 }
 
-export interface IndexerSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
-> extends Source<A, C> {
+export interface IndexerSource extends Source {
   /** Event history of one type (typed, BCS-decoded). */
   readonly events: (filter: EventsFilter) => AsyncIterable<TypedEvent>;
   /** An escrow's full timeline: fan out the escrow-keyed events, merge, sort by time. */
@@ -73,13 +65,8 @@ export interface IndexerSource<
   ) => Promise<TypedEvent[]>;
 }
 
-export interface IndexerOpts<A extends AssetSchema> {
+export interface IndexerOpts {
   readonly packageId: string;
-  /**
-   * Accepted for `IndexerSource<A, C>` parametrization, but the source yields raw
-   * `EscrowSnapshot`s — the core never decodes. The mirror decodes with this schema.
-   */
-  readonly assetSchema?: A;
   /** GraphQL page size for discovery (default 50). */
   readonly pageSize?: number;
 }
@@ -145,12 +132,9 @@ function normalizeType(t: string): string {
   return t.replace(/^0x/, '').replace(/<0x/g, '<').toLowerCase();
 }
 
-export function indexerSource<
-  A extends AssetSchema = typeof uidAssetSchema,
-  C extends string = string,
->(gql: SuiGraphQLClient, opts: IndexerOpts<A>): IndexerSource<A, C> {
+export function indexerSource(gql: SuiGraphQLClient, opts: IndexerOpts): IndexerSource {
   const first = opts.pageSize ?? 50;
-  const base = chainSource<A, C>(gql as unknown as ClientWithCoreApi, {
+  const base = chainSource(gql as unknown as ClientWithCoreApi, {
     packageId: opts.packageId,
   });
 

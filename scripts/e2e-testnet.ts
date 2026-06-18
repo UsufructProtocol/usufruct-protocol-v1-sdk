@@ -8,7 +8,6 @@
  * Spends only gas from the configured signer. Run: `npm run e2e`.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 import * as actions from '@usufruct-protocol/sim/sim/actions/index.js';
 import {
@@ -75,12 +74,11 @@ const client = rateLimited(makeClient());
 const signer = loadSigner();
 const me = signer.toSuiAddress();
 
-// DummyAsset is NOT uid-only ({ id: UID, uses: u64 }) — the integrator-supplied
-// schema path (SPEC §10). Decoding with the wrong schema silently misaligns
-// every field after the asset; observed live before this schema was added.
-const dummyAssetSchema = bcs.struct('DummyAsset', { id: bcs.Address, uses: bcs.u64() });
+// The core never decodes the asset — the `Source` yields raw snapshots and the
+// `Reader` reads drift-zero. Decoding a non-uid asset (DummyAsset = { id: UID,
+// uses: u64 }, SPEC §10) is the opt-in mirror's job: `decodeEscrowState(snapshot,
+// schema)`. `chainSource` only needs `packageId`.
 const source = chainSource(client, {
-  assetSchema: dummyAssetSchema,
   packageId: TESTNET.packageId,
 });
 
@@ -93,7 +91,6 @@ const readerFor = (
     packageId: TESTNET.packageId,
     escrowId: escrow,
     typeArguments,
-    assetSchema: dummyAssetSchema,
   });
 
 /** Key-order-insensitive deep equality (BCS parse emits `$kind` last). */
@@ -373,7 +370,6 @@ async function main() {
     const gql = new SuiGraphQLClient({ url: GRAPHQL_TESTNET, network: 'testnet' });
     const idx = indexerSource(gql, {
       packageId: TESTNET.packageId,
-      assetSchema: dummyAssetSchema,
     });
 
     // byGovernor (events filtered by sender = me → only our integrations).
@@ -490,7 +486,7 @@ async function main() {
     // our escrow → re-fetch on change. Latency should be a checkpoint, not a
     // poll interval. gRPC client is separate (subscriptionService is gRPC-only).
     const grpc = makeGrpcClient();
-    const push = grpcSource(grpc, { assetSchema: dummyAssetSchema, packageId: TESTNET.packageId });
+    const push = grpcSource(grpc, { packageId: TESTNET.packageId });
     const ac = new AbortController();
     let emissions = 0;
     let pushAt = 0;
@@ -529,7 +525,7 @@ async function main() {
     // the change routed to its tag. One firehose throughout.
     const norm = (s: unknown) => String(s).replace(/^0x/, '').toLowerCase();
     const grpc = makeGrpcClient();
-    const many = grpcSource(grpc, { assetSchema: dummyAssetSchema, packageId: TESTNET.packageId });
+    const many = grpcSource(grpc, { packageId: TESTNET.packageId });
     const tags: string[] = [];
     let postMutationTagged = false;
     let mutationSent = false;
