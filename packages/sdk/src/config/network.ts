@@ -10,10 +10,11 @@ export interface PackageIds {
   readonly feeRefId: string;
 }
 
-/** usufruct v1.4.3 on Sui testnet (source-verified, immutable). */
+/** usufruct on Sui testnet (source-verified, immutable) — the deploy that adds the
+ *  next_boundary_ms / descent_expiry_ms views. */
 export const TESTNET: PackageIds = {
-  packageId: '0xf5f039b85aad208f77ed5eec05df51dc889154a0491709c5a9cb4ecb17a62567',
-  feeRefId: '0xa9f5a89e419b52bba0db972ff896c36cf7e8464fc71addb7d1256b27c30fb17d',
+  packageId: '0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3',
+  feeRefId: '0x1d15c4dc987d638b0da1200857a9911f9f74c028fdc8967e0e8be94b41dd2aea',
 };
 
 /** System singletons (FFI artefacts — injected by the codegen layer). */
