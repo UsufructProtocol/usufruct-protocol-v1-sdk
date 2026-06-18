@@ -83,25 +83,25 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① Alice listed ${escrow.id}`);
   check('Alice governs after integrate', (await seenBy(ALICE, escrow.id)).canGovern);
   check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).holdsEarnings);
 
   // ════════════ ② RENT — Bob takes the right of use ════════════
-  const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1 });
+  const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1 }).send();
   console.log(`\n② Bob rented — UsufructCap ${bobCap.id}`);
   check('Bob can borrow after renting', (await seenBy(bob, escrow.id)).canBorrow);
 
   // ════════════ ③ ASSIGN INCOME — EarningsInbox → Eve (governance stays Alice's) ════════════
-  await earningsInbox.transfer(eve.toSuiAddress());
+  await earningsInbox.transfer(eve.toSuiAddress()).send();
   console.log(`\n③ Alice assigned the income stream → Eve`);
   check('Eve now holds the EarningsInbox', (await seenBy(eve, escrow.id)).holdsEarnings);
   check('Alice no longer holds the EarningsInbox', !(await seenBy(ALICE, escrow.id)).holdsEarnings);
   check('Alice still governs (earnings ≠ governance)', (await seenBy(ALICE, escrow.id)).canGovern);
 
   // ════════════ ④ SELL GOVERNORSHIP — GovernanceCap → Dave (Alice fully exits) ════════════
-  await governanceCap.transfer(dave.toSuiAddress());
+  await governanceCap.transfer(dave.toSuiAddress()).send();
   console.log(`\n④ Alice sold the governorship → Dave`);
   const aliceAfter = await seenBy(ALICE, escrow.id);
   check('Dave now governs', (await seenBy(dave, escrow.id)).canGovern);
@@ -109,7 +109,7 @@ async function main() {
   check('Alice holds nothing here (fully exited)', !aliceAfter.canGovern && !aliceAfter.holdsEarnings);
 
   // ════════════ ⑤ RESELL THE LEASE — Bob's UsufructCap → Carol ════════════
-  await bobCap.transfer(carol.toSuiAddress());
+  await bobCap.transfer(carol.toSuiAddress()).send();
   console.log(`\n⑤ Bob resold the right of use → Carol`);
   check('Carol can borrow (holds the active cap)', (await seenBy(carol, escrow.id)).canBorrow);
   check('Bob can no longer borrow', !(await seenBy(bob, escrow.id)).canBorrow);

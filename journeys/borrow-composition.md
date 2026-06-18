@@ -8,9 +8,10 @@
 >
 > - **`Use`** — `(asset, tx) => void`. The middle. One zone where the code foreign
 >   to the SDK lives. The asset *and the whole `tx`* are yours.
-> - **`cap.borrow(...uses)`** — run one `Use`, or compose several in order, inside
->   the single `borrow_asset … return_asset` bracket. `cap.borrow.into(tx, ...)`
->   drops that bracket into a PTB you drive yourself.
+> - **`cap.borrow(...uses)`** — a `Plan` that runs one `Use`, or composes several
+>   in order, inside the single `borrow_asset … return_asset` bracket. `.send()`
+>   signs & sends it; `.build(tx, sender)` drops the bracket into a PTB you drive
+>   (see [write paths](./write-paths.md)).
 >
 > There is nothing else to learn: a lambda is a `Use`, a named constant is a
 > `Use`, a factory returns a `Use`, a routine is a `Use[]`. The raw
@@ -50,7 +51,7 @@ When the middle is small and one-off, don't extract it — write it in place:
 const { digest } = await cap.borrow((asset, tx) => {
   const coupon = tx.moveCall({ target: `${PKG}::dummy_asset::use_asset`, arguments: [asset] });
   tx.transferObjects([coupon], BOB.toSuiAddress());
-});
+}).send();
 // PTB: borrow_asset → use_asset → TransferObjects → return_asset
 ```
 
@@ -65,7 +66,7 @@ import { inspectAsset, useAndKeepCoupon } from './recipes/dummy-asset.js';
 const { digest } = await cap.borrow(
   inspectAsset,                          // a bare Use (no parentheses)
   useAndKeepCoupon(BOB.toSuiAddress()),  // a factory → Use
-);
+).send();
 // PTB: borrow_asset → uses → use_asset → TransferObjects → return_asset
 ```
 
@@ -79,7 +80,7 @@ await cap.borrow(
     const fee = tx.splitCoins(tx.gas, [1_000])[0]!;
     tx.transferObjects([fee], ALICE.toSuiAddress());
   },
-);
+).send();
 ```
 
 Repeating a step repeats its commands, in order — three uses of one rented asset,
@@ -91,7 +92,7 @@ await cap.borrow(
   useAndKeepCoupon(BOB.toSuiAddress()),
   useAndKeepCoupon(BOB.toSuiAddress()),
   useAndKeepCoupon(BOB.toSuiAddress()),
-);
+).send();
 // PTB: borrow_asset → uses → (use_asset → Transfer) ×3 → return_asset
 ```
 
@@ -106,44 +107,46 @@ const dailyRoutine: Use[] = [
   useAndKeepCoupon(CAROL.toSuiAddress()),
 ];
 
-await cap.borrow(...dailyRoutine);                        // as is
-await cap.borrow(...dailyRoutine, useAndKeepCoupon(DAN)); // with an extra step appended
+await cap.borrow(...dailyRoutine).send();                        // as is
+await cap.borrow(...dailyRoutine, useAndKeepCoupon(DAN)).send(); // with an extra step appended
 ```
 
 Because it is an array, you compose it with ordinary JavaScript —
 `dailyRoutine.filter(…)`, `[...a, ...b]`, `routine.map(…)`.
 
-## `borrow.into` — when you drive the PTB
+## `Plan.build` — when you drive the PTB
 
-`cap.borrow(...)` is `cap.borrow.into(...)` **plus** creating the transaction,
-signing, and sending. Use `into` when you need the transaction in your own hands.
+`cap.borrow(...)` is a `Plan`. `.send()` does build + execute + decode; `.build(tx,
+sender)` does only the build — it appends the bracket to a transaction you own, so
+you run execute yourself. Reach for `.build` when you need the transaction in your
+own hands. (This is the general write seam — see [write paths](./write-paths.md).)
 
-| | `cap.borrow(...)` | `cap.borrow.into(tx, ...)` |
+| | `await cap.borrow(...).send()` | `await cap.borrow(...).build(tx, me)` |
 |---|---|---|
 | Who creates the `tx`? | the SDK | **you** |
-| Signs & sends? | yes | **no** (returns `void`) |
-| Needs a signer? | yes | no |
-| Returns | `Promise<BorrowReceipt>` (digest) | nothing — appends to your `tx` |
+| Signs & sends? | yes | **no** (just appends) |
+| Needs an executor | yes (default or passed) | no — you execute later |
+| Returns | `BorrowReceipt` (digest) | nothing — appends to your `tx` |
 
 Three reasons to reach for it:
 
 ```ts
 // ① Sponsorship — someone else pays gas / co-signs
 const tx = new Transaction();
-cap.borrow.into(tx, useAndKeepCoupon(BOB.toSuiAddress()));
+await cap.borrow(useAndKeepCoupon(BOB.toSuiAddress())).build(tx, ME);
 // sponsor adds gas & signs as sponsor; the renter signs as sender
 
 // ② Batching — mix the borrow with unrelated commands in one atomic tx
 const tx = new Transaction();
-cap.borrow.into(tx, inspectAsset, useAndKeepCoupon(BOB.toSuiAddress()));
+await cap.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress())).build(tx, ME);
 tx.transferObjects([tx.splitCoins(tx.gas, [500])[0]!], ALICE.toSuiAddress());
 
 // ③ Several brackets — use two rented assets in the same transaction
 const tx = new Transaction();
-capA.borrow.into(tx, recipeForA);   // bracket for asset A
-capB.borrow.into(tx, recipeForB);   // bracket for asset B, same tx
-// two borrows, two returns, one atomic PTB — impossible with borrow() alone,
-// since each borrow() builds and sends its own transaction.
+await capA.borrow(recipeForA).build(tx, ME);   // bracket for asset A
+await capB.borrow(recipeForB).build(tx, ME);   // bracket for asset B, same tx
+// two borrows, two returns, one atomic PTB — impossible with .send() alone,
+// since each .send() builds and sends its own transaction.
 ```
 
 ## The one rule
@@ -151,9 +154,9 @@ capB.borrow.into(tx, recipeForB);   // bracket for asset B, same tx
 > **Writing a recipe** — no args & one call? a `Use` lambda or constant. Needs
 > args? a factory `(args) => Use`. It is always just a `Use`.
 >
-> **Injecting it** — one or several, right here? `cap.borrow(a, b, c)`. A reusable
-> bundle? a `Use[]` spread. Your own PTB (sponsorship / batching / many brackets)?
-> `cap.borrow.into(tx, …)`.
+> **Injecting it** — one or several, right here? `await cap.borrow(a, b, c).send()`.
+> A reusable bundle? a `Use[]` spread. Your own PTB (sponsorship / batching / many
+> brackets)? `await cap.borrow(…).build(tx, me)`.
 
 Everything is a `Use`; `borrow` runs one or composes many. The chain is the
 arbiter — external calls must take the asset **by reference** (`&Asset` /

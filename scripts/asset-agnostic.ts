@@ -50,8 +50,8 @@ async function main() {
   const u = usufruct({ network: 'testnet', client, signer: ALICE });
 
   // ════════════ ① MINT A CAP — rent a throwaway escrow to get a UsufructCap ════════════
-  const { escrow: escrowA } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET });
-  const capX = await escrowA.rent({ tenures: 1 });
+  const { escrow: escrowA } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET }).send();
+  const capX = await escrowA.rent({ tenures: 1 }).send();
   console.log(`① minted a UsufructCap to wrap: ${capX.id}`);
   // sanity: capX is, on-chain, a UsufructCap object owned by us
   const capObj = await client.core.getObject({ objectId: capX.id });
@@ -59,7 +59,7 @@ async function main() {
 
   // ════════════ ② INTEGRATE — wrap the UsufructCap as a new escrow's asset (id only) ════════════
   // The ONLY thing integrate is told about the asset is its id. No schema, no type.
-  const { escrow: escrowB, governanceCap: govB } = await u.integrate({ asset: capX.id, coin: DUMMY, market: MARKET });
+  const { escrow: escrowB, governanceCap: govB } = await u.integrate({ asset: capX.id, coin: DUMMY, market: MARKET }).send();
   console.log(`\n② integrated escrow ${escrowB.id} wrapping the UsufructCap (passed by id only)`);
 
   // ════════════ ③ VERIFY — the escrow wrapped the SDK object; reads work ════════════
@@ -68,8 +68,8 @@ async function main() {
   check('reads work for a non-DummyAsset escrow (status idle, floor == rest)', escrowB.status === 'idle' && escrowB.floorPrice.mist === DUMMY(0.01).mist, `${escrowB.status}/${escrowB.floorPrice}`);
 
   // ════════════ ④ ROUND-TRIP — retire + claim → the UsufructCap comes back intact ════════════
-  await govB.retire(escrowB);
-  const claimed = await govB.claim(escrowB);
+  await govB.retire(escrowB).send();
+  const claimed = await govB.claim(escrowB).send();
   console.log(`\n④ claimed back: ${claimed.assetId}`);
   check('the claimed asset id == the original UsufructCap id (round-trip intact)', claimed.assetId === capX.id, claimed.assetId);
   const back = await client.core.getObject({ objectId: capX.id });

@@ -49,21 +49,21 @@ async function main() {
   const u = usufruct({ network: 'testnet', client, signer: ALICE });
 
   // ════════════ ① FLOOR — pay the default ════════════
-  const { escrow: e1 } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET });
+  const { escrow: e1 } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET }).send();
   console.log(`① floor is ${e1.floorPrice}; rent with no \`pay\``);
-  const cap1 = await e1.rent({ tenures: 1 }); // no pay → floor × tenures
+  const cap1 = await e1.rent({ tenures: 1 }).send(); // no pay → floor × tenures
   console.log(`   paid ${cap1.receipt!.paid}`);
   check('paid exactly the floor (0.01 DUMMY)', cap1.receipt!.paid.mist === DUMMY(0.01).mist, `${cap1.receipt!.paid.mist}`);
   const stake1 = await (await u.escrow(e1.id)).reader.activeStakeBalanceMist();
   check('stake on-chain == floor', stake1 === DUMMY(0.01).mist, `${stake1}`);
 
   // ════════════ ② OVERPAY — know the floor first, then pay above it ════════════
-  const { escrow: e2 } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET });
+  const { escrow: e2 } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: MARKET }).send();
   // To overpay you must KNOW the floor — read it, then derive the amount from it.
   const floor = e2.floorPrice;
   const want = floor.scale(1.5); // 50% over the live floor, derived from it
   console.log(`\n② floor is ${floor}; choose to pay ${want} (1.5× floor)`);
-  const cap2 = await e2.rent({ tenures: 1, pay: want });
+  const cap2 = await e2.rent({ tenures: 1, pay: want }).send();
   console.log(`   paid ${cap2.receipt!.paid}`);
   check('paid the chosen overpay (0.015 DUMMY)', cap2.receipt!.paid.mist === want.mist, `${cap2.receipt!.paid.mist}`);
   const stake2 = await (await u.escrow(e2.id)).reader.activeStakeBalanceMist();

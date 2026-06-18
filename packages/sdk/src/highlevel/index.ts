@@ -34,6 +34,10 @@ export type {
   BorrowMethod,
   Use,
 } from './cap.js';
+// Deferred writes: a write is build → execute → decode; `Executor` swaps signing.
+export { signerExecutor } from './send.js';
+export type { Executor, ExecResult } from './send.js';
+export type { Plan } from './plan.js';
 export type { GovernanceCap, EscrowRef } from './governanceCap.js';
 export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage } from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';

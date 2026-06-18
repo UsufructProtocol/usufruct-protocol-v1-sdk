@@ -51,23 +51,23 @@ async function main() {
       retireCommitment: 'immediate',
       ensembleCommitment: 'immediate',
     },
-  });
+  }).send();
   console.log(`① listed ${escrow.id} — floor ${escrow.floorPrice}`);
   check('escrow.floorPrice mist is exact (0.1 SUI = 100000000)', escrow.floorPrice.mist === 100_000_000n, `${escrow.floorPrice.mist}`);
   check('escrow.floorPrice renders as 0.10 SUI', escrow.floorPrice.toString() === '0.10 SUI', escrow.floorPrice.toString());
 
   // ════════════ ② RENT — no payment arg; the escrow's coin, split from gas ════════════
-  const cap = await escrow.rent({ tenures: 1 });
+  const cap = await escrow.rent({ tenures: 1 }).send();
   console.log(`② rented (no coin named) — paid ${cap.receipt!.paid}`);
   check('paid 0.10 SUI, drawn from the escrow’s own coin', cap.receipt!.paid.mist === 100_000_000n, `${cap.receipt!.paid.mist}`);
 
   // ════════════ ③ SETTLE — wait out the tenure, apply ════════════
   console.log('③ waiting out the tenure, then settling…');
   await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-  await (await u.escrow(escrow.id)).applyPendingTransitionStates();
+  await (await u.escrow(escrow.id)).applyPendingTransitionStates().send();
 
   // ════════════ ④ COLLECT — earnings are 90% of the consumed credit ════════════
-  const collected = await earningsInbox.collect();
+  const collected = await earningsInbox.collect().send();
   const sui = collected.find((b) => b.coin === SUI.type);
   console.log(`④ collected ${sui?.amount ?? '(none)'}`);
   check('earnings mist is exact (90% of 0.1 = 0.09 SUI = 90000000)', sui?.amount.mist === 90_000_000n, `${sui?.amount.mist}`);

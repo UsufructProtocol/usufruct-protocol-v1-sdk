@@ -59,12 +59,12 @@ async function main() {
       retireCommitment: 'immediate',
       ensembleCommitment: 'immediate',
     },
-  });
+  }).send();
   console.log(`① listed ${escrow.id}`);
 
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
   const sword = await bob.escrow(escrow.id);
-  const cap = await sword.rent({ tenures: 1 });
+  const cap = await sword.rent({ tenures: 1 }).send();
   console.log(`② rented — usufructCap ${cap.id}\n`);
 
   // ════════════ ③ BORROW — recipes imported from another file, composed in place ════════════
@@ -72,10 +72,12 @@ async function main() {
   // `useAndKeepCoupon(addr)` (a factory) live in recipes/dummy-asset.ts; borrow
   // is variadic, so it composes them in order — no explicit `sequence`. The
   // borrow before and the return after are still appended for you.
-  const { digest } = await cap.borrow(
-    inspectAsset, //                          read the use count  (&Asset)
-    useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
-  );
+  const { digest } = await cap
+    .borrow(
+      inspectAsset, //                          read the use count  (&Asset)
+      useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)
+    )
+    .send();
   console.log('③ borrowed → inspect → use → return, one PTB, recipes imported & composed');
   console.log(`   ${digest}`);
 }

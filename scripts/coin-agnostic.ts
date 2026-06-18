@@ -59,14 +59,14 @@ async function main() {
       retireCommitment: 'immediate',
       ensembleCommitment: 'immediate',
     },
-  });
+  }).send();
   console.log(`① listed ${escrow.id} — floor ${escrow.floorPrice}`);
   // The COUPLING DETECTOR: the handle must render the floor in USDC's 6 decimals.
   check('escrow.floorPrice mist is exact (0.5 USDC = 500000)', escrow.floorPrice.mist === 500_000n, `${escrow.floorPrice.mist}`);
   check('escrow.floorPrice RENDERS as 0.50 USDC (not 9-decimal coupled)', escrow.floorPrice.toString() === '0.50 USDC', escrow.floorPrice.toString());
 
   // ════════════ ② RENT — no coin named; the escrow's own coin (USDC) ════════════
-  const cap = await escrow.rent({ tenures: 1 });
+  const cap = await escrow.rent({ tenures: 1 }).send();
   console.log(`② rented (no coin named) — paid ${cap.receipt!.paid}`);
   check('receipt.paid mist is exact (500000)', cap.receipt!.paid.mist === 500_000n, `${cap.receipt!.paid.mist}`);
   check('receipt.paid RENDERS as 0.50 USDC', cap.receipt!.paid.toString() === '0.50 USDC', cap.receipt!.paid.toString());
@@ -74,10 +74,10 @@ async function main() {
   // ════════════ ③ SETTLE — wait out the tenure, apply ════════════
   console.log('③ waiting out the tenure, then settling…');
   await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-  await (await u.escrow(escrow.id)).applyPendingTransitionStates();
+  await (await u.escrow(escrow.id)).applyPendingTransitionStates().send();
 
   // ════════════ ④ COLLECT — earnings are 90% of the consumed credit ════════════
-  const collected = await earningsInbox.collect();
+  const collected = await earningsInbox.collect().send();
   const usdc = collected.find((b) => b.coin === USDC.type);
   console.log(`④ collected ${usdc?.amount ?? '(none)'}`);
   check('earnings mist is exact (90% of 0.5 = 0.45 USDC = 450000)', usdc?.amount.mist === 450_000n, `${usdc?.amount.mist}`);

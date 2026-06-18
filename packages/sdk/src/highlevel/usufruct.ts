@@ -10,7 +10,6 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Signer } from '@mysten/sui/cryptography';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
-import { Transaction } from '@mysten/sui/transactions';
 import { integrate as integrateAction } from '../actions/integrate.js';
 import { UsufructCap as UsufructCapBcs } from '../codegen/usufruct/usufruct_cap.js';
 import { TESTNET } from '../config/network.js';
@@ -29,12 +28,17 @@ import { normalizeStructTag } from '@mysten/sui/utils';
 import { resolveCoinTag } from './coinmeta.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { ownedIds } from './role.js';
-import { NotConnected, mapAbort } from './errors.js';
+import { makePlan, type Plan } from './plan.js';
 import { type Market, toEnsembleConfig } from './market.js';
 import { retryingClient, retryingGraphqlClient, retryingReader, type RetryOptions } from './retry.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import { createdIdByType, execute } from './send.js';
+import { createdIdByType, signerExecutor, type Executor } from './send.js';
 import type { CoinTag } from './value.js';
+
+/** Tell a `Signer` from an `Executor` (the latter has `execute`). */
+function isExecutor(x: Signer | Executor): x is Executor {
+  return typeof (x as Executor).execute === 'function';
+}
 
 export type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
 
@@ -53,8 +57,20 @@ export interface UsufructConfig {
   readonly network?: Network;
   /** Bring your own transport (gRPC / JSON-RPC). Overrides `network`. */
   readonly client?: ClientWithCoreApi;
-  /** Required only for writes; reads need none. */
+  /**
+   * Sugar for `account` + `executor`: a held keypair both identifies you and
+   * signs. Required only when you want the SDK to sign; reads need none.
+   */
   readonly signer?: Signer;
+  /**
+   * Identity only — *who I am* (an address). Lets reads resolve roles and writes
+   * build with the right sender, without holding keys (a browser wallet exposes
+   * its address but signs remotely). With `account` but no `executor`/`signer`,
+   * `.send()` requires an explicit `Executor`.
+   */
+  readonly account?: string;
+  /** Default signing for `.send()`. A wallet / Ledger / sponsor adapter. Overridable per `.send(executor)`. */
+  readonly executor?: Executor;
   /** Defaults to the network's deployed package id. */
   readonly packageId?: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
@@ -79,10 +95,10 @@ export interface Primitives {
 }
 
 export interface Usufruct {
-  /** The signer's address, or `null` when read-only. */
+  /** My address (identity), or `null` when anonymous. */
   readonly address: string | null;
-  /** Wire a wallet/keypair after construction (wallet-standard adapter). */
-  connect(signer: Signer): void;
+  /** Wire identity + signing after construction — a held `Signer`, or an `Executor` (wallet/Ledger/sponsor). */
+  connect(signerOrExecutor: Signer | Executor): void;
 
   /** Door: resolve an escrow's state + the signer's role here (one fetch). */
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
@@ -109,11 +125,28 @@ export interface Usufruct {
    * `coin` is the immutable `phantom CoinType` of the escrow — fixed here, never
    * changeable (it's not part of the mutable `Market`).
    */
-  integrate(args: { asset: string; coin: CoinTag; market: Market }): Promise<{
+  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{
     escrow: Escrow;
     governanceCap: GovernanceCap;
     earningsInbox: EarningsInbox;
   }>;
+
+  /**
+   * Compose several write `Plan`s into ONE atomic transaction. Returns a `Plan`
+   * whose result is the tuple of each plan's result, in order. `.send()` builds
+   * all of them into one PTB, executes once, and decodes each — so you write one
+   * `.send()`, not one per write, and the writes land all-or-nothing.
+   *
+   *   const [capA, capB] = await u.batch(eA.rent({ tenures: 1 }), eB.rent({ tenures: 1 })).send();
+   *
+   * Only for **independent** writes (one PTB). Writes that depend on a prior
+   * write's on-chain result need separate transactions (e.g. rent → handover →
+   * borrow). Being a `Plan` itself, a batch composes: `.send(executor)`,
+   * `.build(tx, me)`, `.toTransaction(me)`.
+   */
+  batch<T extends readonly Plan<unknown>[]>(
+    ...plans: T
+  ): Plan<{ -readonly [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
 
   // ── object doors: a handle to a capability object by id (authority = holding it) ──
   /** The `UsufructCap` (its escrow resolved from the object). */
@@ -202,7 +235,15 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const packageId = config.packageId ?? TESTNET.packageId;
   const feeRefId = config.feeRefId ?? TESTNET.feeRefId;
   const assetSchema = config.assetSchema;
+  // Identity (account) and signing (executor) are separate axes; `signer` is sugar
+  // for both. All three are mutable via `connect`. `ctx()` resolves them live.
   let signer: Signer | null = config.signer ?? null;
+  let executor: Executor | null = config.executor ?? null;
+  let account: string | null = config.account ?? null;
+  const resolveAccount = (): string | null =>
+    account ?? executor?.address ?? signer?.toSuiAddress() ?? null;
+  const resolveExecutor = (): Executor | null =>
+    executor ?? (signer ? signerExecutor(client, signer) : null);
 
   const source = chainSource(client, { packageId, ...(assetSchema ? { assetSchema } : {}) });
 
@@ -240,6 +281,8 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     client,
     packageId,
     feeRefId,
+    account: resolveAccount(),
+    defaultExecutor: resolveExecutor(),
     signer,
     ...(assetSchema ? { assetSchema } : {}),
     ...(indexer ? { indexer } : {}),
@@ -249,10 +292,17 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
   return {
     get address() {
-      return signer?.toSuiAddress() ?? null;
+      return resolveAccount();
     },
     connect(next) {
-      signer = next;
+      if (isExecutor(next)) {
+        executor = next;
+        account = next.address;
+      } else {
+        signer = next;
+        executor = null; // a fresh keypair supersedes a prior executor
+        account = next.toSuiAddress();
+      }
     },
 
     escrow(idStr, opts) {
@@ -263,37 +313,52 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return watchMany(ctx(), escrowIds, onChange, opts);
     },
 
-    async integrate({ asset, coin, market }) {
-      const s = signer;
-      if (s == null) throw new NotConnected('integrate requires a signer; pass one to usufruct() or u.connect()');
+    integrate({ asset, coin, market }) {
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = coin.type;
-      const { object } = await client.core.getObject({ objectId: asset });
-      const assetType = object.type;
+      return makePlan({
+        defaultExecutor: () => resolveExecutor(),
+        // build: list the asset's type, append the integrate, keep cap + inbox.
+        build: async (tx, sender) => {
+          const { object } = await client.core.getObject({ objectId: asset });
+          const assetType = object.type;
+          const created = integrateAction({
+            ensemble,
+            ...(retireCommitment ? { retireCommitment } : {}),
+            ...(ensembleCommitment ? { ensembleCommitment } : {}),
+            assetType,
+            coinType,
+          }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
+          tx.transferObjects([created[0]!, created[1]!], sender); // [GovernanceCap, EarningsInbox]
+        },
+        // decode: the three created objects → resolved handles.
+        decode: async (res) => {
+          const escrowId = createdIdByType(res, '::escrow::Escrow');
+          const capId = createdIdByType(res, '::governance_cap::GovernanceCap');
+          const inboxId = createdIdByType(res, '::earnings_inbox::EarningsInbox');
+          if (!escrowId || !capId || !inboxId) {
+            throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
+          }
+          const c = ctx();
+          return {
+            escrow: await createEscrow(c, escrowId),
+            governanceCap: createGovernanceCap(c, capId),
+            earningsInbox: createInbox(c, inboxId, 'earnings'),
+          };
+        },
+      });
+    },
 
-      const tx = new Transaction();
-      const created = integrateAction({
-        ensemble,
-        ...(retireCommitment ? { retireCommitment } : {}),
-        ...(ensembleCommitment ? { ensembleCommitment } : {}),
-        assetType,
-        coinType,
-      }).toPtb(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
-      tx.transferObjects([created[0]!, created[1]!], s.toSuiAddress()); // [GovernanceCap, EarningsInbox]
-
-      const res = await execute(client, tx, s).catch(mapAbort);
-      const escrowId = createdIdByType(res, '::escrow::Escrow');
-      const capId = createdIdByType(res, '::governance_cap::GovernanceCap');
-      const inboxId = createdIdByType(res, '::earnings_inbox::EarningsInbox');
-      if (!escrowId || !capId || !inboxId) {
-        throw new Error(`integrate: missing created object(s) (digest ${res.digest})`);
-      }
-      const c = ctx();
-      return {
-        escrow: await createEscrow(c, escrowId),
-        governanceCap: createGovernanceCap(c, capId),
-        earningsInbox: createInbox(c, inboxId, 'earnings'),
-      };
+    batch(...plans) {
+      return makePlan({
+        defaultExecutor: () => resolveExecutor(),
+        build: async (tx, sender) => {
+          for (const p of plans) await p.build(tx, sender);
+        },
+        decode: async (res) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (await Promise.all(plans.map((p) => p.decode(res)))) as any,
+      });
     },
 
     async usufructCap(idStr) {

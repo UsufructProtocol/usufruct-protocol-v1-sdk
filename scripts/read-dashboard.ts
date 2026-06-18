@@ -67,11 +67,11 @@ async function main(): Promise<void> {
   const a = usufruct({ network: 'testnet', client, signer: ALICE, graphql: GRAPHQL_TESTNET });
 
   step('setup — integrate + rent (Bob) + challenge (Carol) → demand');
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   const bob = await newRenter();
   const carol = await newRenter();
-  await (await usufruct({ network: 'testnet', client, signer: bob }).escrow(escrow.id)).rent({ tenures: 1 });
-  await (await usufruct({ network: 'testnet', client, signer: carol }).escrow(escrow.id)).rent({ tenures: 1 });
+  await (await usufruct({ network: 'testnet', client, signer: bob }).escrow(escrow.id)).rent({ tenures: 1 }).send();
+  await (await usufruct({ network: 'testnet', client, signer: carol }).escrow(escrow.id)).rent({ tenures: 1 }).send();
 
   const e = await a.escrow(escrow.id);
 
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
   const income: InboxMessage[] = [];
   const stopInbox = e.earningsInbox.watch((m) => income.push(m));
   await waitForChainTime(client, BigInt(e.handoverExpiresAt!.getTime())); // wait out the handover
-  await e.applyPendingTransitionStates(); // settle → Bob displaced, 90% posts to earnings
+  await e.applyPendingTransitionStates().send(); // settle → Bob displaced, 90% posts to earnings
   await sleep(6000); // let the firehose deliver the EarningsMessagePosted
   stopInbox();
   check('earningsInbox.watch caught income', income.length >= 1, income.map((m) => m.amount.format()).join(','));

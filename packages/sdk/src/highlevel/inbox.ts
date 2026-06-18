@@ -3,16 +3,15 @@
  * for both bearer inboxes: the `EarningsInbox` (per-governor income) and the
  * `ProtocolFeeInbox` (the deployer's fee pool). Authority = holding the object.
  */
-import { Transaction } from '@mysten/sui/transactions';
 import { collectMessages, discoverInboxMessages, type InboxKind, type MessageGroups } from '../actions/collect.js';
 import { packageEventStream } from '../primitives/grpc-source.js';
 import { normEscrowId } from '../indexer/events.js';
 import { transferOf } from './bearer.js';
+import { makePlan, type Plan } from './plan.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import type { HandleCtx } from './ctx.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
-import { execute } from './send.js';
+import { UsufructError } from './errors.js';
 import { price, type Price } from './value.js';
 
 /** One income message pushed into the inbox — a settlement paying in, per coin. */
@@ -29,9 +28,9 @@ export interface Inbox {
   /** Pending income per coin (preview, no collect). */
   balance(): Promise<Array<{ coin: string; amount: Price }>>;
   /** Collect everything, partitioned by coin (§5.2). Requires holding the inbox. */
-  collect(): Promise<Array<{ coin: string; amount: Price }>>;
+  collect(): Plan<Array<{ coin: string; amount: Price }>>;
   /** Hand the inbox (and the right to collect) to another address. */
-  transfer(to: string): Promise<{ digest: string }>;
+  transfer(to: string): Plan<{ digest: string }>;
   /**
    * React to income live: `onMessage` runs for each settlement pushed into THIS
    * inbox (typed, per coin), server-push over the gRPC firehose. The inbox's twin
@@ -69,7 +68,7 @@ async function sumGroups(
 
 /** Build an `Inbox` handle for an `EarningsInbox` (`'earnings'`) or `ProtocolFeeInbox` (`'fees'`). */
 export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): Inbox {
-  const { client, packageId, signer, grpcClient } = ctx;
+  const { client, packageId, grpcClient } = ctx;
   const pkg = { packageId };
   // The Posted event + its inbox-id field, by inbox kind.
   const eventName = kind === 'fees' ? 'FeeMessagePosted' : 'EarningsMessagePosted';
@@ -80,17 +79,23 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
     async balance() {
       return sumGroups(client, await discoverInboxMessages(client, inboxId, kind));
     },
-    async collect() {
-      if (signer == null) throw new NotConnected(`${kind} collect requires a signer (you must hold the inbox)`);
-      const groups = await discoverInboxMessages(client, inboxId, kind);
-      if (groups.size === 0) return [];
-      const tx = new Transaction();
-      const coins = collectMessages({ kind, groups }).toPtb(tx, { pkg, inboxId });
-      tx.transferObjects(coins, signer.toSuiAddress());
-      await execute(client, tx, signer).catch(mapAbort);
-      return sumGroups(client, groups);
+    collect() {
+      // Groups discovered at build time, summed at decode time (the result comes
+      // from the discovered messages, not the effects). Empty ⇒ no commands ⇒
+      // `send` short-circuits to [].
+      let groups: MessageGroups = new Map();
+      return makePlan({
+        defaultExecutor: () => ctx.defaultExecutor,
+        build: async (tx, sender) => {
+          groups = await discoverInboxMessages(client, inboxId, kind);
+          if (groups.size === 0) return;
+          const coins = collectMessages({ kind, groups }).toPtb(tx, { pkg, inboxId });
+          tx.transferObjects(coins, sender);
+        },
+        decode: async () => sumGroups(client, groups),
+      });
     },
-    transfer: transferOf(ctx, inboxId, `${kind} inbox`),
+    transfer: transferOf(ctx, inboxId),
     watch(onMessage: (m: InboxMessage) => void): () => void {
       if (grpcClient == null) {
         throw new UsufructError('watch requires a gRPC client (live event push) — the SDK default');

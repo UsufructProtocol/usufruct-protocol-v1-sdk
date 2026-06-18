@@ -28,6 +28,8 @@ const readOnlyCtx: HandleCtx = {
   client: {} as ClientWithCoreApi,
   packageId: hex('aa'),
   feeRefId: hex('bb'),
+  account: null,
+  defaultExecutor: null,
   signer: null,
 };
 
@@ -42,13 +44,13 @@ describe('highlevel/governanceCap — handle wiring (object, not role)', () => {
     expect('earnings' in g).toBe(false);
   });
 
-  it('writes need a signer (you must hold the cap)', async () => {
+  it('write Plans need an executor (you must hold the cap)', async () => {
     const g = createGovernanceCap(readOnlyCtx, CAP);
-    await expect(g.updateMarket(ESCROW, MARKET)).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.retire(ESCROW)).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.claim(ESCROW)).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.renounce()).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.transfer(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.updateMarket(ESCROW, MARKET).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.retire(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.claim(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.renounce().send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
   });
 });
 
@@ -60,10 +62,10 @@ describe('highlevel/inbox — earnings/fees inbox is its own object handle', () 
       expect(typeof inbox[m]).toBe('function');
     }
   });
-  it('collect / transfer need a signer (you must hold the inbox)', async () => {
+  it('collect / transfer Plans need an executor (you must hold the inbox)', async () => {
     const inbox = createInbox(readOnlyCtx, INBOX, 'earnings');
-    await expect(inbox.collect()).rejects.toBeInstanceOf(NotConnected);
-    await expect(inbox.transfer(hex('cc'))).rejects.toBeInstanceOf(NotConnected);
+    await expect(inbox.collect().send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(inbox.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
   });
 });
 

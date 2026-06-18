@@ -7,7 +7,6 @@
  * The reads are a snapshot at `t` (the fetch time); for live values use the
  * kernel `reader` (exposed) or, later, `watch`/`priceCurve`.
  */
-import { Transaction } from '@mysten/sui/transactions';
 import { id as toId, mist, tenureCount } from '../primitives/brand.js';
 import { createReader, type Reader } from '../read/reader.js';
 import { retryingReader } from './retry.js';
@@ -20,10 +19,11 @@ import { sourceCoin } from './coins.js';
 import type { HandleCtx } from './ctx.js';
 import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
-import { NotConnected, UsufructError, mapAbort } from './errors.js';
+import { UsufructError } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
 import type { UsufructCapRecord } from './listings.js';
-import { createdIdByType, execute } from './send.js';
+import { createdIdByType } from './send.js';
+import { makePlan, digestPlan, type Plan } from './plan.js';
 import { coinTag, price, type CoinTag, type Price } from './value.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
@@ -125,10 +125,16 @@ export interface Escrow {
    * **overpay** — the surplus becomes stake (more credit/time). The coin is the
    * escrow's own, drawn from your balance — you never name it. Returns the cap.
    *
-   *   escrow.rent({ tenures: 1 })                    // pay the floor
-   *   escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
+   *   await escrow.rent({ tenures: 1 })                     // pay the floor (default signer)
+   *   await escrow.rent({ tenures: 1, pay: escrow.coin(2) }) // overpay → extra stake
+   *   await escrow.rent({ tenures: 1 }).send(walletExecutor) // swap how it's signed
+   *   const tx = await escrow.rent({ tenures: 1 }).toTransaction(addr) // build-only
+   *
+   * Returns a `Plan<UsufructCap>` — a deferred write. Awaiting it (or `.send()`)
+   * builds, executes with the handle's signer, and decodes the minted cap;
+   * `.send(executor)` swaps signing; `.toTransaction(addr)` hands you the PTB.
    */
-  rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap>;
+  rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap>;
 
   /**
    * Preview the floor a bid would establish: what the next floor price becomes if
@@ -173,7 +179,7 @@ export interface Escrow {
    * expiry, auction expiry, handover) — the Move `apply_pending_transition_states`.
    * Rarely called by hand; the next interaction (e.g. a rent) applies them anyway.
    */
-  applyPendingTransitionStates(): Promise<{ digest: string }>;
+  applyPendingTransitionStates(): Plan<{ digest: string }>;
 
   /**
    * The roster of every `UsufructCap` this escrow has minted (active, pending, or
@@ -272,8 +278,8 @@ async function resolveStatus(reader: Reader): Promise<EscrowStatus> {
 
 /** Build an `Escrow` handle: fetch state + read getters at `t` + role, all batched. */
 export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Promise<Escrow> {
-  const { client, packageId, signer, assetSchema, retry } = ctx;
-  const owner = signer?.toSuiAddress() ?? null;
+  const { client, packageId, account, defaultExecutor, assetSchema, retry } = ctx;
+  const owner = account; // identity for role resolution + the build-time sender
   const escrowId = toId<'Escrow'>(idStr);
 
   // Type args come from the object's type string — no decode, no asset schema.
@@ -316,13 +322,12 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   // non-SUI coin wrong (e.g. 6-decimal USDC). Keeps the handle coin-agnostic.
   const coin = await resolveCoinInfo(client, coinType);
   const typeArguments: [string, string] = [assetType, coinType];
-  async function applyPending(): Promise<{ digest: string }> {
-    if (signer == null) throw new NotConnected('applyPendingTransitionStates requires a signer (it submits a tx)');
-    const tx = new Transaction();
-    applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments });
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    return { digest: res.digest };
-  }
+  const applyPending = (): Plan<{ digest: string }> =>
+    digestPlan(
+      () => defaultExecutor,
+      (tx) =>
+        applyPendingTransitionStates().toPtb(tx, { pkg: { packageId }, escrowId, typeArguments }),
+    );
 
   // Live reader wrappers (zero cost unless called), typed in the escrow's coin / as Dates.
   async function nextFloorPrice(totalBid: Price, tenures: number): Promise<Price> {
@@ -393,39 +398,43 @@ export async function createEscrow(ctx: HandleCtx, idStr: string, at?: When): Pr
   const earningsInbox: EarningsInbox = createInbox(ctx, inboxId, 'earnings');
   const feeInbox: ProtocolFeeInbox = createInbox(ctx, feeInboxId, 'fees');
 
-  async function rent(args: { tenures: number; pay?: Price }): Promise<UsufructCap> {
-    if (signer == null || owner == null) {
-      throw new NotConnected('rent requires a signer; pass one to usufruct() or u.connect()');
-    }
+  function rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap> {
     const count = BigInt(args.tenures);
-    const floorTotal = floorMist * count; // snapshot floor at fetch time `t`
     // The decision: pay the floor (default) or overpay (surplus → stake). The
     // coin is the escrow's own — auto-sourced; the renter only chooses the number.
-    const paidMist = args.pay ? args.pay.mist : floorTotal;
+    const paidMist = args.pay ? args.pay.mist : floorMist * count; // floor snapshot @ fetch `t`
 
-    const tx = new Transaction();
-    const payment = await sourceCoin(tx, client, owner, { coinType, amountMist: paidMist });
-    const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
-      pkg: { packageId },
-      escrowId,
-      payment,
-      typeArguments,
-    });
-    tx.transferObjects([minted], owner);
+    return makePlan<UsufructCap>({
+      // default execution = the handle's configured executor; null ⇒ read-only.
+      defaultExecutor: () => defaultExecutor,
 
-    const res = await execute(client, tx, signer).catch(mapAbort);
-    const capId = createdIdByType(res, '::usufruct_cap::UsufructCap');
-    if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
+      // phase 1 — build: source the payment from `sender`, mint, keep the cap.
+      build: async (tx, sender) => {
+        const payment = await sourceCoin(tx, client, sender, { coinType, amountMist: paidMist });
+        const minted = rentAction({ tenures: tenureCount(count) }).toPtb(tx, {
+          pkg: { packageId },
+          escrowId,
+          payment,
+          typeArguments,
+        });
+        tx.transferObjects([minted], sender);
+      },
 
-    const expiry = await reader.tenureExpiryMs();
-    return createCap(ctx, {
-      capId,
-      escrowId: idStr,
-      typeArguments,
-      receipt: {
-        paid: price(paidMist, coin),
-        expiresAt: new Date(Number(expiry ?? 0n)),
-        digest: res.digest,
+      // phase 3 — decode: created cap id (from effects) + a post-exec read for expiry.
+      decode: async (res) => {
+        const capId = createdIdByType(res, '::usufruct_cap::UsufructCap');
+        if (capId == null) throw new Error(`rent: no UsufructCap created (digest ${res.digest})`);
+        const expiry = await reader.tenureExpiryMs();
+        return createCap(ctx, {
+          capId,
+          escrowId: idStr,
+          typeArguments,
+          receipt: {
+            paid: price(paidMist, coin),
+            expiresAt: new Date(Number(expiry ?? 0n)),
+            digest: res.digest,
+          },
+        });
       },
     });
   }

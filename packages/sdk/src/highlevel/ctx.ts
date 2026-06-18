@@ -9,13 +9,26 @@ import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { IndexerSource } from '../indexer/source.js';
 import type { AssetSchema } from '../primitives/state.js';
 import type { RetryOptions } from './retry.js';
+import type { Executor } from './send.js';
 
 export interface HandleCtx {
   readonly client: ClientWithCoreApi;
   readonly packageId: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`. */
   readonly feeRefId: string;
-  /** Null when read-only; required for writes. */
+  /**
+   * Identity — *who I am*. Reads use it (role resolution) and build uses it (the
+   * transaction sender). Public, so it is known without holding keys (a
+   * wallet/Ledger exposes it). Null when fully anonymous.
+   */
+  readonly account: string | null;
+  /**
+   * Default signing — *how writes execute*. `Plan.send()` uses it when no
+   * `Executor` is passed; null when read-only. A `Signer` config becomes a
+   * `signerExecutor(...)` here.
+   */
+  readonly defaultExecutor: Executor | null;
+  /** @deprecated transitional — folded into `account` + `defaultExecutor`. */
   readonly signer: Signer | null;
   /** Asset BCS schema for decode/reads; defaults to uid-only when omitted. */
   readonly assetSchema?: AssetSchema;

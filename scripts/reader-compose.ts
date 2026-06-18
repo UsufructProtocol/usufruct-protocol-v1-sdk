@@ -66,13 +66,13 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market });
+  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   const reader = escrow.reader; // ← the drift-free kernel reader, straight off the handle
   console.log(`listed ${escrow.id}; reader hangs off the handle (no re-wiring)\n`);
 
   // ════════════ A · CONFIG — restPrice before/after governanceCap.updateMarket ════════════
   const restBefore = (await reader.restPrice()).priceMist;
-  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.025) }); // high-level write
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.025) }).send(); // high-level write
   const restAfter = (await reader.restPrice()).priceMist;
   console.log(`A · restPrice  ${restBefore} → ${restAfter} mist`);
   check('reader.restPrice reflects governanceCap.updateMarket', restBefore !== restAfter && restAfter === DUMMY(0.025).mist);
@@ -80,7 +80,7 @@ async function main() {
   // ════════════ B · STATE — isOccupied / activeUsufructCapId before/after rent ════════════
   const [occBefore, capBefore] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }); // high-level write
+  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send(); // high-level write
   const [occAfter, capAfter] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
   console.log(`B · isOccupied ${occBefore} → ${occAfter}; activeCap ${capBefore} → ${capAfter}`);
   check('reader.isOccupied flips false→true on rent', occBefore === false && occAfter === true);
@@ -90,7 +90,7 @@ async function main() {
   console.log('\nC · waiting out the tenure, then applying the lazy transition…');
   await waitForChainTime(client, BigInt(bobCap.receipt!.expiresAt.getTime()));
   const capPreApply = await reader.activeUsufructCapId();
-  await (await a.escrow(escrow.id)).applyPendingTransitionStates(); // high-level write
+  await (await a.escrow(escrow.id)).applyPendingTransitionStates().send(); // high-level write
   const [occPostApply, capPostApply] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
   console.log(`C · activeCap ${capPreApply} → ${capPostApply}; isOccupied now ${occPostApply}`);
   check('reader.activeUsufructCapId clears on settlement', capPreApply === bobCap.id && capPostApply === null);

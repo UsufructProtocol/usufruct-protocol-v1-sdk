@@ -86,7 +86,7 @@ async function main() {
   console.log(`funder ${me}`);
 
   step('1. integrate (new API) — mints THREE independent objects');
-  const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
+  const { escrow, governanceCap, earningsInbox } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() }).send();
   check('escrow created', escrow.id.length === 66, escrow.id);
   check('governance cap (object) surfaced', governanceCap.capId.length === 66, governanceCap.capId);
   check('earnings inbox (separate object) surfaced', earningsInbox.inboxId.length === 66, earningsInbox.inboxId);
@@ -94,7 +94,7 @@ async function main() {
   check('market readback: restPrice == 0.01 DUMMY', rp.kind === 'fixed' && rp.priceMist === 10_000_000n, j(rp));
 
   step('2. governanceCap.updateMarket — Partial<Market> (only the price); the rest is preserved');
-  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) }); // ← just one field
+  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.02) }).send(); // ← just one field
   const [rp2, shape2] = await withRetry('readback after partial update', async () => {
     const after = await u.escrow(escrow.id);
     return Promise.all([after.reader.restPrice(), after.reader.auctionShape()]);
@@ -103,17 +103,17 @@ async function main() {
   check('partial update preserved the rest (auctionShape still linear)', shape2.kind === 'linear', shape2.kind);
 
   step('2b. governanceCap.updateMarket — a deferred ensemble commitment is enforced (throws)');
-  const b = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ ensembleCommitment: { deferredFor: '1h' } }) });
+  const b = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ ensembleCommitment: { deferredFor: '1h' } }) }).send();
   let threw = false;
   try {
-    await b.governanceCap.updateMarket(b.escrow, { restPrice: DUMMY(0.05) });
+    await b.governanceCap.updateMarket(b.escrow, { restPrice: DUMMY(0.05) }).send();
   } catch (e) {
     threw = e instanceof CommittedEnsemble;
   }
   check('update before the ensemble commitment elapses throws CommittedEnsemble', threw);
 
   step('3. portfolio — integrateIntoPortfolio a second escrow under the same cap, naming the inbox');
-  const listed = await governanceCap.integrateIntoPortfolio(await mintAsset(), DUMMY, market(), { earningsInbox: earningsInbox.inboxId });
+  const listed = await governanceCap.integrateIntoPortfolio(await mintAsset(), DUMMY, market(), { earningsInbox: earningsInbox.inboxId }).send();
   check('portfolio escrow listed', listed.id.length === 66, listed.id);
   // Portfolio proof (cheap + deterministic): both escrows name the SAME cap.
   const govA = (await withRetry('read escrowA', () => u.escrow(escrow.id))).governanceCapId;
@@ -121,9 +121,9 @@ async function main() {
   check('both escrows are governed by the same cap (portfolio)', govA === governanceCap.capId && govL === governanceCap.capId, `${govA} / ${govL}`);
 
   step('4. retire + claim — pull an idle asset back out');
-  const r = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
-  await r.governanceCap.retire(r.escrow);
-  const claimed = await r.governanceCap.claim(r.escrow);
+  const r = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() }).send();
+  await r.governanceCap.retire(r.escrow).send();
+  const claimed = await r.governanceCap.claim(r.escrow).send();
   check('claim returned the asset id', claimed.assetId.length === 66, claimed.assetId);
   const owner = (await client.core.getObject({ objectId: claimed.assetId })).object.owner;
   check('claimed asset is owned by the funder', j(owner).includes(me.slice(2)), j(owner));
@@ -131,7 +131,7 @@ async function main() {
   step('5. earnings — Bob rents a short-tenure escrow; tenure expires; collect (§5.2)');
   // handover must not exceed the tenure (new_ensemble aborts otherwise), so the
   // short-tenure escrow uses a short handover too.
-  const e = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ tenure: '15s', handover: '5s' }) });
+  const e = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market({ tenure: '15s', handover: '5s' }) }).send();
   // fund an ephemeral Bob (SUI gas + DUMMY) from the funder
   const bob = Ed25519Keypair.generate();
   {
@@ -145,7 +145,7 @@ async function main() {
   }
   const ub = usufruct({ client, signer: bob });
   const sword = await withRetry('Bob reads escrow', () => ub.escrow(e.escrow.id));
-  const cap = await sword.rent({ tenures: 1 });
+  const cap = await sword.rent({ tenures: 1 }).send();
   const expiry = BigInt(cap.receipt!.expiresAt.getTime());
   await waitForChainTime(client, expiry);
   // apply the lazy tenure-expiry → posts an EarningsMessage to the inbox
@@ -154,14 +154,14 @@ async function main() {
   await send(client, tx, funder);
 
   const pending = await e.earningsInbox.balance();
-  const collected = await e.earningsInbox.collect();
+  const collected = await e.earningsInbox.collect().send();
   const dummyPending = pending.find((p) => p.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   const dummyCollected = collected.find((c) => c.coin.includes('dummy_coin'))?.amount.mist ?? 0n;
   check('earnings collected > 0', dummyCollected > 0n, `${collected.map((c) => `${c.amount}`).join(', ')}`);
   check('balance() preview == collect() (conservation per coin)', dummyPending === dummyCollected, `pending=${dummyPending} collected=${dummyCollected}`);
 
   step('6. OBJECT-CENTRIC PROOF — transfer the GovernanceCap; governance follows the object');
-  const t = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() });
+  const t = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: market() }).send();
   const carol = Ed25519Keypair.generate();
   {
     const tx = new Transaction(); // fund Carol with gas so she can sign
@@ -169,16 +169,16 @@ async function main() {
     await send(client, tx, funder);
   }
   // the funder (current holder) hands governance to Carol — the cap is a bearer object
-  await t.governanceCap.transfer(carol.toSuiAddress());
+  await t.governanceCap.transfer(carol.toSuiAddress()).send();
   // Carol, now holding the cap, governs (she never called integrate):
   const uc = usufruct({ client, signer: carol });
-  await uc.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.03) }));
+  await uc.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.03) })).send();
   const rpC = await withRetry('readback after Carol governs', () => u.escrow(t.escrow.id).then((x) => x.reader.restPrice()));
   check('the NEW holder (Carol) governs — update applied', rpC.kind === 'fixed' && rpC.priceMist === 30_000_000n, j(rpC));
   // the funder, no longer holding the cap, cannot govern:
   let funderBlocked = false;
   try {
-    await u.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.04) }));
+    await u.governanceCap(t.governanceCap.capId).updateMarket(t.escrow.id, market({ restPrice: DUMMY(0.04) })).send();
   } catch {
     funderBlocked = true;
   }
