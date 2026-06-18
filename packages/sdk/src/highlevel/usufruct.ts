@@ -291,7 +291,6 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     feeRefId,
     account: resolveAccount(),
     defaultExecutor: resolveExecutor(),
-    signer,
     ...(indexer ? { indexer } : {}),
     ...(grpcClient ? { grpcClient } : {}),
     ...(retry ? { retry } : {}),
