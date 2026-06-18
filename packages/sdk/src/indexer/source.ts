@@ -75,6 +75,10 @@ export interface IndexerSource<
 
 export interface IndexerOpts<A extends AssetSchema> {
   readonly packageId: string;
+  /**
+   * Accepted for `IndexerSource<A, C>` parametrization, but the source yields raw
+   * `EscrowSnapshot`s — the core never decodes. The mirror decodes with this schema.
+   */
   readonly assetSchema?: A;
   /** GraphQL page size for discovery (default 50). */
   readonly pageSize?: number;
