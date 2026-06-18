@@ -279,6 +279,34 @@ await cap.borrow(useAndKeepCoupon(BOB)).build(tx, ME);
 // borrow_asset … return_asset land inside THIS tx, alongside everything else
 ```
 
+## Browser wallets — `walletExecutor`
+
+A browser wallet (Slush, Suiet, …) is just another `Executor`. Wire it once and
+every write path (`send`, `batch`, the borrow bracket) works unchanged:
+
+```ts
+import { usufruct, walletExecutor } from '@usufruct-protocol/sdk';
+// `wallet` is a @mysten/dapp-kit instance (useDAppKit()/createDAppKit());
+// `account` is useCurrentAccount(). No dapp-kit dependency in the SDK — the wallet
+// is matched structurally (it just needs `signTransaction → { bytes, signature }`).
+
+const u = usufruct({ client });
+u.connect(walletExecutor(client, wallet, account));   // identity + signing from the wallet
+
+const cap = await escrow.rent({ tenures: 1 }).send();  // wallet prompts; cap fully decoded
+```
+
+**The wallet only signs; the SDK executes.** This is deliberate, not incidental.
+The rich decodes (`integrate`, `rent`, `claim`) read `effects` + `objectTypes` off
+the result (see `createdIdByType`), and a wallet's own sign-and-execute returns no
+`objectTypes` (and `effects` may be null). So `walletExecutor` takes the wallet's
+signed bytes and runs them through `client.core.executeTransaction(..., { include })`
+itself — the **enrichment is the SDK's job**. The decoded result is byte-identical
+to the held-`Signer` path; nothing downstream knows who signed.
+
+(If a wallet only exposes sign-and-execute, fall back to `toTransaction()` below and
+re-fetch the effects, or open an issue — a re-fetch variant is trivial to add.)
+
 ## `toTransaction()` — build-only, you sign elsewhere
 
 When the effects come from outside the SDK — a browser wallet, Ledger, an offline
