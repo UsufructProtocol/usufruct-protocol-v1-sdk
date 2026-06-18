@@ -22,6 +22,7 @@
     "keystone": "tsx scripts/keystone-slice.ts",
     "governor": "tsx scripts/governor-slice.ts",
     "demo": "tsx scripts/usufruct-in-action.ts",
+    "wallet": "tsx scripts/wallet-rent.ts",
     "bench:reads": "tsx scripts/read-batching-bench.ts",
     "demo:recipes": "tsx scripts/borrow-recipes.ts",
     "demo:recipes:repeat": "tsx scripts/borrow-recipes-repeat.ts",
