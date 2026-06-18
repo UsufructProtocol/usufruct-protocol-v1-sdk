@@ -214,7 +214,7 @@ export interface Usufruct {
   /** The escrows priced in a given coin (payment `CoinType`), as `EscrowListing`s. */
   escrowsByCoinType(coinType: string): Promise<EscrowListing[]>;
 
-  /** The four primitives, untouched. */
+  /** The core primitives (`Source` + `Reader`), untouched. */
   readonly primitives: Primitives;
 }
 

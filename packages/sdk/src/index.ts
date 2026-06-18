@@ -3,7 +3,7 @@ export { createReader } from './read/reader.js';
 export type { Reader, ReaderTarget, SnapshotOpts } from './read/reader.js';
 export * as read from './read/index.js';
 
-// Write path: Action.toPtb builds the PTBs.
+// Write path: the `PtbAction` builders (each a `(tx, args) => TransactionResult`).
 export * as actions from './actions/index.js';
 
 

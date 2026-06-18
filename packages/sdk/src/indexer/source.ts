@@ -26,9 +26,6 @@ import {
 } from '../primitives/source.js';
 import { ESCROW_KEYED, eventKey, normEscrowId, toTypedEvent, type TypedEvent } from './events.js';
 
-/** @deprecated use `TypedEvent` (a superset). Kept for source compatibility. */
-export type EventRecord = TypedEvent;
-
 export interface EventsFilter {
   /** Fully-qualified event type, e.g. `${pkg}::asset_state::HandoverCompleted`. */
   readonly type: string;
