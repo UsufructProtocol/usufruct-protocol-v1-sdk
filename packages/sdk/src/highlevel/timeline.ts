@@ -70,6 +70,13 @@ export interface CurveOpts {
   readonly points?: number;
 }
 
+/** One rung of the escalation ladder — the floor a challenger must clear after
+ *  `step` successive displacements (`step: 0` is the starting floor). */
+export interface LadderRung {
+  readonly step: number;
+  readonly price: Price;
+}
+
 const u64 = (v: unknown): bigint => BigInt(v as string | number | bigint);
 
 /** A curve shape from the unrolled (String + Option) form the ensemble events carry

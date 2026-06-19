@@ -1,0 +1,16 @@
+{
+  "name": "usufruct-escalation-ladder",
+  "private": true,
+  "type": "module",
+  "description": "Probe — escrow.escalationLadder(): the bid-escalation policy as a rising staircase (fixed → linear, compound → convex), one simulation via u64 result-chaining",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@usufruct-protocol/sdk": "file:../../packages/sdk"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

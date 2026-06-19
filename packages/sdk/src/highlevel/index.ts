@@ -49,6 +49,7 @@ export type {
   PriceMarker,
   TimelineSegment,
   CurveOpts,
+  LadderRung,
 } from './timeline.js';
 export type { PortfolioWatch } from './watch-many.js';
 

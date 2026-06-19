@@ -29,8 +29,10 @@ import {
   type CreditSegment,
   type CurveOpts,
   type DescentSegment,
+  type LadderRung,
   type TimelineSegment,
 } from './timeline.js';
+import { sampleEscalationLadder, type Escalation } from '../read/curve.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType } from './send.js';
 import { makePlan, digestPlan, type Plan } from './plan.js';
@@ -310,6 +312,15 @@ export interface Escrow {
    * `descent`), or `null` if none yet. Needs `graphql`.
    */
   descentCurve(opts?: CurveOpts): Promise<DescentSegment | null>;
+  /**
+   * The escalation ladder — starting from the current floor (or `from`), the price a
+   * challenger must clear after each successive displacement (`f(start), f(f(start)),
+   * …`), making the live escalation policy visible as a rising curve: linear under a
+   * fixed delta, convex under a compound one. The whole ladder is one simulation (the
+   * u64 return of each `ascending_floor_with` feeds the next; the policy is built once).
+   * No `graphql` needed — it reads the live ensemble. `step: 0` is the starting floor.
+   */
+  escalationLadder(opts?: { steps?: number; tenures?: number; from?: Price }): Promise<LadderRung[]>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -589,6 +600,25 @@ export async function createEscrow(
     const descents = (await priceTimeline(curveOpts)).filter((s) => s.kind === 'descent');
     return descents.length > 0 ? (descents[descents.length - 1] as DescentSegment) : null;
   }
+  async function escalationLadder(ladderOpts?: {
+    steps?: number;
+    tenures?: number;
+    from?: Price;
+  }): Promise<LadderRung[]> {
+    const steps = ladderOpts?.steps ?? 8;
+    const tenures = BigInt(ladderOpts?.tenures ?? 1);
+    const e = await reader.priceEscalation();
+    const escalation: Escalation =
+      e.kind === 'fixedDelta'
+        ? { kind: 'fixedDelta', deltaMist: e.deltaMist }
+        : { kind: 'compoundDelta', bps: e.bps, deltaMist: e.deltaMist };
+    const startMist = ladderOpts?.from?.mist ?? floorMist;
+    const rungs = await sampleEscalationLadder(client, packageId, { startMist, tenures, escalation, steps });
+    return [
+      { step: 0, price: price(startMist, coin) },
+      ...rungs.map((m, i) => ({ step: i + 1, price: price(m, coin) })),
+    ];
+  }
 
   // Re-resolve the decode-free handle on each version change (the shared subscribe
   // loop lives in `watch.ts` and is reused by `usufructCap.watch`).
@@ -752,6 +782,7 @@ export async function createEscrow(
     priceTimeline,
     creditCurve,
     descentCurve,
+    escalationLadder,
     watch,
     waitFor,
     onEvents,

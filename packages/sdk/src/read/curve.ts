@@ -148,3 +148,61 @@ export function sampleCreditCurve(
     ts,
   );
 }
+
+/** A price-escalation policy — the bar's rise per displacement. Mirrors the
+ *  reader's `priceEscalation` decode. */
+export type Escalation =
+  | { kind: 'fixedDelta'; deltaMist: bigint }
+  | { kind: 'compoundDelta'; bps: bigint; deltaMist: bigint };
+
+/** Build the matching `ensemble::new_price_*` constructor (its inputs — Price,
+ *  BasisPoints — are themselves built on-chain); its Result is the
+ *  PriceEscalationPolicy, passed by reference into `ascending_floor_with`. */
+function constructEscalation(pkg: string, esc: Escalation): (tx: Transaction) => TransactionResult {
+  return (tx) => {
+    if (esc.kind === 'fixedDelta') {
+      const delta = tx.add(ens.price({ package: pkg, arguments: [esc.deltaMist] }));
+      return tx.add(ens.newPriceFixedDelta({ package: pkg, arguments: [delta] }));
+    }
+    const bps = tx.add(ens.basisPoints({ package: pkg, arguments: [esc.bps] }));
+    const delta = tx.add(ens.price({ package: pkg, arguments: [esc.deltaMist] }));
+    return tx.add(ens.newPriceCompoundDelta({ package: pkg, arguments: [bps, delta] }));
+  };
+}
+
+/**
+ * The escalation ladder: from `startMist`, the floor a challenger must clear after
+ * each successive displacement — `f(start), f(f(start)), …` for `steps` rungs.
+ *
+ * Each rung is `ascending_floor_with(prev, tenures, &escalation)`; the u64 return of
+ * one call feeds the u64 arg of the next, so the whole ladder chains in ONE
+ * simulation (the escalation policy is built once, reused by reference). The ladder
+ * calls are the last `steps` commands — decode those.
+ */
+export async function sampleEscalationLadder(
+  client: ClientWithCoreApi,
+  pkg: string,
+  p: { startMist: bigint; tenures: bigint; escalation: Escalation; steps: number },
+): Promise<bigint[]> {
+  const tx = new Transaction();
+  tx.setSenderIfNotSet(ZERO_SENDER);
+  const esc = tx.add(constructEscalation(pkg, p.escalation));
+  let prev: bigint | TransactionResult = p.startMist;
+  for (let k = 0; k < p.steps; k++) {
+    prev = tx.add(ec.ascendingFloorWith({ package: pkg, arguments: [prev as never, p.tenures, esc] }));
+  }
+  const sim = await client.core.simulateTransaction({
+    transaction: tx,
+    checksEnabled: false,
+    include: { commandResults: true },
+  });
+  if (sim.$kind !== 'Transaction') {
+    throw new Error(
+      `sampleEscalationLadder failed: ${sim.FailedTransaction?.status.error?.message ?? 'unknown'}`,
+    );
+  }
+  const crs = sim.commandResults ?? [];
+  const out: bigint[] = [];
+  for (let k = 0; k < p.steps; k++) out.push(dU64(crs[crs.length - p.steps + k]!.returnValues[0]!.bcs));
+  return out;
+}
