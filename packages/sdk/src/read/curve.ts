@@ -10,9 +10,9 @@
  * view commands per PTB (the 40-command batch ceiling shared with `runSpecs`).
  *
  * The shape is fed either from a live read (`auctionShape`/`creditShape`) or
- * from a past `CycleParamsResolved` event — both decode to the same `CurveShape`
- * (the reader's `curveShapeFromUnrolled`), so historical and live reconstruction
- * share one constructor mapping.
+ * from a past ensemble event (`PolicyEnsembleRegistered`/`EnsembleUpdated`) — both
+ * decode to the same `CurveShape` (the reader's `curveShapeFromUnrolled`), so
+ * historical and live reconstruction share one constructor mapping.
  */
 import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';

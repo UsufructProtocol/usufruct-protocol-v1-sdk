@@ -288,7 +288,8 @@ export interface Escrow {
   /**
    * Every tenure's credit-accrual curve, reconstructed **drift-zero from events** —
    * including across an ensemble update that changes the credit shape (each tenure
-   * carries its own cycle's shape, from `CycleParamsResolved`). Oldest first. Each
+   * carries its own cycle's shape, from the ensemble registration/update events).
+   * Oldest first. Each
    * curve is sampled by running the deployed `used_credit_at` view over N points in
    * one simulation. `opts.points` sets the resolution (default 24). Needs `graphql`.
    */

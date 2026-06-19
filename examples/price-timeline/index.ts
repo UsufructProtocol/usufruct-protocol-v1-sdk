@@ -9,7 +9,7 @@
  *
  * It needed a protocol change (this deploy): the parameterized views
  *   escrow::{descent_floor_at, used_credit_at, ascending_floor_with}
- * fed by event params + the per-cycle shape now carried in CycleParamsResolved.
+ * fed by event params + the curve shape from the ensemble registration/update events.
  * The SDK promotes the reconstruction to four `escrow` handle methods —
  *   escrow.creditHistory() / priceTimeline() / creditCurve() / descentCurve()
  * each building the shape on-chain and sampling the view over N points in ONE

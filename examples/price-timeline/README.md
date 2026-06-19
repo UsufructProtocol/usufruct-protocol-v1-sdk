@@ -25,17 +25,17 @@ const timeline = await escrow.priceTimeline();// acquisitions + descent curves, 
 ```
 
 1. **Cycle 1 — credit (exponential).** Rent overpaying. `escrow.creditCurve()` rebuilds
-   the tenure's accrual from `RentStarted` (stake, phase start, ceiling) +
-   `CycleParamsResolved` (the credit shape). Compared against live `accruedCreditMist(t)`
+   the tenure's accrual from `RentStarted` (stake, phase start, ceiling) + the governing
+   ensemble event (the credit shape). Compared against live `accruedCreditMist(t)`
    — **identical**.
 2. **Cycle 1 — descent (logistic).** Let the tenure expire into a Dutch auction.
    `escrow.descentCurve()` rebuilds the floor from `TenureExpired` (last-acquisition
-   price, phase start) + `CycleParamsResolved` (floor, window, auction shape). Compared
-   against live `floorPriceMist(t)` — **identical**.
+   price, phase start) + `CycleParamsResolved` (floor, window) + the ensemble event
+   (auction shape). Compared against live `floorPriceMist(t)` — **identical**.
 3. **Flip the shape.** Governance updates `creditShape` → `logistic`.
 4. **Cycle 2 — credit (logistic).** Rent again. `escrow.creditHistory()` returns both
-   tenures from the **same log** — cycle 2 with the new shape, from its own
-   `CycleParamsResolved`.
+   tenures from the **same log** — cycle 2 with the new shape, from the governing
+   `EnsembleUpdated`.
 
 ```
 cycle 1 credit @ half-tenure (exponential): 0.0596 DUMMY
@@ -48,14 +48,12 @@ guarantee, proven on testnet (35/35 points identical across the three curves).
 ## Why it needed a protocol change
 
 The live curve views (`floorPriceMist`/`accruedCreditMist`) only read the *current*
-state — useless for a past cycle whose state is long gone. The continuous curves have
-exactly one policy input that isn't already in events: the **curve shape**. So this
-deploy added:
-
-- **parameterized pure views** `escrow::{descent_floor_at, used_credit_at}` (and
-  `ascending_floor_with`) — fed entirely by event params + a shape, no `&Escrow`; and
-- the per-cycle **shape/escalation policies in `CycleParamsResolved`**, so the log is
-  self-contained.
+state — useless for a past cycle whose state is long gone. Every input the curves need
+is already in events — the resolved scalars in `CycleParamsResolved`, the curve **shape**
+in the ensemble events (`PolicyEnsembleRegistered` at genesis, `EnsembleUpdated` on every
+change). What was missing was a way to *evaluate* a past cycle off those params. So this
+deploy added the **parameterized pure views** `escrow::{descent_floor_at, used_credit_at,
+ascending_floor_with}` — fed entirely by event params + a constructed shape, no `&Escrow`.
 
 The SDK feeds the view the shape it decodes from the *same* event, constructed on-chain
 via the public `ensemble::new_*` facade — the enum end to end, no hand-rolled descriptor

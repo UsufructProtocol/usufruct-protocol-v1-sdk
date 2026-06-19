@@ -72,10 +72,10 @@ export interface CurveOpts {
 
 const u64 = (v: unknown): bigint => BigInt(v as string | number | bigint);
 
-/** The MoveEnum-decoded `CurveShapePolicy` from an event → the SDK `CurveShape`. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toCurveShape(s: any): CurveShape {
-  switch (s?.$kind) {
+/** A curve shape from the unrolled (String + Option) form the ensemble events carry
+ *  (`<x>_shape_policy` + `<x>_alpha_*`) — the same form the reader decodes on-chain. */
+function unrolledShape(kind: unknown, aNum: unknown, aDen: unknown, aAbs: unknown, aNeg: unknown): CurveShape {
+  switch (kind) {
     case 'Linear':
       return { kind: 'linear' };
     case 'Smoothstep':
@@ -83,30 +83,40 @@ function toCurveShape(s: any): CurveShape {
     case 'Logistic':
       return { kind: 'logistic' };
     case 'PowerLaw':
-      return { kind: 'powerLaw', alphaNum: Number(s.PowerLaw.alpha_num), alphaDen: Number(s.PowerLaw.alpha_den) };
+      return { kind: 'powerLaw', alphaNum: Number(aNum), alphaDen: Number(aDen) };
     case 'Exponential':
-      return {
-        kind: 'exponential',
-        alphaAbs: Number(s.Exponential.alpha_abs),
-        alphaNeg: Boolean(s.Exponential.alpha_neg),
-      };
+      return { kind: 'exponential', alphaAbs: Number(aAbs), alphaNeg: Boolean(aNeg) };
     default:
-      throw new Error(`unknown curve shape ${JSON.stringify(s)}`);
+      throw new Error(`unknown curve shape ${JSON.stringify(kind)}`);
   }
 }
 
-/** Latest `CycleParamsResolved` at or before `atMs` — the params in force then.
- *  (`active = pending` only happens at boundaries that re-emit, so this is exact.) */
-function governingCpr(events: readonly HistoryEvent[], atMs: bigint): HistoryEvent {
+/** Latest event of kind `kinds` at or before `atMs`. */
+function governing(events: readonly HistoryEvent[], atMs: bigint, kinds: readonly string[], what: string): HistoryEvent {
   let best: HistoryEvent | undefined;
   for (const e of events) {
-    if (e.kind !== 'CycleParamsResolved') continue;
+    if (!kinds.includes(e.kind)) continue;
     const ts = u64(e.data['timestamp_ms']);
     if (ts <= atMs && (best === undefined || ts >= u64(best.data['timestamp_ms']))) best = e;
   }
-  if (!best) throw new Error(`no CycleParamsResolved governs t=${atMs}`);
+  if (!best) throw new Error(`no ${what} governs t=${atMs}`);
   return best;
 }
+
+/** Resolved cycle scalars (floor / ceiling / descent) in force at `atMs`. */
+const governingCpr = (events: readonly HistoryEvent[], atMs: bigint): HistoryEvent =>
+  governing(events, atMs, ['CycleParamsResolved'], 'CycleParamsResolved');
+
+/** The ensemble in force at `atMs` — the credit/auction SHAPE source. Emitted at
+ *  genesis (`PolicyEnsembleRegistered`) and on every change (`EnsembleUpdated`),
+ *  paired with each `CycleParamsResolved` at the same site/timestamp. */
+const governingEnsemble = (events: readonly HistoryEvent[], atMs: bigint): HistoryEvent =>
+  governing(events, atMs, ['PolicyEnsembleRegistered', 'EnsembleUpdated'], 'ensemble event');
+
+const creditShapeOf = (e: HistoryEvent): CurveShape =>
+  unrolledShape(e.data['credit_shape_policy'], e.data['credit_alpha_num'], e.data['credit_alpha_den'], e.data['credit_alpha_abs'], e.data['credit_alpha_neg']);
+const auctionShapeOf = (e: HistoryEvent): CurveShape =>
+  unrolledShape(e.data['auction_shape_policy'], e.data['auction_alpha_num'], e.data['auction_alpha_den'], e.data['auction_alpha_abs'], e.data['auction_alpha_neg']);
 
 /** `points + 1` sample times spanning [start, start + span]. */
 function spanTimes(start: bigint, span: bigint, points: number): bigint[] {
@@ -145,7 +155,7 @@ export async function reconstructCreditHistory(
     } else {
       continue;
     }
-    const shape = toCurveShape(governingCpr(events, phaseStart).data['credit_shape']);
+    const shape = creditShapeOf(governingEnsemble(events, phaseStart));
     const ts = spanTimes(phaseStart, ceiling, points);
     const vals = await sampleCreditCurve(client, packageId, { stakeMist: stake, phaseStartMs: phaseStart, ceilingMs: ceiling, shape }, ts);
     out.push({
@@ -187,7 +197,7 @@ export async function reconstructPriceTimeline(
       if (descentMs === 0n) continue; // descent off: tenure expiry → idle, no curve
       const lastAcq = u64(e.data['last_acquisition_price']);
       const floor = u64(cpr.data['floor_mist']);
-      const shape = toCurveShape(cpr.data['auction_shape']);
+      const shape = auctionShapeOf(governingEnsemble(events, phaseStart));
       const ts = spanTimes(phaseStart, descentMs, points);
       const vals = await sampleDescentCurve(client, packageId, { lastAcqMist: lastAcq, phaseStartMs: phaseStart, floorMist: floor, descentMs, shape }, ts);
       out.push({
