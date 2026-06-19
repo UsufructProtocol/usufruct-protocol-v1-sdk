@@ -24,7 +24,7 @@ import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, createReader, id as toId, usufruct } from '@usufruct-protocol/sdk';
 import { GRAPHQL_TESTNET, TESTNET } from '@usufruct-protocol/sdk/config/network.js';
-import type { CurvePoint } from '@usufruct-protocol/sdk/highlevel/timeline.js';
+import type { CreditSegment, CurvePoint } from '@usufruct-protocol/sdk/highlevel/timeline.js';
 import type { CurveShape } from '@usufruct-protocol/sdk/read/curve.js';
 import {
   check,
@@ -90,6 +90,23 @@ function renderCurve(points: readonly CurvePoint[], width = 40): string {
       return `   t+${off}s  ${p.value.toSui().toFixed(4).padStart(8)}  ${'█'.repeat(len)}`;
     })
     .join('\n');
+}
+
+/** Two credit curves side by side at the same offsets, scaled to a shared max —
+ *  so the SHAPE difference (exponential vs logistic) is read off directly. */
+function renderHistory(segs: readonly CreditSegment[], width = 22): string {
+  const max = segs.reduce((m, s) => s.points.reduce((mm, p) => (p.value.mist > mm ? p.value.mist : mm), m), 0n);
+  const bar = (p: CurvePoint): string => {
+    const len = max === 0n ? 0 : Math.max(0, Math.round((Number(p.value.mist) / Number(max)) * width));
+    return `${p.value.toSui().toFixed(4)} ${('█'.repeat(len) + ' '.repeat(width)).slice(0, width)}`;
+  };
+  const head = '   offset    ' + segs.map((s) => shapeLabel(s.shape).padEnd(width + 8)).join(' ');
+  const n = Math.min(...segs.map((s) => s.points.length));
+  const rows = Array.from({ length: n }, (_, i) => {
+    const off = (segs[0]!.points[i]!.offsetMs / 1000).toFixed(1).padStart(5);
+    return `   t+${off}s   ${segs.map((s) => bar(s.points[i]!)).join(' ')}`;
+  });
+  return `${head}\n${rows.join('\n')}`;
 }
 
 /** reconstructed-from-events ≡ live view, bit for bit, at every sampled point. */
@@ -191,22 +208,26 @@ async function main() {
   await assertDriftZero('credit (logistic)', c2.points, (t) => oracle.accruedCreditMist(t as never) as Promise<bigint>);
 
   // ── the whole picture, via the handle ─────────────────────────────────
-  step('escrow.creditHistory() — every tenure, each with its cycle’s shape');
+  step('escrow.creditHistory() — every tenure, each curve drawn with its cycle’s shape');
   const before = count();
-  const hist = await seat.creditHistory({ points: 10 });
+  const hist = await seat.creditHistory({ points: 14 });
   const histSims = count() - before;
-  hist.forEach((seg, i) =>
-    console.log(`   tenure ${i + 1}: ${shapeLabel(seg.shape).padEnd(16)} principal ${seg.principal.format()}  @half ${seg.points[5]!.value.format()}`),
+  console.log('   the same escrow, two cycles — the historical curve remembers its shape:\n');
+  console.log(renderHistory(hist));
+  console.log(
+    `\n   @half-tenure:  exponential ${hist[0]!.points[7]!.value.format()}   vs   logistic ${hist[1]!.points[7]!.value.format()}`,
   );
   check('credit history spans two cycles with two shapes', hist.length === 2 && hist[0]!.shape.kind !== hist[1]!.shape.kind, hist.map((s) => s.shape.kind).join(' → '));
 
   step('escrow.priceTimeline() — discrete acquisitions + descent curves, one chronology');
-  const timeline = await seat.priceTimeline({ points: 10 });
+  const timeline = await seat.priceTimeline({ points: 12 });
   for (const s of timeline) {
+    const at = s.at.toISOString().slice(11, 19);
     if (s.kind === 'descent') {
-      console.log(`   ${s.at.toISOString().slice(11, 19)}  descent   ${s.from.format()} → ${s.to.format()}  (${shapeLabel(s.shape)}, ${s.descentMs / 1000}s)`);
+      console.log(`   ${at}  descent  ${s.from.format()} → ${s.to.format()}  (${shapeLabel(s.shape)}, ${s.descentMs / 1000}s):`);
+      console.log(renderCurve(s.points, 34));
     } else {
-      console.log(`   ${s.at.toISOString().slice(11, 19)}  ${s.kind.padEnd(9)} ${s.price.format()}`);
+      console.log(`   ${at}  ${s.kind.padEnd(9)} ${s.price.format()}`);
     }
   }
   check('timeline carries a descent curve segment', timeline.some((s) => s.kind === 'descent'));
