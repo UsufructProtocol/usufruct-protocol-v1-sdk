@@ -14,18 +14,28 @@ curves and surfaced the O(N) read cost. This one asks the harder question — *h
 ## What it does
 
 Lists an asset (`creditShape: exponential(+4)`, `auctionShape: logistic`, 20s tenure,
-30s descent), then drives two full cycles and reconstructs every curve from the log:
+30s descent), then drives two full cycles and **renders the reconstruction through the
+`escrow` handle methods**:
 
-1. **Cycle 1 — credit (exponential).** Rent overpaying. Reconstruct the tenure's
-   credit curve from `RentStarted` (stake, phase start, ceiling) + `CycleParamsResolved`
-   (the credit shape). Compare against the live `accruedCreditMist(t)` — **identical**.
+```ts
+const credit = await escrow.creditCurve();    // current tenure's accrual curve
+const descent = await escrow.descentCurve();  // current Dutch-auction floor curve
+const history = await escrow.creditHistory(); // every tenure, each with its shape
+const timeline = await escrow.priceTimeline();// acquisitions + descent curves, in order
+```
+
+1. **Cycle 1 — credit (exponential).** Rent overpaying. `escrow.creditCurve()` rebuilds
+   the tenure's accrual from `RentStarted` (stake, phase start, ceiling) +
+   `CycleParamsResolved` (the credit shape). Compared against live `accruedCreditMist(t)`
+   — **identical**.
 2. **Cycle 1 — descent (logistic).** Let the tenure expire into a Dutch auction.
-   Reconstruct the floor curve from `TenureExpired` (last-acquisition price, phase
-   start) + `CycleParamsResolved` (floor, descent window, auction shape). Compare
+   `escrow.descentCurve()` rebuilds the floor from `TenureExpired` (last-acquisition
+   price, phase start) + `CycleParamsResolved` (floor, window, auction shape). Compared
    against live `floorPriceMist(t)` — **identical**.
 3. **Flip the shape.** Governance updates `creditShape` → `logistic`.
-4. **Cycle 2 — credit (logistic).** Rent again. Reconstruct from the **same log** —
-   now with the new shape, picked up from cycle 2's `CycleParamsResolved`.
+4. **Cycle 2 — credit (logistic).** Rent again. `escrow.creditHistory()` returns both
+   tenures from the **same log** — cycle 2 with the new shape, from its own
+   `CycleParamsResolved`.
 
 ```
 cycle 1 credit @ half-tenure (exponential): 0.0596 DUMMY

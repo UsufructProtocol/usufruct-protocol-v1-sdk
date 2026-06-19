@@ -23,6 +23,14 @@ import { createGovernanceCap, type GovernanceCap } from './governanceCap.js';
 import { createInbox, type EarningsInbox, type ProtocolFeeInbox } from './inbox.js';
 import { UsufructError } from './errors.js';
 import { toHistoryEvent, type HistoryEvent } from './history.js';
+import {
+  reconstructCreditHistory,
+  reconstructPriceTimeline,
+  type CreditSegment,
+  type CurveOpts,
+  type DescentSegment,
+  type TimelineSegment,
+} from './timeline.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType } from './send.js';
 import { makePlan, digestPlan, type Plan } from './plan.js';
@@ -276,6 +284,31 @@ export interface Escrow {
     kind: string,
     opts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number },
   ): Promise<HistoryEvent>;
+
+  /**
+   * Every tenure's credit-accrual curve, reconstructed **drift-zero from events** —
+   * including across an ensemble update that changes the credit shape (each tenure
+   * carries its own cycle's shape, from `CycleParamsResolved`). Oldest first. Each
+   * curve is sampled by running the deployed `used_credit_at` view over N points in
+   * one simulation. `opts.points` sets the resolution (default 24). Needs `graphql`.
+   */
+  creditHistory(opts?: CurveOpts): Promise<CreditSegment[]>;
+  /**
+   * The price line as ordered segments — discrete acquisition prices (`rent`/`bid`/
+   * `supersede`/`handover`) and Dutch-auction `descent` curves — reconstructed
+   * **drift-zero from events**. Oldest first. Needs `graphql`.
+   */
+  priceTimeline(opts?: CurveOpts): Promise<TimelineSegment[]>;
+  /**
+   * The current tenure's credit curve (the most recent — live when `occupied`), or
+   * `null` if never rented. Needs `graphql`.
+   */
+  creditCurve(opts?: CurveOpts): Promise<CreditSegment | null>;
+  /**
+   * The current Dutch-auction descent curve (the most recent — live when in
+   * `descent`), or `null` if none yet. Needs `graphql`.
+   */
+  descentCurve(opts?: CurveOpts): Promise<DescentSegment | null>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -541,6 +574,21 @@ export async function createEscrow(
     return events.map(toHistoryEvent);
   }
 
+  async function creditHistory(curveOpts?: CurveOpts): Promise<CreditSegment[]> {
+    return reconstructCreditHistory(await history(), client, packageId, coin, curveOpts);
+  }
+  async function priceTimeline(curveOpts?: CurveOpts): Promise<TimelineSegment[]> {
+    return reconstructPriceTimeline(await history(), client, packageId, coin, curveOpts);
+  }
+  async function creditCurve(curveOpts?: CurveOpts): Promise<CreditSegment | null> {
+    const all = await creditHistory(curveOpts);
+    return all.length > 0 ? all[all.length - 1]! : null;
+  }
+  async function descentCurve(curveOpts?: CurveOpts): Promise<DescentSegment | null> {
+    const descents = (await priceTimeline(curveOpts)).filter((s) => s.kind === 'descent');
+    return descents.length > 0 ? (descents[descents.length - 1] as DescentSegment) : null;
+  }
+
   // Re-resolve the decode-free handle on each version change (the shared subscribe
   // loop lives in `watch.ts` and is reused by `usufructCap.watch`).
   function watch(onChange: (e: Escrow) => void, watchOpts?: { intervalMs?: number }): () => void {
@@ -699,6 +747,10 @@ export async function createEscrow(
     applyPendingTransitionStates: applyPending,
     usufructCaps,
     history,
+    creditHistory,
+    priceTimeline,
+    creditCurve,
+    descentCurve,
     watch,
     waitFor,
     onEvents,

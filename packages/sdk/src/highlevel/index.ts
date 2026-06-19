@@ -42,6 +42,14 @@ export type { GovernanceCap, EscrowRef } from './governanceCap.js';
 export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage } from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';
 export type { HistoryEvent } from './history.js';
+export type {
+  CurvePoint,
+  CreditSegment,
+  DescentSegment,
+  PriceMarker,
+  TimelineSegment,
+  CurveOpts,
+} from './timeline.js';
 export type { PortfolioWatch } from './watch-many.js';
 
 export {
