@@ -2199,6 +2199,105 @@ export function nextFloorPriceMist(options: NextFloorPriceMistOptions) {
         typeArguments: options.typeArguments
     });
 }
+export interface DescentFloorAtArguments {
+    lastAcqPriceMist: RawTransactionArgument<number | bigint>;
+    phaseStartMs: RawTransactionArgument<number | bigint>;
+    resolvedFloorMist: RawTransactionArgument<number | bigint>;
+    resolvedDescentMs: RawTransactionArgument<number | bigint>;
+    shape: TransactionArgument;
+    nowMs: RawTransactionArgument<number | bigint>;
+}
+export interface DescentFloorAtOptions {
+    package?: string;
+    arguments: DescentFloorAtArguments | [
+        lastAcqPriceMist: RawTransactionArgument<number | bigint>,
+        phaseStartMs: RawTransactionArgument<number | bigint>,
+        resolvedFloorMist: RawTransactionArgument<number | bigint>,
+        resolvedDescentMs: RawTransactionArgument<number | bigint>,
+        shape: TransactionArgument,
+        nowMs: RawTransactionArgument<number | bigint>
+    ];
+}
+export function descentFloorAt(options: DescentFloorAtOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        'u64',
+        'u64',
+        null,
+        'u64'
+    ] satisfies (string | null)[];
+    const parameterNames = ["lastAcqPriceMist", "phaseStartMs", "resolvedFloorMist", "resolvedDescentMs", "shape", "nowMs"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'descent_floor_at',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
+export interface UsedCreditAtArguments {
+    stakeMist: RawTransactionArgument<number | bigint>;
+    phaseStartMs: RawTransactionArgument<number | bigint>;
+    resolvedCeilingMs: RawTransactionArgument<number | bigint>;
+    shape: TransactionArgument;
+    nowMs: RawTransactionArgument<number | bigint>;
+}
+export interface UsedCreditAtOptions {
+    package?: string;
+    arguments: UsedCreditAtArguments | [
+        stakeMist: RawTransactionArgument<number | bigint>,
+        phaseStartMs: RawTransactionArgument<number | bigint>,
+        resolvedCeilingMs: RawTransactionArgument<number | bigint>,
+        shape: TransactionArgument,
+        nowMs: RawTransactionArgument<number | bigint>
+    ];
+}
+export function usedCreditAt(options: UsedCreditAtOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        'u64',
+        null,
+        'u64'
+    ] satisfies (string | null)[];
+    const parameterNames = ["stakeMist", "phaseStartMs", "resolvedCeilingMs", "shape", "nowMs"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'used_credit_at',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
+export interface AscendingFloorWithArguments {
+    totalBidMist: RawTransactionArgument<number | bigint>;
+    tenures: RawTransactionArgument<number | bigint>;
+    escalation: TransactionArgument;
+}
+export interface AscendingFloorWithOptions {
+    package?: string;
+    arguments: AscendingFloorWithArguments | [
+        totalBidMist: RawTransactionArgument<number | bigint>,
+        tenures: RawTransactionArgument<number | bigint>,
+        escalation: TransactionArgument
+    ];
+}
+export function ascendingFloorWith(options: AscendingFloorWithOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        null
+    ] satisfies (string | null)[];
+    const parameterNames = ["totalBidMist", "tenures", "escalation"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'ascending_floor_with',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
 export interface LastRentPriceMistArguments {
     escrow: RawTransactionArgument<string>;
 }

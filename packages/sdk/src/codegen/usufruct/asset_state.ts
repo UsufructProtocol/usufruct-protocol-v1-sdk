@@ -15,6 +15,8 @@ import * as ensemble_commitment_policy from './ensemble_commitment_policy.js';
 import * as governor_seat from './governor_seat.js';
 import * as protocol_fee_ref from './protocol_fee_ref.js';
 import * as escrow_identity from './escrow_identity.js';
+import * as curve_shape_policy from './curve_shape_policy.js';
+import * as price_escalation_policy from './price_escalation_policy.js';
 const $moduleName = '@local-pkg/usufruct::asset_state';
 export const TenancySchedule = new MoveStruct({ name: `${$moduleName}::TenancySchedule`, fields: {
         phase_start: phases.Timestamp,
@@ -122,6 +124,9 @@ export const CycleParamsResolved = new MoveStruct({ name: `${$moduleName}::Cycle
         ceiling_ms: bcs.u64(),
         handover_ms: bcs.u64(),
         descent_ms: bcs.u64(),
+        auction_shape: curve_shape_policy.CurveShapePolicy,
+        credit_shape: curve_shape_policy.CurveShapePolicy,
+        escalation: price_escalation_policy.PriceEscalationPolicy,
         timestamp_ms: bcs.u64()
     } });
 export const AssetRetired = new MoveStruct({ name: `${$moduleName}::AssetRetired`, fields: {
