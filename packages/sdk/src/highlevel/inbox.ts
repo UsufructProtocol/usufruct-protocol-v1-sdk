@@ -23,6 +23,14 @@ export interface InboxMessage {
   readonly at: Date | null;
 }
 
+/** Lifetime income in one coin — the sum of every message ever posted in it. */
+export interface InboxTotal {
+  readonly coin: string;
+  readonly total: Price;
+  /** How many settlements paid in (in this coin). */
+  readonly count: number;
+}
+
 export interface Inbox {
   readonly inboxId: string;
   /** Pending income per coin (preview, no collect). */
@@ -39,6 +47,22 @@ export interface Inbox {
    * the whole deployment). Returns a `stop()`. Needs a gRPC client (the SDK default).
    */
   watch(onMessage: (m: InboxMessage) => void): () => void;
+  /**
+   * Every message ever posted into THIS inbox — the lifetime income log (settled
+   * AND already-collected), oldest first, decoded per coin. The event-sourced twin
+   * of `watch()` (which is live-only) and of `balance()` (which is the *uncollected*
+   * objects right now). Keyed on the inbox id across every escrow paying in. Scans
+   * the package's Posted events and filters by inbox — on the singleton
+   * `ProtocolFeeInbox` that is deployment-wide, so **bound it** with `afterCheckpoint`.
+   * Needs `graphql`.
+   */
+  history(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]>;
+  /**
+   * Lifetime income summed per coin — `history()` folded into one total (and count)
+   * per coin type the inbox has ever received. The coin-polymorphic answer to "how
+   * much has this inbox earned?". Needs `graphql`.
+   */
+  totals(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]>;
   /**
    * The escrows whose settlements push messages into THIS inbox — object-centric,
    * the inbox answering for itself. The inbox→escrow link lives only in the event
@@ -73,7 +97,46 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
   // The Posted event + its inbox-id field, by inbox kind.
   const eventName = kind === 'fees' ? 'FeeMessagePosted' : 'EarningsMessagePosted';
   const inboxField = kind === 'fees' ? 'fee_inbox_id' : 'earnings_inbox_id';
+  const postedType = `${packageId}::${kind === 'fees' ? 'fee_message' : 'earnings_message'}::${eventName}`;
   const want = normEscrowId(inboxId);
+
+  async function history(historyOpts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('history requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const out: InboxMessage[] = [];
+    for await (const ev of ctx.indexer.events({
+      type: postedType,
+      ...(historyOpts?.afterCheckpoint !== undefined ? { afterCheckpoint: historyOpts.afterCheckpoint } : {}),
+      ...(historyOpts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: historyOpts.beforeCheckpoint } : {}),
+    })) {
+      if (normEscrowId(String(ev.data[inboxField] ?? '')) !== want) continue;
+      const coin = String(ev.data['coin_type'] ?? '');
+      out.push({
+        coin,
+        amount: price(BigInt(String(ev.data['amount'] ?? '0')), await resolveCoinInfo(client, coin)),
+        escrowId: ev.escrowId,
+        at: ev.timestamp ? new Date(ev.timestamp) : null,
+      });
+    }
+    return out;
+  }
+
+  async function totals(totalsOpts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]> {
+    const sums = new Map<string, { mist: bigint; count: number }>();
+    for (const m of await history(totalsOpts)) {
+      const cur = sums.get(m.coin) ?? { mist: 0n, count: 0 };
+      sums.set(m.coin, { mist: cur.mist + m.amount.mist, count: cur.count + 1 });
+    }
+    return Promise.all(
+      [...sums.entries()].map(async ([coin, { mist, count }]) => ({
+        coin,
+        total: price(mist, await resolveCoinInfo(client, coin)),
+        count,
+      })),
+    );
+  }
+
   return {
     inboxId,
     async balance() {
@@ -129,6 +192,8 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
       })();
       return () => controller.abort();
     },
+    history,
+    totals,
     escrowsPushingMessages() {
       return discoverIntegrated(ctx, kind === 'fees' ? { feeInboxId: inboxId } : { earningsInboxId: inboxId });
     },

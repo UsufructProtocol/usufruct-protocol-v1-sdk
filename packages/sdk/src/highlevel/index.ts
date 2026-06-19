@@ -39,7 +39,7 @@ export { signerExecutor, walletExecutor, executeSigned } from './send.js';
 export type { Executor, ExecResult, WalletSigner } from './send.js';
 export type { Plan } from './plan.js';
 export type { GovernanceCap, EscrowRef } from './governanceCap.js';
-export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage } from './inbox.js';
+export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage, InboxTotal } from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';
 export type { HistoryEvent } from './history.js';
 export type {
