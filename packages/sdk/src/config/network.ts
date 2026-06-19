@@ -10,12 +10,12 @@ export interface PackageIds {
   readonly feeRefId: string;
 }
 
-/** usufruct on Sui testnet (source-verified, immutable) — the deploy that adds the
- *  parameterized curve views (descent_floor_at / used_credit_at / ascending_floor_with)
- *  and the per-cycle shape/escalation policies in CycleParamsResolved. */
+/** usufruct on Sui testnet (source-verified, immutable) — the parameterized curve views
+ *  (descent_floor_at / used_credit_at / ascending_floor_with), with the curve shapes read
+ *  from the ensemble events (CycleParamsResolved carries only the resolved scalars). */
 export const TESTNET: PackageIds = {
-  packageId: '0x4e00103fc85bdf54876a1d14e1957fef5e18def81dab3917d249b06c5d2e6ebf',
-  feeRefId: '0x6a00b57cd75d0bf86984faf84c7a514353e0a1dbee26a75eaf66b128c829bd3b',
+  packageId: '0x49231e492e638892c80a301138d55e2275477d407b3b2b1092b0209081bb56cf',
+  feeRefId: '0x1ea3c9af25419767ccd77e401970a455c7f7af188b5c1e8c73704a508d84fcaf',
 };
 
 /** System singletons (FFI artefacts — injected by the codegen layer). */
