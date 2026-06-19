@@ -19,23 +19,32 @@ Both are keyed on the inbox id across **every** escrow paying in (a governor's w
 portfolio), and both are generic over the two inboxes — the same methods give the
 `ProtocolFeeInbox` its deployment-wide fee take (`FeeMessagePosted`).
 
-## What it does
+## What it does — multi-coin, on purpose
 
-Lists an asset (15s tenure, descent off → a tenure expiry settles straight to the
-governor), then runs **two** tenures to completion. Each pays the governor 90% of the
-stake (10% is the protocol fee). It reads the ledger back:
+The inbox is **coin-polymorphic**: one governor can list assets priced in different coins,
+all paying the same inbox. So this lists **two** escrows into **one** inbox —
+
+- escrow A priced in **DUMMY** (9-decimal, free-mint) via `usufruct.integrate(…)`,
+- escrow B priced in **USDC** (6-decimal, a real testnet coin) via
+  `governanceCap.integrateIntoPortfolio(asset, USDC, market, { earningsInbox })` —
+
+settles each (a 15s tenure runs to expiry, paying the governor 90% of the stake), and
+reads the ledger back:
 
 ```
 == earningsInbox.history()
-   23:41:32    0.45 DUMMY  from 0x76b03986…
-   23:41:53    0.54 DUMMY  from 0x76b03986…
+   23:58:26    0.45 DUMMY  from 0x49a041f7…
+   23:58:48     0.45 USDC  from 0x12ae7ba1…
 
 == earningsInbox.totals()
-   0.99 DUMMY  across 2 settlements  (DUMMY_COIN)
+   0.45 DUMMY  across 1 settlement(s)  (DUMMY_COIN)
+    0.45 USDC  across 1 settlement(s)  (USDC)
 ```
 
-`totals()` equals the sum of every posted message, and each message is exactly 90% of its
-stake (`0.5 → 0.45`, `0.6 → 0.54`).
+`totals()` returns a **separate entry per coin**, each scaled to its own decimals
+(`0.45 DUMMY` = 450000000 mist, `0.45 USDC` = 450000 mist — not 9-decimal coupled), and
+each equals the sum of that coin's messages. That's the coin-polymorphic claim, proven —
+not asserted by construction.
 
 ## Note on indexing
 
@@ -51,5 +60,6 @@ From the monorepo root (build the SDK first: `npm install && npm run build`):
 npx tsx examples/earnings-ledger/index.ts
 ```
 
-Needs a funded testnet signer (`SUI_PRIVATE_KEY` or the `usufruct-sdk-testnet` alias) and
-a GraphQL endpoint. ~40s (two short tenure waits). Testnet only.
+Needs a funded testnet signer (`SUI_PRIVATE_KEY` or the `usufruct-sdk-testnet` alias), a
+GraphQL endpoint, and — for the USDC arm — a small **USDC** balance (~0.5; the DUMMY arm
+is free-mint). ~40s (two short tenure waits). Testnet only.

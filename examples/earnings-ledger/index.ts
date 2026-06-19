@@ -1,19 +1,22 @@
 /**
- * PROBE — the earnings ledger: a governor's lifetime income, summed from events.
+ * PROBE — the earnings ledger: a governor's lifetime income, summed from events,
+ * across EVERY coin the inbox receives.
  *
  * The `EarningsInbox` has `balance()` (uncollected objects right now) and `watch()`
  * (live push). Neither answers "how much has this inbox earned, ever?" — collected
  * income has left the inbox, and `watch()` only sees the future. The event log does:
  * every settlement emits `EarningsMessagePosted { earnings_inbox_id, amount, coin_type }`.
  *
- * This adds the event-sourced twin:
  *   earningsInbox.history()  → every message ever posted (settled AND collected)
- *   earningsInbox.totals()   → that, summed per coin (the inbox is coin-polymorphic)
+ *   earningsInbox.totals()   → that, summed PER COIN (the inbox is coin-polymorphic)
  *
- * It drives two settlements (rent → tenure expiry pays the governor 90% of the
- * principal) and reads the ledger back.
+ * The inbox is coin-polymorphic: one governor can list assets priced in different
+ * coins, all paying the SAME inbox. This drives a settlement in DUMMY and one in USDC
+ * (6-decimal, a real testnet coin), into one inbox, and proves `totals()` returns a
+ * separate, correctly-scaled entry per coin.
  *
  * Run from the monorepo root:  npx tsx examples/earnings-ledger/index.ts
+ * Needs a small USDC balance for the second arm (see README).
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, usufruct } from '@usufruct-protocol/sdk';
@@ -25,9 +28,20 @@ const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb1831
 const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
 const DUMMY_COIN_TREASURY = '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc';
 const DUMMY = coinTag({ type: `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`, decimals: 9, symbol: 'DUMMY' });
+const USDC_TYPE = '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC';
 
 const client = rateLimited(makeClient());
 const me = loadSigner();
+
+async function mintAsset(): Promise<string> {
+  const tx = new Transaction();
+  tx.transferObjects([tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` })], me.toSuiAddress());
+  tx.transferObjects(
+    [tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`, arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000_000_000n)] })],
+    me.toSuiAddress(),
+  );
+  return createdId(await send(client, tx, me), '::dummy_asset::DummyAsset');
+}
 
 /** Wait out GraphQL indexing lag until `inbox` shows at least `want` messages. */
 async function waitForMessages(inbox: EarningsInbox, want: number) {
@@ -40,52 +54,61 @@ async function waitForMessages(inbox: EarningsInbox, want: number) {
 }
 
 async function main() {
-  step('setup — list (15s tenure, descent off → tenure expiry settles straight to the governor)');
-  const tx = new Transaction();
-  tx.transferObjects([tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` })], me.toSuiAddress());
-  tx.transferObjects(
-    [tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`, arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(2_000_000_000n)] })],
-    me.toSuiAddress(),
-  );
-  const assetId = createdId(await send(client, tx, me), '::dummy_asset::DummyAsset');
-
   const u = usufruct({ client, signer: me, graphql: GRAPHQL_TESTNET });
-  const { escrow, earningsInbox } = await u
-    .integrate({
-      asset: assetId, coin: DUMMY,
-      market: {
-        restPrice: DUMMY(0.01), tenure: '15s', multiTenure: false,
-        creditShape: 'linear', auctionShape: 'linear', descent: 'off', handover: 'off',
-        escalation: { fixed: DUMMY(0.001) }, retireCommitment: 'immediate', ensembleCommitment: 'immediate',
-      },
-    })
-    .send();
-  const seat = await u.escrow(escrow.id);
+  const USDC = await u.coinType(USDC_TYPE); // decimals (6) + symbol from chain
+  check('USDC resolved its 6 decimals from chain (not the default 9)', USDC.decimals === 6, `${USDC.decimals}`);
 
-  // Two tenures run to completion → two settlements pay the governor 90% of each stake.
-  for (const stake of [0.5, 0.6]) {
-    step(`settlement — rent ${stake} DUMMY, run the tenure to expiry (governor earns ~90%)`);
-    const cap = await seat.rent({ tenures: 1, pay: DUMMY(stake) }).send();
+  const market = (over: 'DUMMY' | 'USDC') => {
+    const c = over === 'DUMMY' ? DUMMY : USDC;
+    return {
+      restPrice: c(0.01), tenure: '15s', multiTenure: false,
+      creditShape: 'linear' as const, auctionShape: 'linear' as const, descent: 'off' as const, handover: 'off' as const,
+      escalation: { fixed: c(0.001) }, retireCommitment: 'immediate' as const, ensembleCommitment: 'immediate' as const,
+    };
+  };
+
+  step('list escrow A priced in DUMMY — creates the earnings inbox');
+  const { escrow: escrowA, governanceCap, earningsInbox } = await u
+    .integrate({ asset: await mintAsset(), coin: DUMMY, market: market('DUMMY') })
+    .send();
+
+  step('list escrow B priced in USDC INTO THE SAME inbox (governanceCap.integrateIntoPortfolio)');
+  const escrowB = await governanceCap
+    .integrateIntoPortfolio(await mintAsset(), USDC, market('USDC'), { earningsInbox: earningsInbox.inboxId })
+    .send();
+
+  // Settle both: each tenure runs to expiry and pays the governor 90% of the stake.
+  for (const [label, id, pay] of [
+    ['DUMMY', escrowA.id, DUMMY(0.5)],
+    ['USDC', escrowB.id, USDC(0.5)],
+  ] as const) {
+    step(`settle the ${label} escrow — rent ${pay.format()}, run to expiry (governor earns ~90%)`);
+    const seat = await u.escrow(id);
+    const cap = await seat.rent({ tenures: 1, pay }).send();
     await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
     await seat.applyPendingTransitionStates().send();
   }
 
-  step('earningsInbox.history() — every posted message (waiting out indexer lag)');
+  step('earningsInbox.history() — every posted message, across coins (waiting out indexer lag)');
   const log = await waitForMessages(earningsInbox, 2);
   for (const m of log) {
-    console.log(`   ${(m.at ?? new Date(0)).toISOString().slice(11, 19)}  ${m.amount.format().padStart(12)}  from ${m.escrowId?.slice(0, 10)}…`);
+    console.log(`   ${(m.at ?? new Date(0)).toISOString().slice(11, 19)}  ${m.amount.format().padStart(13)}  from ${m.escrowId?.slice(0, 10)}…`);
   }
 
-  step('earningsInbox.totals() — lifetime income summed per coin');
+  step('earningsInbox.totals() — lifetime income summed PER COIN');
   const totals = await earningsInbox.totals();
   for (const t of totals) {
-    console.log(`   ${t.total.format()}  across ${t.count} settlements  (${t.coin.split('::').pop()})`);
+    console.log(`   ${t.total.format().padStart(13)}  across ${t.count} settlement(s)  (${t.coin.split('::').pop()})`);
   }
 
-  const sum = log.reduce((a, m) => a + m.amount.mist, 0n);
-  check('two settlements posted', log.length === 2, `${log.length} messages`);
-  check('totals() = sum of every posted message', totals.length === 1 && totals[0]!.total.mist === sum, `${totals[0]?.total.format()} = Σ messages`);
-  check('each settlement paid the governor 90% of the stake', log.every((m, i) => m.amount.mist === BigInt(Math.round([0.5, 0.6][i]! * 0.9 * 1e9))), log.map((m) => m.amount.format()).join(', '));
+  // The event's coin_type is type_name format (no 0x prefix) — match by module/struct.
+  const dummyT = totals.find((t) => t.coin.includes('dummy_coin'));
+  const usdcT = totals.find((t) => t.coin.includes('usdc'));
+  check('totals() has TWO coin entries (coin-polymorphic)', totals.length === 2, `${totals.length} coins`);
+  check('DUMMY total is 0.45 (9-decimal: 90% of 0.5)', dummyT?.total.mist === 450_000_000n, `${dummyT?.total.format()}`);
+  check('USDC total is 0.45 (6-decimal: 90% of 0.5, NOT 9-decimal coupled)', usdcT?.total.mist === 450_000n, `${usdcT?.total.format()}`);
+  const sum = log.reduce((acc, m) => acc.set(m.coin, (acc.get(m.coin) ?? 0n) + m.amount.mist), new Map<string, bigint>());
+  check('each coin total = sum of that coin’s messages', totals.every((t) => t.total.mist === sum.get(t.coin)));
 
   finish();
 }
