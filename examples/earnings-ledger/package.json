@@ -2,7 +2,7 @@
   "name": "usufruct-earnings-ledger",
   "private": true,
   "type": "module",
-  "description": "Probe — earningsInbox.history() / totals(): a governor's lifetime income summed per coin from EarningsMessagePosted events (multi-coin: DUMMY + USDC into one inbox)",
+  "description": "Probe — inbox.history() / totals() on both inbox kinds: governor earnings (90%) + protocol fees (10%), summed per coin (multi-coin DUMMY + USDC), the 90/10 split reconciled",
   "scripts": {
     "start": "tsx index.ts"
   },

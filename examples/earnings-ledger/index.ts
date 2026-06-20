@@ -1,26 +1,24 @@
 /**
- * PROBE — the earnings ledger: a governor's lifetime income, summed from events,
- * across EVERY coin the inbox receives.
+ * PROBE — the settlement ledger: both sides of every settlement, summed from events.
  *
- * The `EarningsInbox` has `balance()` (uncollected objects right now) and `watch()`
- * (live push). Neither answers "how much has this inbox earned, ever?" — collected
- * income has left the inbox, and `watch()` only sees the future. The event log does:
- * every settlement emits `EarningsMessagePosted { earnings_inbox_id, amount, coin_type }`.
+ * Each settlement splits 90/10 — the governor's `EarningsInbox` and the protocol's
+ * `ProtocolFeeInbox`. Both are coin-polymorphic mailboxes, and the SAME two methods
+ * read both (the handle is generic over `EarningsMessagePosted` / `FeeMessagePosted`):
  *
- *   earningsInbox.history()  → every message ever posted (settled AND collected)
- *   earningsInbox.totals()   → that, summed PER COIN (the inbox is coin-polymorphic)
+ *   inbox.history()  → every message ever posted (settled AND collected)
+ *   inbox.totals()   → that, summed PER COIN
  *
- * The inbox is coin-polymorphic: one governor can list assets priced in different
- * coins, all paying the SAME inbox. This drives a settlement in DUMMY and one in USDC
- * (6-decimal, a real testnet coin), into one inbox, and proves `totals()` returns a
- * separate, correctly-scaled entry per coin.
+ * It lists two escrows — one priced in DUMMY (9-dec, free-mint), one in USDC (6-dec,
+ * a real testnet coin) — into ONE earnings inbox, settles each, and reads back BOTH
+ * inboxes: the governor's 90% and the protocol's 10%, per coin. Proves the methods are
+ * coin-polymorphic AND symmetric across both inbox kinds.
  *
  * Run from the monorepo root:  npx tsx examples/earnings-ledger/index.ts
  * Needs a small USDC balance for the second arm (see README).
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, usufruct } from '@usufruct-protocol/sdk';
-import type { EarningsInbox } from '@usufruct-protocol/sdk';
+import type { Inbox, InboxMessage } from '@usufruct-protocol/sdk';
 import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, step, waitForChainTime } from '../../scripts/lib.js';
 
@@ -43,14 +41,23 @@ async function mintAsset(): Promise<string> {
   return createdId(await send(client, tx, me), '::dummy_asset::DummyAsset');
 }
 
-/** Wait out GraphQL indexing lag until `inbox` shows at least `want` messages. */
-async function waitForMessages(inbox: EarningsInbox, want: number) {
+const norm = (id: string | null) => (id ?? '').replace(/^0x/, '').toLowerCase();
+
+/** Poll an inbox (filtered to `mine`) out of GraphQL indexing lag until `want` land. */
+async function waitForMessages(inbox: Inbox, mine: Set<string>, want: number): Promise<InboxMessage[]> {
   for (let i = 0; i < 18; i++) {
-    const log = await inbox.history();
+    const log = (await inbox.history()).filter((m) => mine.has(norm(m.escrowId)));
     if (log.length >= want) return log;
     await new Promise((r) => setTimeout(r, 5000));
   }
-  return inbox.history();
+  return (await inbox.history()).filter((m) => mine.has(norm(m.escrowId)));
+}
+
+/** Sum messages per coin → printable `symbol → mist`. */
+function sumByCoin(msgs: InboxMessage[]): Map<string, bigint> {
+  const m = new Map<string, bigint>();
+  for (const x of msgs) m.set(x.coin, (m.get(x.coin) ?? 0n) + x.amount.mist);
+  return m;
 }
 
 async function main() {
@@ -71,11 +78,13 @@ async function main() {
   const { escrow: escrowA, governanceCap, earningsInbox } = await u
     .integrate({ asset: await mintAsset(), coin: DUMMY, market: market('DUMMY') })
     .send();
+  const feeInbox = (await u.escrow(escrowA.id)).feeInbox; // the protocol's singleton fee pool
 
   step('list escrow B priced in USDC INTO THE SAME inbox (governanceCap.integrateIntoPortfolio)');
   const escrowB = await governanceCap
     .integrateIntoPortfolio(await mintAsset(), USDC, market('USDC'), { earningsInbox: earningsInbox.inboxId })
     .send();
+  const mine = new Set([norm(escrowA.id), norm(escrowB.id)]);
 
   // Settle both: each tenure runs to expiry and pays the governor 90% of the stake.
   for (const [label, id, pay] of [
@@ -89,26 +98,30 @@ async function main() {
     await seat.applyPendingTransitionStates().send();
   }
 
-  step('earningsInbox.history() — every posted message, across coins (waiting out indexer lag)');
-  const log = await waitForMessages(earningsInbox, 2);
-  for (const m of log) {
-    console.log(`   ${(m.at ?? new Date(0)).toISOString().slice(11, 19)}  ${m.amount.format().padStart(13)}  from ${m.escrowId?.slice(0, 10)}…`);
+  step('the two inboxes, read by the SAME methods — governor 90% (earnings) + protocol 10% (fees)');
+  const earnMsgs = await waitForMessages(earningsInbox, mine, 2);
+  const feeMsgs = await waitForMessages(feeInbox, mine, 2);
+  const earn = sumByCoin(earnMsgs);
+  const fee = sumByCoin(feeMsgs);
+
+  const dummy = `${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN`.replace(/^0x/, '');
+  const usdc = USDC_TYPE.replace(/^0x/, '');
+  // Both events carry coin_type in type_name format (no 0x prefix); match on that.
+  const get = (m: Map<string, bigint>, t: string) => [...m].find(([k]) => k.replace(/^0x/, '') === t)?.[1] ?? 0n;
+
+  console.log('   coin     stake   governor (90%)   protocol (10%)');
+  for (const [sym, t, stake, dec] of [['DUMMY', dummy, 0.5, 1e9], ['USDC', usdc, 0.5, 1e6]] as const) {
+    console.log(`   ${sym.padEnd(6)}  ${stake.toFixed(2)}    ${(Number(get(earn, t)) / dec).toFixed(4).padStart(8)}        ${(Number(get(fee, t)) / dec).toFixed(4).padStart(8)}`);
   }
 
-  step('earningsInbox.totals() — lifetime income summed PER COIN');
-  const totals = await earningsInbox.totals();
-  for (const t of totals) {
-    console.log(`   ${t.total.format().padStart(13)}  across ${t.count} settlement(s)  (${t.coin.split('::').pop()})`);
-  }
+  const earnTotals = await earningsInbox.totals();
+  console.log(`\n   earningsInbox.totals(): ${earnTotals.map((x) => x.total.format()).join(', ')}`);
+  console.log(`   feeInbox.totals() (deployment-wide): ${(await feeInbox.totals()).map((x) => x.total.format()).join(', ')}`);
 
-  // The event's coin_type is type_name format (no 0x prefix) — match by module/struct.
-  const dummyT = totals.find((t) => t.coin.includes('dummy_coin'));
-  const usdcT = totals.find((t) => t.coin.includes('usdc'));
-  check('totals() has TWO coin entries (coin-polymorphic)', totals.length === 2, `${totals.length} coins`);
-  check('DUMMY total is 0.45 (9-decimal: 90% of 0.5)', dummyT?.total.mist === 450_000_000n, `${dummyT?.total.format()}`);
-  check('USDC total is 0.45 (6-decimal: 90% of 0.5, NOT 9-decimal coupled)', usdcT?.total.mist === 450_000n, `${usdcT?.total.format()}`);
-  const sum = log.reduce((acc, m) => acc.set(m.coin, (acc.get(m.coin) ?? 0n) + m.amount.mist), new Map<string, bigint>());
-  check('each coin total = sum of that coin’s messages', totals.every((t) => t.total.mist === sum.get(t.coin)));
+  check('earnings inbox is coin-polymorphic (DUMMY + USDC)', earnTotals.length === 2, `${earnTotals.length} coins`);
+  check('governor earned 90% per coin', get(earn, dummy) === 450_000_000n && get(earn, usdc) === 450_000n, `${get(earn, dummy)} / ${get(earn, usdc)}`);
+  check('protocol took 10% per coin (same methods, FeeInbox)', get(fee, dummy) === 50_000_000n && get(fee, usdc) === 50_000n, `${get(fee, dummy)} / ${get(fee, usdc)}`);
+  check('90% + 10% = the stake, per coin (each in its own decimals)', get(earn, dummy) + get(fee, dummy) === 500_000_000n && get(earn, usdc) + get(fee, usdc) === 500_000n);
 
   finish();
 }
