@@ -52,6 +52,7 @@ export type {
   LadderRung,
 } from './timeline.js';
 export type { PortfolioWatch } from './watch-many.js';
+export type { RenterStatement, RenterStatus, Tenancy, EscrowRevenue } from './ledger.js';
 
 export {
   withRetry,

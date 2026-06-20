@@ -29,7 +29,9 @@ import { UsufructError } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import { coinInfo, coinTag, type CoinTag } from './value.js';
+import { coinInfo, coinTag, price, type CoinTag } from './value.js';
+import { resolveCoinInfo } from './coinmeta.js';
+import { type EscrowRevenue } from './ledger.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType } from './send.js';
 
@@ -77,6 +79,15 @@ export interface GovernanceCap {
    * cap→escrow link lives only in the event log, not on the cap.) Needs `graphql`.
    */
   escrows(): Promise<EscrowListing[]>;
+
+  /**
+   * Lifetime revenue attributed **per escrow** — the other axis to the inbox's
+   * `totals()` (which sums per coin). Scans `EarningsMessagePosted` and keeps the
+   * messages whose `escrow_id` is in this cap's portfolio, grouping the governor's
+   * take by escrow, then by coin. Answers "which of my listings earns most?".
+   * Reconstructed drift-zero from events. Needs `graphql`.
+   */
+  revenueByEscrow(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<EscrowRevenue[]>;
 
   /**
    * Does THIS cap govern the given escrow right now? Object-centric read: one cap
@@ -231,6 +242,43 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
 
     escrows() {
       return discoverIntegrated(ctx, { governanceCapId: capId });
+    },
+
+    async revenueByEscrow(revOpts) {
+      if (ctx.indexer == null) {
+        throw new UsufructError('revenueByEscrow requires a GraphQL endpoint — pass `graphql` to usufruct()');
+      }
+      const norm = (v: unknown) => String(v ?? '').replace(/^0x/, '').toLowerCase();
+      const listings = await discoverIntegrated(ctx, { governanceCapId: capId });
+      const want = new Set(listings.map((l) => norm(l.escrowId)));
+      const idForm = new Map(listings.map((l) => [norm(l.escrowId), l.escrowId]));
+      // escrow (norm) → coin → { mist, count } — one scan, filtered to this portfolio.
+      const byEscrow = new Map<string, Map<string, { mist: bigint; count: number }>>();
+      for await (const ev of ctx.indexer.events({
+        type: `${packageId}::earnings_message::EarningsMessagePosted`,
+        ...(revOpts?.afterCheckpoint !== undefined ? { afterCheckpoint: revOpts.afterCheckpoint } : {}),
+        ...(revOpts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: revOpts.beforeCheckpoint } : {}),
+      })) {
+        const eid = norm(ev.data['escrow_id'] ?? ev.escrowId);
+        if (!want.has(eid)) continue;
+        const coin = String(ev.data['coin_type'] ?? '');
+        const coins = byEscrow.get(eid) ?? new Map<string, { mist: bigint; count: number }>();
+        const cur = coins.get(coin) ?? { mist: 0n, count: 0 };
+        coins.set(coin, { mist: cur.mist + BigInt(String(ev.data['amount'] ?? '0')), count: cur.count + 1 });
+        byEscrow.set(eid, coins);
+      }
+      return Promise.all(
+        [...byEscrow.entries()].map(async ([eid, coins]) => ({
+          escrowId: idForm.get(eid) ?? eid,
+          earnings: await Promise.all(
+            [...coins.entries()].map(async ([coin, { mist, count }]) => ({
+              coin,
+              total: price(mist, await resolveCoinInfo(client, coin)),
+              count,
+            })),
+          ),
+        })),
+      );
     },
 
     async governs(ref) {

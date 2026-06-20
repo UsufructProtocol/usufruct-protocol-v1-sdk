@@ -33,6 +33,7 @@ import {
   type TimelineSegment,
 } from './timeline.js';
 import { sampleEscalationLadder, type Escalation } from '../read/curve.js';
+import { reconstructTenancies, type Tenancy } from './ledger.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType } from './send.js';
 import { makePlan, digestPlan, type Plan } from './plan.js';
@@ -321,6 +322,14 @@ export interface Escrow {
    * No `graphql` needed — it reads the live ensemble. `step: 0` is the starting floor.
    */
   escalationLadder(opts?: { steps?: number; tenures?: number; from?: Price }): Promise<LadderRung[]>;
+  /**
+   * The asset's occupancy ledger — every tenancy interval (who held it, from→to), with
+   * per-tenancy economics (what they paid, credit used, refund, governor/protocol split),
+   * reconstructed **drift-zero from events**. Oldest first; an ongoing tenancy has
+   * `endedAt: null`. Bids/supersedes are not boundaries here (they touch the challenger,
+   * not the occupant). Needs `graphql`.
+   */
+  tenancies(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<Tenancy[]>;
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
@@ -600,6 +609,9 @@ export async function createEscrow(
     const descents = (await priceTimeline(curveOpts)).filter((s) => s.kind === 'descent');
     return descents.length > 0 ? (descents[descents.length - 1] as DescentSegment) : null;
   }
+  async function tenancies(histOpts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<Tenancy[]> {
+    return reconstructTenancies(await history(histOpts), coin);
+  }
   async function escalationLadder(ladderOpts?: {
     steps?: number;
     tenures?: number;
@@ -783,6 +795,7 @@ export async function createEscrow(
     creditCurve,
     descentCurve,
     escalationLadder,
+    tenancies,
     watch,
     waitFor,
     onEvents,

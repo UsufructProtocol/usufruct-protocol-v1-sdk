@@ -20,6 +20,7 @@ import { createReader, type Reader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
+import { reconstructStatement, type RenterStatement } from './ledger.js';
 import { retryingReader } from './retry.js';
 import { subscribeEscrowVersion } from './watch.js';
 import type { HandleCtx } from './ctx.js';
@@ -138,6 +139,15 @@ export interface UsufructCap {
     afterCheckpoint?: number;
     beforeCheckpoint?: number;
   }): Promise<HistoryEvent[]>;
+  /**
+   * This cap's P&L, reconstructed **drift-zero from events** — what it `paid` to
+   * acquire, what it got `refunded` (superseded or displaced), what it `consumed`
+   * (credit actually spent on use), and — while `active` — the live `remaining` stake
+   * (refund-if-displaced-now). The renter's side of the 90/10 settlement; the twin of
+   * the inboxes' `totals()`. Closed caps satisfy `paid == consumed + refunded`. Needs
+   * `graphql`.
+   */
+  statement(opts?: { at?: When }): Promise<RenterStatement>;
   /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
   readonly borrow: BorrowMethod;
   /** Hand the right of use (this cap) to another address. */
@@ -314,6 +324,22 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     return events.map(toHistoryEvent).filter((he) => mentions(he.data));
   }
 
+  async function statement(opts?: { at?: When }): Promise<RenterStatement> {
+    const coin = await resolveCoinInfo(client, args.typeArguments[1]);
+    const base = reconstructStatement(await history(), args.capId, coin);
+    if (base.status !== 'active') return base; // closed/pending settle in the log
+    // Active: the log has not settled it — overlay the live remaining + accrued.
+    const t = await resolveWhen(client, opts?.at);
+    const s = await mkReader().batch(['activeStakeBalanceRemainingMist', 'accruedCreditMist'], { t });
+    const remainMist = s['activeStakeBalanceRemainingMist'] as Mist | null;
+    const accruedMist = s['accruedCreditMist'] as Mist | null;
+    return {
+      ...base,
+      consumed: accruedMist == null ? base.consumed : price(accruedMist, coin),
+      remaining: remainMist == null ? null : price(remainMist, coin),
+    };
+  }
+
   function waitFor(
     predicate: (s: UsufructCapState) => boolean,
     waitOpts?: { intervalMs?: number; timeoutMs?: number },
@@ -376,6 +402,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     watch,
     waitFor,
     history,
+    statement,
     borrow,
     transfer: transferOf(ctx, args.capId),
     burnIfStale,
