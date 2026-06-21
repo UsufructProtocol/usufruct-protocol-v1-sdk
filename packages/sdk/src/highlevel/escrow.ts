@@ -597,26 +597,27 @@ export async function createEscrow(
 
   async function liveDescentCurve(curveOpts?: CurveOpts): Promise<DescentSegment | null> {
     const pts = curveOpts?.points ?? 24;
-    // In descent there is no *active* cycle (no tenant), so `activeCycleParams` is
-    // null — the params come from the live descent views instead: the phase start,
-    // its expiry (→ duration), the last acquisition (→ ceiling), and the rest floor
-    // read as the floor AT expiry (where the descent bottoms out).
-    const [desc, lastM, phaseM, expM, shape] = await Promise.all([
+    // The descent's resolved cycle (floor / descent duration) lives in the WAITING
+    // state — it is stored in `WaitingState::Descent { cycle }` and projected by
+    // `proj_waiting_resolved_*`, which the SDK exposes as `nextCycleParams`. NOT
+    // `activeCycleParams`: that is the Renting-only projection (`proj_active_cycle_params`
+    // matches Occupied/Demand and is `None` while waiting). Both name the resolved
+    // cycle; they just project different halves of the state machine.
+    const [desc, lastM, phaseM, cyc, shape] = await Promise.all([
       reader.isDescending(),
       reader.lastRentPriceMist(),
       reader.phaseStartMs(),
-      reader.descentExpiryMs(),
+      reader.nextCycleParams(),
       reader.auctionShape(),
     ]);
-    if (!desc || lastM == null || phaseM == null || expM == null) return null;
-    const descentMs = expM - phaseM;
-    if (descentMs <= 0n) return null;
-    const floorM = await reader.floorPriceMist(expM); // descent bottoms at the rest floor
+    if (!desc || lastM == null || phaseM == null || cyc == null) return null;
+    const descentMs = cyc.descentMs;
+    if (descentMs == null || descentMs === 0n) return null;
     const ts = spanTimes(phaseM, descentMs, pts);
     const vals = await sampleDescentCurve(
       client,
       packageId,
-      { lastAcqMist: lastM, phaseStartMs: phaseM, floorMist: floorM, descentMs, shape },
+      { lastAcqMist: lastM, phaseStartMs: phaseM, floorMist: cyc.floorMist, descentMs, shape },
       ts,
     );
     return {
@@ -624,7 +625,7 @@ export async function createEscrow(
       startedAt: new Date(Number(phaseM)),
       descentMs: Number(descentMs),
       from: price(lastM, coin),
-      to: price(floorM, coin),
+      to: price(cyc.floorMist, coin),
       points: curvePoints(phaseM, ts, vals),
     };
   }

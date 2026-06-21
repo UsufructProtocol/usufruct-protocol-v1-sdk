@@ -38,9 +38,11 @@ shape (release candidate).
 
 ### Fixed
 
-- The live `escrow.read.descentCurve()` derives its params from
-  `descentExpiryMs`/`phaseStartMs`/`floorPriceMist` — during descent there is no
-  active cycle, so `activeCycleParams` is `null`. Now drift-zero against the view.
+- The live `escrow.read.descentCurve()` reads the descent's resolved cycle from
+  `nextCycleParams` (the Waiting-state projection `proj_waiting_resolved_*`), not
+  `activeCycleParams` (the Renting-only projection `proj_active_cycle_params`, which
+  is `None` while waiting). The cycle is always resolved — the two views just project
+  different halves of the state machine. Now drift-zero against the view.
 
 ## [0.1.0] — Unreleased
 
