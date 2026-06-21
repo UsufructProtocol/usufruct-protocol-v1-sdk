@@ -66,76 +66,10 @@ export interface GovernanceWriteVerb {
 }
 
 export interface GovernanceCap {
+  // identity — the object's name. All operations are verbs (no nav: a govcap relates
+  // to escrows via its portfolio collection → inspect, not a single edge).
   readonly capId: string;
 
-  // per-escrow governance (the target escrow is required — one cap, many escrows)
-  /**
-   * Change the market. Takes a `Partial<Market>` — only the fields you change;
-   * the rest are read from the current on-chain market and preserved. (You
-   * reasoned about every field at `integrate`; modifying touches a subset.)
-   */
-  updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
-  retire(escrow: EscrowRef): Plan<{ digest: string }>;
-  claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
-  extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
-  extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
-
-  // cap-level
-  renounce(): Plan<{ digest: string }>;
-  /** Hand governance (this cap) to another address. */
-  transfer(to: string): Plan<{ digest: string }>;
-
-  /**
-   * Integrate a NEW asset (priced in `coin`) into this cap's portfolio. The only
-   * write that depends on TWO objects: this `GovernanceCap` (the portfolio it
-   * joins) and the `earningsInbox` it will pay into — so both are named
-   * explicitly. `coin` is the new escrow's immutable `phantom CoinType` (a
-   * portfolio may hold escrows of different coins, all paying one inbox). Mirrors
-   * the Move `integrate_into_portfolio`.
-   */
-  integrateIntoPortfolio(
-    asset: string,
-    coin: CoinTag,
-    market: Market,
-    opts: { earningsInbox: string },
-  ): Plan<Escrow>;
-
-  /**
-   * The escrows THIS cap governs — its **portfolio**, as decode-free
-   * `EscrowListing`s. The cap *is* the governor, so it answers for itself. (The
-   * cap→escrow link lives only in the event log, not on the cap.) Needs `graphql`.
-   */
-  escrows(): Promise<EscrowListing[]>;
-
-  /**
-   * Lifetime revenue attributed **per escrow** — the other axis to the inbox's
-   * `totals()` (which sums per coin). Scans `EarningsMessagePosted` and keeps the
-   * messages whose `escrow_id` is in this cap's portfolio, grouping the governor's
-   * take by escrow, then by coin. Answers "which of my listings earns most?".
-   * Reconstructed drift-zero from events. Needs `graphql`.
-   */
-  revenueByEscrow(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<EscrowRevenue[]>;
-
-  /**
-   * Does THIS cap govern the given escrow right now? Object-centric read: one cap
-   * governs a *portfolio*, so the question names the escrow. (`governanceCapIsValid`
-   * on that escrow, probed with this cap's id.)
-   */
-  governs(escrow: EscrowRef): Promise<boolean>;
-
-  /**
-   * React to changes across this cap's **whole portfolio** over one gRPC
-   * firehose: resolves `escrows()` and `watchMany`s them. `onChange` fires with a
-   * handle per escrow's current state, then on every change. Grow/shrink and end
-   * via the returned `PortfolioWatch`. Needs `graphql` (for the portfolio
-   * discovery); the watch itself is gRPC-push, polling-fallback.
-   */
-  watch(
-    onChange: (e: Escrow) => void,
-    opts?: { intervalMs?: number },
-  ): Promise<PortfolioWatch>;
-
-  // ── the four-verb surface (additive; the flat members above are removed in Phase E) ──
   readonly read: GovernanceReadVerb;
   readonly inspect: GovernanceInspectVerb;
   readonly react: GovernanceReactVerb;
@@ -173,7 +107,12 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     );
   }
 
-  const g: Omit<GovernanceCap, 'read' | 'inspect' | 'react' | 'write'> = {
+  // Internal scaffolding: the closures the verbs delegate to, typed by the verb
+  // interfaces so their params keep contextual types (the public handle is verbs-only).
+  const g: { capId: string } & GovernanceReadVerb &
+    GovernanceInspectVerb &
+    GovernanceReactVerb &
+    GovernanceWriteVerb = {
     capId,
 
     updateMarket(ref, changes) {
@@ -344,5 +283,5 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     integrateIntoPortfolio: g.integrateIntoPortfolio,
   };
 
-  return { ...g, read: readVerb, inspect: inspectVerb, react: reactVerb, write: writeVerb };
+  return { capId: g.capId, read: readVerb, inspect: inspectVerb, react: reactVerb, write: writeVerb };
 }

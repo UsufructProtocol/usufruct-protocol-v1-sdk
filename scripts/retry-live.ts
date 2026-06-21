@@ -41,9 +41,11 @@ async function main(): Promise<void> {
   step('2. resolve a real escrow handle end-to-end (usufruct, retry on by default)');
   const u = usufruct({ network: 'testnet' });
   try {
-    const escrow = await u.escrow(FIXTURE_ESCROW);
-    check('escrow handle resolved', typeof escrow.status === 'string', `status=${escrow.status}`);
-    check('coin info resolved (decimals from chain)', escrow.floorPrice.mist >= 0n);
+    const escrow = await u.nav.escrow(FIXTURE_ESCROW);
+    const state = await escrow.read.assetState();
+    const floorPrice = await escrow.read.floorPrice();
+    check('escrow handle resolved', typeof state.kind === 'string', `status=${state.kind}`);
+    check('coin info resolved (decimals from chain)', floorPrice.mist >= 0n);
   } catch (e) {
     const msg = (e as Error).message;
     // The fixture escrow may have been cleaned; a "not found" still proves the

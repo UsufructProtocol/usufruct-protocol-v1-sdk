@@ -54,47 +54,10 @@ export interface InboxWriteVerb {
 }
 
 export interface Inbox {
+  // identity — the object's name. All operations are verbs (no nav: an inbox relates
+  // to escrows via the collection that pays in → inspect, not a single edge).
   readonly inboxId: string;
-  /** Pending income per coin (preview, no collect). */
-  balance(): Promise<Array<{ coin: string; amount: Price }>>;
-  /** Collect everything, partitioned by coin (§5.2). Requires holding the inbox. */
-  collect(): Plan<Array<{ coin: string; amount: Price }>>;
-  /** Hand the inbox (and the right to collect) to another address. */
-  transfer(to: string): Plan<{ digest: string }>;
-  /**
-   * React to income live: `onMessage` runs for each settlement pushed into THIS
-   * inbox (typed, per coin), server-push over the gRPC firehose. The inbox's twin
-   * of `escrow.on` — keyed on the inbox id across every escrow paying in (an
-   * `EarningsInbox` hears its governor's portfolio; the `ProtocolFeeInbox` hears
-   * the whole deployment). Returns a `stop()`. Needs a gRPC client (the SDK default).
-   */
-  watch(onMessage: (m: InboxMessage) => void): () => void;
-  /**
-   * Every message ever posted into THIS inbox — the lifetime income log (settled
-   * AND already-collected), oldest first, decoded per coin. The event-sourced twin
-   * of `watch()` (which is live-only) and of `balance()` (which is the *uncollected*
-   * objects right now). Keyed on the inbox id across every escrow paying in. Scans
-   * the package's Posted events and filters by inbox — on the singleton
-   * `ProtocolFeeInbox` that is deployment-wide, so **bound it** with `afterCheckpoint`.
-   * Needs `graphql`.
-   */
-  history(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]>;
-  /**
-   * Lifetime income summed per coin — `history()` folded into one total (and count)
-   * per coin type the inbox has ever received. The coin-polymorphic answer to "how
-   * much has this inbox earned?". Needs `graphql`.
-   */
-  totals(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]>;
-  /**
-   * The escrows whose settlements push messages into THIS inbox — object-centric,
-   * the inbox answering for itself. The inbox→escrow link lives only in the event
-   * log (`AssetIntegrated` sets the inbox id). For an `EarningsInbox` this is the
-   * governor's portfolio paying in; for the `ProtocolFeeInbox` (a singleton) it's
-   * every escrow of the deployment. Decode-free `EscrowListing`s. Needs `graphql`.
-   */
-  escrowsPushingMessages(): Promise<EscrowListing[]>;
 
-  // ── the four-verb surface (additive; the flat members above are removed in Phase E) ──
   readonly read: InboxReadVerb;
   readonly inspect: InboxInspectVerb;
   readonly react: InboxReactVerb;
@@ -165,7 +128,12 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
     );
   }
 
-  const g: Omit<Inbox, 'read' | 'inspect' | 'react' | 'write'> = {
+  // Internal scaffolding: the closures the verbs delegate to, typed by the verb
+  // interfaces so their params keep contextual types (the public handle is verbs-only).
+  const g: { inboxId: string } & InboxReadVerb &
+    InboxInspectVerb &
+    InboxReactVerb &
+    InboxWriteVerb = {
     inboxId,
     async balance() {
       return sumGroups(client, await discoverInboxMessages(client, inboxId, kind));
@@ -236,5 +204,5 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
   const react: InboxReactVerb = { watch: g.watch };
   const write: InboxWriteVerb = { collect: g.collect, transfer: g.transfer };
 
-  return { ...g, read, inspect, react, write };
+  return { inboxId: g.inboxId, read, inspect, react, write };
 }

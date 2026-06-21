@@ -51,7 +51,7 @@ async function main() {
   check('u.address resolved from wallet account', u.address === kp.toSuiAddress(), u.address ?? '(null)');
 
   step('① integrate via walletExecutor — rich decode: 3 created ids');
-  const { escrow, governanceCap, earningsInbox } = await u
+  const { escrow, governanceCap, earningsInbox } = await u.write
     .integrate({
       asset: swordId,
       coin: DUMMY,
@@ -74,8 +74,8 @@ async function main() {
   check('earningsInbox resolved', !!earningsInbox.inboxId, earningsInbox.inboxId);
 
   step('② rent via walletExecutor — rich decode: cap id + receipt');
-  const handle = await u.escrow(escrow.id);
-  const cap = await handle.rent({ tenures: 1 }).send();
+  const handle = await u.nav.escrow(escrow.id);
+  const cap = await handle.write.rent({ tenures: 1 }).send();
   check('usufructCap minted (id decoded via wallet path)', !!cap.id, cap.id);
   check('receipt.paid present', !!cap.receipt?.paid, String(cap.receipt?.paid));
 

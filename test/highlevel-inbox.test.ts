@@ -62,13 +62,13 @@ describe('inbox.history / totals — filter by inbox, sum per coin', () => {
   const inbox = createInbox(ctx, INBOX, 'earnings');
 
   it('history keeps only this inbox’s messages', async () => {
-    const log = await inbox.history();
+    const log = await inbox.inspect.history();
     expect(log).toHaveLength(2);
     expect(log.map((m) => m.amount.mist).sort()).toEqual([450000n, 450000000n]);
   });
 
   it('totals sums per coin (a separate entry per coin type)', async () => {
-    const totals = await inbox.totals();
+    const totals = await inbox.inspect.totals();
     expect(totals).toHaveLength(2);
     const dummy = totals.find((t) => t.coin.includes('dummy_coin'));
     const usdc = totals.find((t) => t.coin.includes('usdc'));
@@ -89,7 +89,7 @@ describe('governanceCap.revenueByEscrow — attribute earnings to the cap’s es
   const cap = createGovernanceCap(ctx, GOVCAP);
 
   it('groups revenue per escrow, only for the portfolio', async () => {
-    const rev = await cap.revenueByEscrow();
+    const rev = await cap.inspect.revenueByEscrow();
     expect(rev).toHaveLength(2);
     const byId = new Map(rev.map((r) => [r.escrowId.replace(/^0x/, '').toLowerCase(), r]));
     const a = byId.get('aa'.repeat(32));

@@ -39,7 +39,7 @@ async function main() {
   const swordId = await setup();
 
   const alice = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await alice.integrate({
+  const { escrow } = await alice.write.integrate({
     asset: swordId,
     coin: DUMMY,
     market: {
@@ -58,13 +58,13 @@ async function main() {
   console.log(`① listed ${escrow.id}`);
 
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
-  const sword = await bob.escrow(escrow.id);
-  const cap = await sword.rent({ tenures: 1 }).send();
+  const sword = await bob.nav.escrow(escrow.id);
+  const cap = await sword.write.rent({ tenures: 1 }).send();
   console.log(`② rented — usufructCap ${cap.id}\n`);
 
   // ③ BORROW — the SAME recipe, composed multiple times in one bracket.
   // borrow is variadic: repeating a step repeats its commands, in order.
-  const { digest } = await cap
+  const { digest } = await cap.write
     .borrow(
       inspectAsset, //                          read the use count  (&Asset)
       useAndKeepCoupon(BOB.toSuiAddress()), //  use, keep the coupon (&mut Asset)

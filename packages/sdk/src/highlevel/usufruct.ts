@@ -134,133 +134,47 @@ export interface Usufruct {
   /** My address (identity), or `null` when anonymous. */
   readonly address: string | null;
 
-  // ── the four-verb surface (additive; the flat methods below are removed in Phase E) ──
+  // nav (zoom to a node) + the four verbs at global scope
   readonly nav: RootNavVerb;
   readonly read: RootReadVerb;
   readonly inspect: RootInspectVerb;
   readonly react: RootReactVerb;
   readonly write: RootWriteVerb;
-  /** Wire identity + signing after construction — a held `Signer`, or an `Executor` (wallet/Ledger/sponsor). */
+
+  // entry utilities (the plumbing of the lens itself — not verbs)
+  /** Wire identity + signing after construction — a held `Signer`, or an `Executor`. */
   connect(signerOrExecutor: Signer | Executor): void;
-
-  /** Door: resolve an escrow's state + the signer's role here (one fetch). */
-  escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
-
-  /**
-   * Resolve MANY escrow handles in a few round-trips — the cross-escrow batch
-   * (dashboards, portfolios). One `getObjects` + two interleaved view
-   * simulations + role deduped across the set, vs one `escrow(id)` worth of IO
-   * *per* escrow. Same handles, same values; just fewer trips.
-   */
-  escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
-
-  /**
-   * React to changes across *many* escrows over **one** gRPC firehose. `onChange`
-   * fires with a re-resolved handle for each escrow's current state, then on every
-   * on-chain change. The returned `PortfolioWatch` grows/shrinks the set in flight
-   * (`add`/`remove`) and ends with `stop()`. Decode-free (asset-agnostic);
-   * degrades to polling only when no gRPC client is available. See also
-   * `governanceCap.watch()` to watch a whole portfolio by possession.
-   */
-  watchMany(
-    escrowIds: string[],
-    onChange: (e: Escrow) => void,
-    opts?: { intervalMs?: number },
-  ): PortfolioWatch;
-
-  /**
-   * Genesis: wrap an owned `asset` into a rental market priced in `coin`. Mints
-   * three *independent* bearer objects (escrow + governance cap + earnings inbox)
-   * — returned as separate handles, all initially yours, transferable apart.
-   *
-   * `coin` is the immutable `phantom CoinType` of the escrow — fixed here, never
-   * changeable (it's not part of the mutable `Market`).
-   */
-  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{
-    escrow: Escrow;
-    governanceCap: GovernanceCap;
-    earningsInbox: EarningsInbox;
-  }>;
-
-  /**
-   * Compose several write `Plan`s into ONE atomic transaction. Returns a `Plan`
-   * whose result is the tuple of each plan's result, in order. `.send()` builds
-   * all of them into one PTB, executes once, and decodes each — so you write one
-   * `.send()`, not one per write, and the writes land all-or-nothing.
-   *
-   *   const [capA, capB] = await u.batch(eA.rent({ tenures: 1 }), eB.rent({ tenures: 1 })).send();
-   *
-   * Only for **independent** writes (one PTB). Writes that depend on a prior
-   * write's on-chain result need separate transactions (e.g. rent → handover →
-   * borrow). Being a `Plan` itself, a batch composes: `.send(executor)`,
-   * `.build(tx, me)`, `.toTransaction(me)`.
-   */
+  /** Resolve a `CoinTag` for a coin type from on-chain `CoinMetadata` (cached). */
+  coinType(type: string): Promise<CoinTag>;
+  /** Compose several write `Plan`s into ONE atomic transaction (the tuple of results). */
   batch<T extends readonly Plan<unknown>[]>(
     ...plans: T
   ): Plan<{ -readonly [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
-
-  // ── object doors: a handle to a capability object by id (authority = holding it) ──
-  /** The `UsufructCap` (its escrow resolved from the object). */
-  usufructCap(id: string): Promise<UsufructCap>;
-  /** The `GovernanceCap`. */
-  governanceCap(id: string): GovernanceCap;
-  /** An `EarningsInbox`. */
-  earningsInbox(id: string): EarningsInbox;
-  /**
-   * The deployer's `ProtocolFeeInbox`. With no id, resolves the deployment
-   * singleton from the configured `ProtocolFeeRef` (the inbox is one object per
-   * deployment, pinned by the frozen ref) — so the holder just calls
-   * `u.feeInbox()` without hunting an id off an escrow.
-   */
-  feeInbox(id?: string): Promise<ProtocolFeeInbox>;
-
-  /**
-   * Resolve a `CoinTag` for a coin type, reading its decimals/symbol from the
-   * on-chain `CoinMetadata` (cached). Saves the dev from hardcoding them — and
-   * keeps the SDK coin-agnostic (no assumed 9 decimals). `await u.coinType(t)`.
-   */
-  coinType(type: string): Promise<CoinTag>;
-
-  // ── discovery: find escrows by relationship, via the indexer's typed events ──
-  /**
-   * The escrows `integrator` *integrated* — read from `AssetIntegrated` events as
-   * decode-free `EscrowListing`s. This is who brought the escrow into being, NOT
-   * who governs it now: governance is **object-centric** — the holder of the
-   * `GovernanceCap` governs, and that cap can be transferred. Each listing
-   * carries `governanceCapId`; to know if *you* govern, check the handle
-   * (`(await listing.escrow()).canGovern`). Requires a `graphql` endpoint.
-   */
-  escrowsIntegratedBy(integrator: string): Promise<EscrowListing[]>;
-  /**
-   * The escrows `holder` **governs right now** — object-centric, by possession.
-   * The `GovernanceCap` does NOT store which escrows it governs (that link lives
-   * only in the `AssetIntegrated` event log), so this lists `holder`'s owned
-   * `GovernanceCap`s and intersects them with the event log. Unlike
-   * `escrowsIntegratedBy`, it follows the cap: it includes escrows whose cap was
-   * transferred TO `holder`, and excludes ones whose cap they gave away. One cap
-   * can govern many escrows (a portfolio) — all are returned. Needs `graphql`.
-   */
-  escrowsGovernedBy(holder: string): Promise<EscrowListing[]>;
-  /**
-   * The escrows `holder` **rents** right now — object-centric, by possession. The
-   * `UsufructCap` *stores* its escrow on-chain (`escrow_identity`), so this reads
-   * `holder`'s owned caps directly (no events for the cap→escrow link) and enriches
-   * to `EscrowListing`s from the event log. Needs `graphql`.
-   */
-  escrowsRentedBy(holder: string): Promise<EscrowListing[]>;
-  /**
-   * The escrows a specific `GovernanceCap` governs — its **portfolio**, keyed on
-   * the cap object itself (the purest object-centric query: the cap *is* the
-   * governor). `escrowsGovernedBy(addr)` is the union of this over `addr`'s owned
-   * caps. Needs `graphql`. (Also on the handle: `governanceCap.escrows()`.)
-   */
-  escrowsGovernedByCap(governanceCapId: string): Promise<EscrowListing[]>;
-  /** The escrows of a given asset Move type, as decode-free `EscrowListing`s. */
-  escrowsByAssetType(assetType: string): Promise<EscrowListing[]>;
-  /** The escrows priced in a given coin (payment `CoinType`), as `EscrowListing`s. */
-  escrowsByCoinType(coinType: string): Promise<EscrowListing[]>;
-
   /** The core primitives (`Source` + `Reader`), untouched. */
+  readonly primitives: Primitives;
+}
+
+/** Internal scaffolding — the closures the global verbs delegate to. The public
+ *  handle is verbs + utilities only; these flat names are not exported. */
+interface UsufructFlat {
+  readonly address: string | null;
+  connect(signerOrExecutor: Signer | Executor): void;
+  escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+  escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
+  watchMany(escrowIds: string[], onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): PortfolioWatch;
+  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{ escrow: Escrow; governanceCap: GovernanceCap; earningsInbox: EarningsInbox }>;
+  batch<T extends readonly Plan<unknown>[]>(...plans: T): Plan<{ -readonly [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
+  usufructCap(id: string): Promise<UsufructCap>;
+  governanceCap(id: string): GovernanceCap;
+  earningsInbox(id: string): EarningsInbox;
+  feeInbox(id?: string): Promise<ProtocolFeeInbox>;
+  coinType(type: string): Promise<CoinTag>;
+  escrowsIntegratedBy(integrator: string): Promise<EscrowListing[]>;
+  escrowsGovernedBy(holder: string): Promise<EscrowListing[]>;
+  escrowsRentedBy(holder: string): Promise<EscrowListing[]>;
+  escrowsGovernedByCap(governanceCapId: string): Promise<EscrowListing[]>;
+  escrowsByAssetType(assetType: string): Promise<EscrowListing[]>;
+  escrowsByCoinType(coinType: string): Promise<EscrowListing[]>;
   readonly primitives: Primitives;
 }
 
@@ -342,7 +256,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     ...(retry ? { retry } : {}),
   });
 
-  const base: Omit<Usufruct, 'nav' | 'read' | 'inspect' | 'react' | 'write'> = {
+  const base: UsufructFlat = {
     get address() {
       return resolveAccount();
     },
@@ -520,6 +434,21 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   const react: RootReactVerb = { watchMany: base.watchMany };
   const write: RootWriteVerb = { integrate: base.integrate };
 
-  // Object.assign (not spread) so the live `address` getter survives.
-  return Object.assign(base, { nav, read, inspect, react, write });
+  // The public handle: identity + verbs + entry utilities. The flat `base` methods
+  // (escrow/integrate/…) are internal scaffolding the verbs delegate to; they do not
+  // leak onto the handle. The `address` getter is redefined here to stay live.
+  return {
+    get address() {
+      return resolveAccount();
+    },
+    nav,
+    read,
+    inspect,
+    react,
+    write,
+    connect: base.connect,
+    coinType: base.coinType,
+    batch: base.batch,
+    primitives,
+  };
 }

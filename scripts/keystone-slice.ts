@@ -90,15 +90,18 @@ async function main() {
 
   step('2. NEW API — Bob reads it (state + role in one fetch)');
   const u = usufruct({ client, signer: bob });
-  const sword = await u.escrow(escrowA);
-  check('status idle', sword.status === 'idle', sword.status);
-  check('isAvailable', sword.isAvailable === true);
-  check('canRent (Bob has a signer)', sword.canRent === true);
-  check('canBorrow false (no cap yet)', sword.canBorrow === false);
-  check('floorPrice == rest price', sword.floorPrice.mist === REST_PRICE, `${sword.floorPrice}`);
+  const sword = await u.nav.escrow(escrowA);
+  const swordState = await sword.read.assetState();
+  const swordRole = await sword.read.role();
+  const swordFloor = await sword.read.floorPrice();
+  check('status idle', swordState.kind === 'idle', swordState.kind);
+  check('isAvailable', ['idle', 'descent'].includes(swordState.kind) === true);
+  check('canRent (Bob has a signer)', swordRole.canRent === true);
+  check('canBorrow false (no cap yet)', swordRole.canBorrow === false);
+  check('floorPrice == rest price', swordFloor.mist === REST_PRICE, `${swordFloor}`);
 
   step('3. NEW API — Bob rents 2 tenures (pay defaults to floor×2)');
-  const cap = await sword.rent({ tenures: 2 }).send();
+  const cap = await sword.write.rent({ tenures: 2 }).send();
   check('cap minted + received', cap.id.length === 66, cap.id);
   check('receipt.paid == floor×2', cap.receipt?.paid.mist === REST_PRICE * 2n, `${cap.receipt?.paid}`);
   check(
@@ -108,7 +111,7 @@ async function main() {
   );
 
   step('4. NEW API — keystone: cap.borrow → use_asset → guaranteed return (one PTB)');
-  const { digest, returned } = await cap.borrow((asset, tx) => {
+  const { digest, returned } = await cap.write.borrow((asset, tx) => {
     const coupon = tx.moveCall({
       target: `${DUMMY_PKG}::dummy_asset::use_asset`,
       arguments: [asset],
@@ -118,20 +121,23 @@ async function main() {
   check('borrow returned the asset (one PTB)', returned === true, digest);
 
   step('5. NEW API — role re-resolves: Bob now holds the active cap');
-  const swordAfter = await u.escrow(escrowA);
-  check('canBorrow true now', swordAfter.canBorrow === true);
-  check('escrow.activeCap id matches the rented cap', swordAfter.activeCap?.id === cap.id, `${swordAfter.activeCap?.id}`);
-  check('status occupied', swordAfter.status === 'occupied', swordAfter.status);
+  const swordAfter = await u.nav.escrow(escrowA);
+  const swordAfterRole = await swordAfter.read.role();
+  const swordAfterActiveCap = await swordAfter.nav.activeCap();
+  const swordAfterState = await swordAfter.read.assetState();
+  check('canBorrow true now', swordAfterRole.canBorrow === true);
+  check('escrow.activeCap id matches the rented cap', swordAfterActiveCap?.id === cap.id, `${swordAfterActiveCap?.id}`);
+  check('status occupied', swordAfterState.kind === 'occupied', swordAfterState.kind);
 
   step('6. overpay is allowed — the minimum is not a maximum (fresh escrow)');
   const escrowB = await integrate();
-  const swordB = await u.escrow(escrowB);
+  const swordB = await u.nav.escrow(escrowB);
   const overpayMist = REST_PRICE * 2n + 500n;
-  const capB = await swordB.rent({ tenures: 2, pay: price(mist(overpayMist), DUMMY) }).send();
+  const capB = await swordB.write.rent({ tenures: 2, pay: price(mist(overpayMist), DUMMY) }).send();
   check('overpay receipt.paid == requested', capB.receipt?.paid.mist === overpayMist, `${capB.receipt?.paid}`);
-  const swordB2 = await u.escrow(escrowB);
-  const stake = await swordB2.reader.activeStakeBalanceMist();
-  check('overpay became stake on-chain', stake === overpayMist, `stake=${stake}`);
+  const swordB2 = await u.nav.escrow(escrowB);
+  const stake = await swordB2.read.activeStake();
+  check('overpay became stake on-chain', stake?.mist === overpayMist, `stake=${stake}`);
 
   finish();
 }

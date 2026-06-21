@@ -60,41 +60,42 @@ async function main(): Promise<void> {
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
 
   step('① integrate + rent — ask the ACTIVE cap about itself (cap.state())');
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow, governanceCap } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   const bob = await newRenter();
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
+  await (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send();
 
-  const occ = await a.escrow(escrow.id);
-  const activeCap = await a.usufructCap(occ.activeUsufructCapId!); // read-only resolve, no ownership
-  const active = await activeCap.state();
+  const occ = await a.nav.escrow(escrow.id);
+  const activeCap = await a.nav.usufructCap((await occ.read.activeUsufructCapId())!); // read-only resolve, no ownership
+  const active = await activeCap.read.state();
   check('active cap: role === active', active.role === 'active', active.role);
   check('active cap: stake > 0', (active.stake?.mist ?? 0n) > 0n, active.stake?.format());
   check('active cap: timeRemainingMs > 0', (active.timeRemainingMs ?? 0) > 0, `${active.timeRemainingMs} ms`);
   check('active cap: accruedCredit surfaced', active.accruedCredit !== null, active.accruedCredit?.format());
   check('active cap: usufructuary is Bob', active.usufructuaryAddr === bob.toSuiAddress());
-  check('activeCap.isActive() === true', (await activeCap.isActive()) === true);
+  check('activeCap.isActive() === true', (await activeCap.read.isActive()) === true);
 
   step('② challenge — the PENDING cap routes to pending, active-only fields gate to null');
   const carol = await newRenter();
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send(); // bid on the occupied escrow → demand
-  const demand = await a.escrow(escrow.id);
-  const pendingCap = await a.usufructCap(demand.pendingUsufructCapId!);
-  const pending = await pendingCap.state();
+  await (await uc.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send(); // bid on the occupied escrow → demand
+  const demand = await a.nav.escrow(escrow.id);
+  const pendingCap = await a.nav.usufructCap((await demand.read.pendingUsufructCapId())!);
+  const pending = await pendingCap.read.state();
   check('pending cap: role === pending', pending.role === 'pending', pending.role);
   check('pending cap: stake > 0', (pending.stake?.mist ?? 0n) > 0n, pending.stake?.format());
   check('pending cap: committedTenures set', pending.committedTenures !== null, `${pending.committedTenures}`);
   check('pending cap: accruedCredit gated to null', pending.accruedCredit === null);
   check('pending cap: timeRemainingMs gated to null', pending.timeRemainingMs === null, `${pending.timeRemainingMs}`);
-  check('pendingCap.isActive() === false', (await pendingCap.isActive()) === false);
+  check('pendingCap.isActive() === false', (await pendingCap.read.isActive()) === false);
 
   step('③ escrow keeps escrow-whole reads (floor + bid preview)');
-  const preview = await demand.nextFloorPrice(demand.coin(1), 1);
-  check('nextFloorPrice ≥ floorPrice', preview.mist >= demand.floorPrice.mist, `${preview.format()} ≥ ${demand.floorPrice.format()}`);
+  const demandFloor = await demand.read.floorPrice();
+  const preview = await demand.read.nextFloorPrice(demand.coin(1), 1);
+  check('nextFloorPrice ≥ floorPrice', preview.mist >= demandFloor.mist, `${preview.format()} ≥ ${demandFloor.format()}`);
 
   step('④ governance — the cap answers whether it governs this escrow');
-  check('governanceCap.governs(escrow) === true', (await governanceCap.governs(escrow.id)) === true);
+  check('governanceCap.governs(escrow) === true', (await governanceCap.read.governs(escrow.id)) === true);
 }
 
 main().then(finish);

@@ -25,7 +25,7 @@ async function main() {
   const assetId = createdId(await send(client, tx, me), '::dummy_asset::DummyAsset');
 
   const u = usufruct({ client, signer: me });
-  const { escrow } = await u
+  const { escrow } = await u.write
     .integrate({
       asset: assetId,
       coin: DUMMY,
@@ -37,17 +37,18 @@ async function main() {
       },
     })
     .send();
-  await u.escrow(escrow.id).then((e) => e.rent({ tenures: 1 }).send());
+  await u.nav.escrow(escrow.id).then((e) => e.write.rent({ tenures: 1 }).send());
   console.log('   escrow', escrow.id);
 
   step('the new views, live');
-  const e = await u.escrow(escrow.id);
-  const nb = await e.nextBoundaryAt();
-  const nt = await e.nextTransitionAt();
-  const de = await e.descentExpiresAt();
+  const e = await u.nav.escrow(escrow.id);
+  const nb = await e.read.nextBoundaryAt();
+  const nt = await e.read.nextTransitionAt();
+  const de = await e.read.descentExpiresAt();
+  const expiresAt = await e.read.expiresAt();
 
   check('nextBoundaryAt() is some (occupied → tenure end)', nb != null, String(nb?.toISOString()));
-  check('nextBoundaryAt() === expiresAt', nb?.getTime() === e.expiresAt?.getTime(), String(e.expiresAt?.toISOString()));
+  check('nextBoundaryAt() === expiresAt', nb?.getTime() === expiresAt?.getTime(), String(expiresAt?.toISOString()));
   check('nextTransitionAt() is null (boundary not crossed)', nt === null);
   check('descentExpiresAt() is null in occupied (and did NOT abort → view exists)', de === null);
 

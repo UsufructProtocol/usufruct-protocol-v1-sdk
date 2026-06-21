@@ -68,25 +68,25 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow, earningsInbox } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① Alice listed ${escrow.id}`);
   console.log(`   earnings inbox (one per escrow) = ${earningsInbox.inboxId}\n`);
 
   // Fresh inbox → before is 0, but we still measure a DELTA, symmetric with the fee.
   const dummyMist = async () =>
-    (await earningsInbox.balance()).find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
+    (await earningsInbox.read.balance()).find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   const before = await dummyMist();
 
   // ════════════ ② RENT — Bob takes it; pays the stake that becomes credit ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
+  const bobCap = await (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send();
   console.log(`② Bob rented — paid ${bobCap.receipt!.paid}; tenure ends ${bobCap.receipt!.expiresAt.toISOString()}\n`);
 
   // ════════════ ③ EXPIRE — wait out the tenure, then settle (posts the earnings) ════════════
   console.log('③ waiting out the tenure, then settling (apply posts earnings + fee)…');
   await waitForChainTime(client, BigInt(bobCap.receipt!.expiresAt.getTime()));
-  await (await a.escrow(escrow.id)).applyPendingTransitionStates().send();
-  console.log(`   settled — status is now ${(await a.escrow(escrow.id)).status}\n`);
+  await (await a.nav.escrow(escrow.id)).write.applyPendingTransitionStates().send();
+  console.log(`   settled — status is now ${(await (await a.nav.escrow(escrow.id)).read.assetState()).kind}\n`);
 
   // ════════════ ④ PREVIEW — the earnings delta is exactly 90% of consumed credit ════════════
   const after = await dummyMist();
@@ -98,17 +98,17 @@ async function main() {
   // ════════════ ⑤ GUARD — a non-holder cannot collect; the chain refuses ════════════
   // Authority IS possession: Bob doesn't hold the inbox, so his collect (which
   // needs &mut EarningsInbox) is rejected at execution — not by our code, by Sui.
-  const bobEarnings = ub.earningsInbox(earningsInbox.inboxId);
+  const bobEarnings = ub.nav.earningsInbox(earningsInbox.inboxId);
   let refused = false;
   try {
-    await bobEarnings.collect().send();
+    await bobEarnings.write.collect().send();
   } catch {
     refused = true;
   }
   check('Bob (non-holder) cannot collect Alice’s earnings', refused);
 
   // ════════════ ⑥ COLLECT — Alice collects (she holds the inbox), by coin (§5.2) ════════════
-  const collected = await earningsInbox.collect().send();
+  const collected = await earningsInbox.write.collect().send();
   console.log(`⑥ Alice swept:`, collected.map((b) => `${b.amount}`).join(', ') || '(empty)');
   const collectedDummy = collected.find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   check('Alice collected at least this run’s earnings', collectedDummy >= expected, `${collectedDummy} mist`);

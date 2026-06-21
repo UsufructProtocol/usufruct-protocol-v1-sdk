@@ -63,12 +63,12 @@ async function main(): Promise<void> {
   const u = usufruct({ network: 'testnet', signer: ALICE, graphql: GRAPHQL_TESTNET });
 
   step('① integrate A, then B into the same GovernanceCap');
-  const { escrow: a, governanceCap: gov, earningsInbox } = await u.integrate({
+  const { escrow: a, governanceCap: gov, earningsInbox } = await u.write.integrate({
     asset: await mintAsset(),
     coin: DUMMY,
     market: market(0.01),
   }).send();
-  const b = await gov.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
+  const b = await gov.write.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
     earningsInbox: earningsInbox.inboxId,
   }).send();
   console.log(`  A=${a.id.slice(0, 10)}…  B=${b.id.slice(0, 10)}…  cap=${gov.capId.slice(0, 10)}…`);
@@ -78,8 +78,8 @@ async function main(): Promise<void> {
   const claimed = new Set<number>();
   const waiters: Array<() => void> = [];
   let seq = 0;
-  const onChange = (e: Escrow) => {
-    ticks.push({ id: e.id, status: e.status, n: ++seq });
+  const onChange = async (e: Escrow) => {
+    ticks.push({ id: e.id, status: (await e.read.assetState()).kind, n: ++seq });
     for (const w of [...waiters]) w();
   };
   const find = (pred: (t: Tick) => boolean): Tick | undefined =>
@@ -112,19 +112,19 @@ async function main(): Promise<void> {
     });
 
   step('② u.watchMany([A,B]) — expect two initials, tagged by id');
-  const watch = u.watchMany([a.id, b.id], onChange);
+  const watch = u.react.watchMany([a.id, b.id], onChange);
   try {
     await nextUpdate((t) => t.id === a.id);
     await nextUpdate((t) => t.id === b.id);
     check('both initials arrived (A and B), tagged by id', true);
 
     step('③ mutate A (updateMarket) — expect one update for A');
-    await gov.updateMarket(a.id, { restPrice: DUMMY(0.02) }).send();
+    await gov.write.updateMarket(a.id, { restPrice: DUMMY(0.02) }).send();
     const ua = await nextUpdate((t) => t.id === a.id);
     check('A change pushed over the firehose', ua.id === a.id);
 
     step('④ add C in flight — expect C initial');
-    const c = await gov.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
+    const c = await gov.write.integrateIntoPortfolio(await mintAsset(), DUMMY, market(0.01), {
       earningsInbox: earningsInbox.inboxId,
     }).send();
     watch.add(c.id);
@@ -132,14 +132,14 @@ async function main(): Promise<void> {
     check('added escrow C emits its initial', ic.id === c.id);
 
     step('⑤ mutate B — expect an update for B');
-    await gov.updateMarket(b.id, { restPrice: DUMMY(0.02) }).send();
+    await gov.write.updateMarket(b.id, { restPrice: DUMMY(0.02) }).send();
     const ub = await nextUpdate((t) => t.id === b.id);
     check('B change pushed', ub.id === b.id);
 
     step('⑥ remove A, mutate A — expect silence for A');
     watch.remove(a.id);
     const aBefore = ticks.filter((t) => t.id === a.id).length;
-    await gov.updateMarket(a.id, { restPrice: DUMMY(0.03) }).send();
+    await gov.write.updateMarket(a.id, { restPrice: DUMMY(0.03) }).send();
     await sleep(10_000);
     const aAfter = ticks.filter((t) => t.id === a.id).length;
     check('no A update after remove()', aAfter === aBefore, `${aBefore}→${aAfter}`);
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     step('⑦ stop — expect no further callbacks');
     watch.stop();
     const total = ticks.length;
-    await gov.updateMarket(b.id, { restPrice: DUMMY(0.04) }).send();
+    await gov.write.updateMarket(b.id, { restPrice: DUMMY(0.04) }).send();
     await sleep(8_000);
     check('no callbacks after stop()', ticks.length === total, `${total}→${ticks.length}`);
   } finally {
@@ -158,13 +158,13 @@ async function main(): Promise<void> {
   // The indexer trails the fullnode; poll discovery until it sees the portfolio.
   let portfolio: string[] = [];
   for (let i = 0; i < 12 && portfolio.length < 2; i++) {
-    portfolio = (await gov.escrows()).map((l) => l.escrowId);
+    portfolio = (await gov.inspect.escrows()).map((l) => l.escrowId);
     if (portfolio.length < 2) await sleep(5_000);
   }
   check('discovery found the portfolio (≥2 escrows)', portfolio.length >= 2, `found ${portfolio.length}`);
   if (portfolio.length >= 2) {
     const seen = new Set<string>();
-    const pWatch = await gov.watch((e) => seen.add(e.id));
+    const pWatch = await gov.react.watch((e) => seen.add(e.id));
     // initials for the whole portfolio should arrive
     for (let i = 0; i < 12 && seen.size < 2; i++) await sleep(2_000);
     check('governanceCap.watch() emitted portfolio initials', seen.size >= 2, `initials ${seen.size}`);

@@ -52,15 +52,15 @@ async function main() {
   const [asset1, asset2] = await setup();
   const u = usufruct({ network: 'testnet', client, signer: ALICE });
 
-  const r1 = await u.integrate({ asset: asset1, coin: DUMMY, market: MARKET }).send();
-  const r2 = await u.integrate({ asset: asset2, coin: DUMMY, market: MARKET }).send();
+  const r1 = await u.write.integrate({ asset: asset1, coin: DUMMY, market: MARKET }).send();
+  const r2 = await u.write.integrate({ asset: asset2, coin: DUMMY, market: MARKET }).send();
   console.log(`listed ${r1.escrow.id} and ${r2.escrow.id}\n`);
 
   // Two market changes, ONE atomic transaction — one .send(), all-or-nothing.
   const [a, b] = await u
     .batch(
-      r1.governanceCap.updateMarket(r1.escrow, { restPrice: DUMMY(0.02) }),
-      r2.governanceCap.updateMarket(r2.escrow, { restPrice: DUMMY(0.03) }),
+      r1.governanceCap.write.updateMarket(r1.escrow, { restPrice: DUMMY(0.02) }),
+      r2.governanceCap.write.updateMarket(r2.escrow, { restPrice: DUMMY(0.03) }),
     )
     .send();
 

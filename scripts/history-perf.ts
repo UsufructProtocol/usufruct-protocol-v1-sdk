@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const u = usufruct({ network: 'testnet', graphql: gql });
 
   step('① discover a live escrow (priced in DUMMY) via the indexer');
-  const listings = await u.escrowsByCoinType(DUMMY.type);
+  const listings = await u.inspect.byCoinType(DUMMY.type);
   check('found at least one escrow', listings.length > 0, `${listings.length} listings`);
   if (listings.length === 0) return;
   // Discovery (AssetIntegrated events) includes long-gone escrows; the most recent
@@ -59,11 +59,11 @@ async function main(): Promise<void> {
   }
   check('resolved a live escrow', escrow !== null);
   if (escrow === null) return;
-  console.log(`  escrow ${escrow.id.slice(0, 12)}… (status=${escrow.status})`);
+  console.log(`  escrow ${escrow.id.slice(0, 12)}… (status=${(await escrow.read.assetState()).kind})`);
 
-  step('② escrow.history() — walk the escrow’s own transactions (affectedObject)');
+  step('② escrow.inspect.history() — walk the escrow’s own transactions (affectedObject)');
   reset();
-  const events = await escrow.history();
+  const events = await escrow.inspect.history();
   const reqs = queries();
   check('history is non-empty', events.length > 0, `${events.length} events`);
   const ordered = events.every(

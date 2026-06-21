@@ -75,35 +75,39 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}`);
 
   // ② RENT — Bob occupies
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send());
+  await withRetry(async () => (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send());
   console.log('② Bob rented — occupied\n');
 
   // ③ WATCH — the keeper starts waiting for a challenge (do NOT await yet)
-  console.log('③ keeper watching for a challenge (escrow.waitFor(e => e.isChallenged))…');
-  const keeper = withRetry(() => a.escrow(escrow.id)).then((e) =>
-    e.waitFor((s) => s.isChallenged, { timeoutMs: 120_000 }),
+  console.log('③ keeper watching for a challenge (escrow.react.waitFor(async e => (await e.read.assetState()).kind === "demand"))…');
+  const keeper = withRetry(() => a.nav.escrow(escrow.id)).then((e) =>
+    e.react.waitFor(async (s) => (await s.read.assetState()).kind === 'demand', { timeoutMs: 120_000 }),
   );
 
   // ④ CHALLENGE — Carol bids on the occupied escrow
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send());
+  await withRetry(async () => (await uc.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send());
   console.log('④ Carol bid on the occupied escrow (the challenge)\n');
 
   // ⑤ REACT — the keeper's wait resolves the moment the state turns to demand
   const challenged = await keeper;
-  const pendingIsCarol = challenged.pendingUsufructuaryAddr === carol.toSuiAddress();
-  console.log(`⑤ keeper reacted — status=${challenged.status}, challenger=${pendingIsCarol ? 'Carol' : challenged.pendingUsufructuaryAddr}`);
-  console.log(`   acting: waiting out the handover (until ${challenged.handoverExpiresAt?.toISOString()}), then settling…`);
-  await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
-  await challenged.applyPendingTransitionStates().send();
-  const after = await withRetry(() => a.escrow(escrow.id));
-  console.log(`   settled — status=${after.status}; active cap = ${after.activeUsufructCapId?.slice(0, 12)}…`);
-  console.log(after.status === 'occupied' ? '\nALL PASS — keeper waited, reacted, settled.' : '\nUNEXPECTED');
+  const challengedState = await challenged.read.assetState();
+  const challenger = challengedState.kind === 'demand' ? challengedState.challenger : undefined;
+  const handoverExpiresAt = challengedState.kind === 'demand' ? challengedState.handoverExpiresAt : undefined;
+  const pendingIsCarol = challenger === carol.toSuiAddress();
+  console.log(`⑤ keeper reacted — status=${challengedState.kind}, challenger=${pendingIsCarol ? 'Carol' : challenger}`);
+  console.log(`   acting: waiting out the handover (until ${handoverExpiresAt?.toISOString()}), then settling…`);
+  await waitForChainTime(client, BigInt(handoverExpiresAt!.getTime()));
+  await challenged.write.applyPendingTransitionStates().send();
+  const after = await withRetry(() => a.nav.escrow(escrow.id));
+  const afterState = await after.read.assetState();
+  console.log(`   settled — status=${afterState.kind}; active cap = ${(await after.read.activeUsufructCapId())?.slice(0, 12)}…`);
+  console.log(afterState.kind === 'occupied' ? '\nALL PASS — keeper waited, reacted, settled.' : '\nUNEXPECTED');
   process.exit(0);
 }
 
