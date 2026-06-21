@@ -36,13 +36,19 @@ npm i @usufruct-protocol/sdk @mysten/sui
 import { usufruct } from '@usufruct-protocol/sdk';
 
 const u = usufruct({ network: 'testnet', graphql: 'https://graphql.testnet.sui.io/graphql' });
-const escrow = await u.escrow('0x…');   // one fetch: state @ now + "what can I do here?"
-escrow.status;        // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
-escrow.floorPrice;    // a Price, rendered in the escrow's own coin
+
+const escrow = await u.nav.escrow('0x…');           // resolve the handle (identity only)
+const state  = await escrow.read.assetState();      // live: a discriminated union
+state.kind;                                          // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
+await escrow.read.floorPrice();                      // a Price, rendered in the escrow's own coin
+await escrow.write.rent({ tenures: 1 }).send();      // pay the floor → a UsufructCap
 ```
 
-The whole surface is four object-centric verbs — **read · write · inspect · react**.
-Full quickstart in the [core package README](./packages/sdk/README.md).
+Every object is its **identity** (the object's name) plus five verbs —
+**`nav · read · inspect · react · write`** — and the shape is **fractal**: the same
+five sit on the root `u` and on every handle (escrow / cap / governanceCap / inbox).
+See [the fractal, navigable API](./journeys/read-write-inspect-react.md). Full
+quickstart in the [core package README](./packages/sdk/README.md).
 
 ## Design & reference
 
@@ -54,7 +60,8 @@ Full quickstart in the [core package README](./packages/sdk/README.md).
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the primitives, how they compose, and the
   drift-zero seam.
 - [`journeys/`](./journeys) — the object model (authority = possession), the
-  read·write·inspect·react mental model,
+  [fractal, navigable API](./journeys/read-write-inspect-react.md)
+  (`nav · read · inspect · react · write`),
   [write paths](./journeys/write-paths.md) (`Plan` · `send` vs `build`), and
   [borrow composition](./journeys/borrow-composition.md) (recipes around the rented asset).
 - [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.

@@ -7,6 +7,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
+## [1.0.0-rc.1] — Unreleased
+
+The handle API is reshaped into one fractal, navigable form: every object is its
+**identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
+write`** — repeated identically on the root `u` and on every handle. This is the v1.0
+shape (release candidate).
+
+### Changed (breaking)
+
+- **Handles are identity + verbs only.** The flat surface is gone:
+  `escrow.status`/`floorPrice`/`rent()`/`activeCap`/… → `escrow.read.assetState()`
+  (a discriminated union), `escrow.read.floorPrice()`, `escrow.write.rent()`,
+  `escrow.nav.activeCap()`. Same for `UsufructCap`, `GovernanceCap`, the inboxes, and
+  the root (`u.escrow(id)` → `u.nav.escrow(id)`; `u.escrowsGovernedBy` →
+  `u.inspect.governedBy`; `u.integrate` → `u.write.integrate`).
+- **No fetch-time photo.** `Escrow` construction is lazy — it resolves only identity
+  (type args + coin); the verbs read the deployed views live, so nothing the handle
+  exposes can go stale. The eager snapshot/role batch (and its `createEscrowMany`
+  pre-resolution) is removed.
+- **`nav`** is the new verb for graph edges (an escrow's seats/counterparts, a cap's
+  escrow, the root's "open this id"); collections stay under `inspect`.
+- **`read`** auto-renders the protocol's whole view surface (mist→`Price`,
+  ms→`Date`/duration) — every on-chain view has a home on the object — plus composites
+  (`assetState`, `market`, `cycle`, `role`, live `creditCurve`/`descentCurve`).
+- **No `escrow.reader`** on the handle; the kernel reader stays reachable via
+  `u.primitives.reader(target)`.
+- **`react.waitFor`** takes an async predicate over the handle and resolves to the
+  handle: `escrow.react.waitFor(async e => (await e.read.assetState()).kind === 'demand')`.
+
+### Fixed
+
+- The live `escrow.read.descentCurve()` derives its params from
+  `descentExpiryMs`/`phaseStartMs`/`floorPriceMist` — during descent there is no
+  active cycle, so `activeCycleParams` is `null`. Now drift-zero against the view.
+
 ## [0.1.0] — Unreleased
 
 First public release. The SDK is the high-level, object-centric TypeScript API over
