@@ -98,7 +98,7 @@ async function main() {
   const assetId = createdId(await send(client, tx, me), '::dummy_asset::DummyAsset');
 
   const u = usufruct({ client, signer: me });
-  const { escrow } = await u
+  const { escrow } = await u.write
     .integrate({
       asset: assetId,
       coin: DUMMY,
@@ -112,9 +112,9 @@ async function main() {
       },
     })
     .send();
-  const seat = await u.escrow(escrow.id);
+  const seat = await u.nav.escrow(escrow.id);
   // Overpay (0.5 ≫ the 0.01 floor) so the auction has a high ceiling to descend FROM.
-  const rentCap = await seat.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+  const rentCap = await seat.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
   console.log('   rented (overpaid → high ceiling, big credit principal)');
 
   const { client: counting, count } = countingSims(makeClient());
@@ -132,9 +132,10 @@ async function main() {
 
   step('settle into descent, then curve ② — the Dutch auction  (auctionShape: logistic)');
   await waitForChainTime(client, BigInt(rentCap.receipt!.expiresAt.getTime()));
-  await seat.applyPendingTransitionStates().send();
-  const e = await u.escrow(escrow.id);
-  check('escrow is in descent', e.status === 'descent', e.status);
+  await seat.write.applyPendingTransitionStates().send();
+  const e = await u.nav.escrow(escrow.id);
+  const eState = await e.read.assetState();
+  check('escrow is in descent', eState.kind === 'descent', eState.kind);
   const tDesc = await chainNowMs(client);
   const floor = await sampleCurve((t) => reader.floorPriceMist(t as never), tDesc, 5_000n, 13); // 0…60s
   console.log('   floorPriceMist(t) — DUMMY:\n');

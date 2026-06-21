@@ -116,7 +116,7 @@ async function main() {
   const assetId = createdId(await send(client, mintTx, me), '::dummy_asset::DummyAsset');
   const bidders = await fundBidders(8);
 
-  const { escrow, governanceCap } = await u
+  const { escrow, governanceCap } = await u.write
     .integrate({
       asset: assetId,
       coin: DUMMY,
@@ -131,16 +131,16 @@ async function main() {
     })
     .send();
   const id = escrow.id;
-  const seat = await u.escrow(id);
+  const seat = await u.nav.escrow(id);
 
   /** Apply at each boundary until the escrow reaches `target`. */
   async function driveTo(target: string): Promise<void> {
     for (;;) {
-      const e = await u.escrow(id);
-      if (e.status === target) return;
-      const b = await e.nextBoundaryAt();
+      const e = await u.nav.escrow(id);
+      if ((await e.read.assetState()).kind === target) return;
+      const b = await e.read.nextBoundaryAt();
       if (b) await waitForChainTime(client, BigInt(b.getTime()));
-      await seat.applyPendingTransitionStates().send();
+      await seat.write.applyPendingTransitionStates().send();
     }
   }
 
@@ -150,15 +150,16 @@ async function main() {
     step(`${label} — rent (A), then Demand×4 (one bid + three supersedes)`);
     // Pre-resolve every seat BEFORE bidding, so the bids land back-to-back inside
     // the sitting tenant's handover window (a re-resolve per bid is too slow).
-    const aSeat = await u.escrow(id);
-    const seats = await Promise.all(who.map((b) => b.u.escrow(id)));
-    await aSeat.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+    const aSeat = await u.nav.escrow(id);
+    const seats = await Promise.all(who.map((b) => b.u.nav.escrow(id)));
+    await aSeat.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
     console.log('   A occupied');
     const bids = [0.6, 0.7, 0.8, 0.9];
     for (let i = 0; i < bids.length; i++) {
-      await seats[i]!.rent({ tenures: 1, pay: DUMMY(bids[i]!) }).send();
-      const e = await u.escrow(id);
-      console.log(`   ${i === 0 ? 'bid      ' : 'supersede'} ${bids[i]!.toFixed(2)} DUMMY  → status ${e.status}, pending ${e.pendingUsufructuaryAddr?.slice(0, 8)}…`);
+      await seats[i]!.write.rent({ tenures: 1, pay: DUMMY(bids[i]!) }).send();
+      const es = await (await u.nav.escrow(id)).read.assetState();
+      const pending = es.kind === 'demand' ? es.challenger.slice(0, 8) : '';
+      console.log(`   ${i === 0 ? 'bid      ' : 'supersede'} ${bids[i]!.toFixed(2)} DUMMY  → status ${es.kind}, pending ${pending}…`);
     }
     step(`${label} — let the handover settle (winner occupies), then expire into descent`);
     await driveTo('descent');
@@ -170,13 +171,13 @@ async function main() {
   await runCycle('cycle 1', bidders.slice(0, 4));
 
   step('governance — flip creditShape exponential(+4) → logistic');
-  await governanceCap.updateMarket(id, { creditShape: 'logistic' }).send();
+  await governanceCap.write.updateMarket(id, { creditShape: 'logistic' }).send();
 
   await runCycle('cycle 2', bidders.slice(4, 8));
 
   // ── replay the whole market from the log ──────────────────────────────
   step('escrow.priceTimeline() — the full chronology from events');
-  const timeline = await seat.priceTimeline({ points: 10 });
+  const timeline = await seat.inspect.priceTimeline({ points: 10 });
   for (const s of timeline) {
     const at = s.at.toISOString().slice(11, 19);
     if (s.kind === 'descent') {
@@ -188,7 +189,7 @@ async function main() {
   }
 
   step('escrow.creditHistory() — every tenure (initial + handover occupants), per shape');
-  const hist = await seat.creditHistory({ points: 12 });
+  const hist = await seat.inspect.creditHistory({ points: 12 });
   console.log(renderHistory(hist) + '\n');
   hist.forEach((s, i) =>
     console.log(`   tenure #${i + 1}: ${shapeLabel(s.shape).padEnd(16)} principal ${s.principal.format()}`),

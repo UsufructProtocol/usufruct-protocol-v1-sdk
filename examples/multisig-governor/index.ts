@@ -97,7 +97,7 @@ async function main() {
     (o) => o.idOperation === 'Created' && mintRes.objectTypes?.[o.objectId]?.includes('::dummy_asset::DummyAsset'),
   )!.objectId;
 
-  const { escrow, governanceCap, earningsInbox } = await op
+  const { escrow, governanceCap, earningsInbox } = await op.write
     .integrate({
       asset: swordId,
       coin: DUMMY,
@@ -115,7 +115,8 @@ async function main() {
       },
     })
     .send();
-  console.log('escrow', escrow.id, '· floor', String(escrow.floorPrice), '· cap', governanceCap.capId);
+  const startFloor = await escrow.read.floorPrice(); // capture the genesis floor (live reads drift forward)
+  console.log('escrow', escrow.id, '· floor', String(startFloor), '· cap', governanceCap.capId);
 
   // Hand BOTH the GovernanceCap (to govern) AND the EarningsInbox (to bank income)
   // to the multisig + fund its gas — the multisig is now the treasury. One tx.
@@ -138,18 +139,18 @@ async function main() {
   // The session's default signer is the multisig; `.send()` is identical to the
   // held-Signer path. Raises the rest price 0.01 → 0.02 DUMMY.
   dao.connect(multisigExecutor(msPk, [a, b]));
-  const sync = await dao.governanceCap(governanceCap.capId).updateMarket(escrow.id, {
+  const sync = await dao.nav.governanceCap(governanceCap.capId).write.updateMarket(escrow.id, {
     restPrice: DUMMY(0.02),
   }).send();
   console.log('① synchronous (multisigExecutor, a+b in-process) — digest', sync.digest);
-  console.log('   floor →', String((await dao.escrow(escrow.id)).floorPrice));
+  console.log('   floor →', String(await (await dao.nav.escrow(escrow.id)).read.floorPrice()));
 
   // ── FORM 2: distributed/asynchronous — signers apart in time, no live process ──
   // Build the bytes ONCE; what travels between parties is two strings (bytes +
   // each signature). Party A signs, then (hours/days later, another machine) party
   // B signs, then anyone combines + executes. This is a real DAO/treasury flow.
   // Raises the rest price 0.02 → 0.03 DUMMY.
-  const plan = dao.governanceCap(governanceCap.capId).updateMarket(escrow.id, {
+  const plan = dao.nav.governanceCap(governanceCap.capId).write.updateMarket(escrow.id, {
     restPrice: DUMMY(0.03),
   });
   const tx = await plan.toTransaction(msAddr);
@@ -165,26 +166,27 @@ async function main() {
   console.log('② distributed (toTransaction → sign apart → combine → executeSigned) — digest', dist.digest);
 
   // verify the second change landed on chain.
-  const after = await dao.escrow(escrow.id);
-  console.log(`   floor →`, String(after.floorPrice), `(started at ${String(escrow.floorPrice)})`);
+  const after = await dao.nav.escrow(escrow.id);
+  const afterFloor = await after.read.floorPrice();
+  console.log(`   floor →`, String(afterFloor), `(started at ${String(startFloor)})`);
 
   // ── ③ the treasury EARNS: a renter pays, the tenancy settles ──
   // Governing is only half a treasury; the other half is banking income. The
   // operator stands in as a renter, pays the (now 0.03) floor, the tenure elapses,
   // and the tenancy settles its earnings into the inbox the multisig holds.
   console.log('\n③ a renter pays the floor; wait out the tenure; settle (permissionless)…');
-  const seat = await op.escrow(escrow.id);
-  const rentCap = await seat.rent({ tenures: 1 }).send();
+  const seat = await op.nav.escrow(escrow.id);
+  const rentCap = await seat.write.rent({ tenures: 1 }).send();
   console.log('   rented for', String(rentCap.receipt!.paid), '— until', rentCap.receipt!.expiresAt.toISOString());
   await waitForChainTime(client, BigInt(rentCap.receipt!.expiresAt.getTime()));
-  await seat.applyPendingTransitionStates().send(); // settles earnings into the inbox
+  await seat.write.applyPendingTransitionStates().send(); // settles earnings into the inbox
   console.log('   tenancy settled — earnings are in the inbox the multisig holds');
 
   // ── ④ the multisig COLLECTS — the defining treasury action, SAME seam ──
-  const earned = await dao.earningsInbox(earningsInbox.inboxId).collect().send();
+  const earned = await dao.nav.earningsInbox(earningsInbox.inboxId).write.collect().send();
   console.log('④ collect via 2-of-3 multisig —', earned.map((e) => String(e.amount)).join(', ') || '(nothing)');
 
-  const governed = after.floorPrice.mist === DUMMY(0.03).mist;
+  const governed = afterFloor.mist === DUMMY(0.03).mist;
   const collected = earned.length > 0 && earned.some((e) => e.amount.mist > 0n);
   console.log(
     governed && collected

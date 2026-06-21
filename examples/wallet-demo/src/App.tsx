@@ -47,7 +47,7 @@ export function App() {
         return;
       }
       say(`① integrate asset ${assetId.slice(0, 12)}… — approve in Slush`);
-      const { escrow, governanceCap, earningsInbox } = await u
+      const { escrow, governanceCap, earningsInbox } = await u.write
         .integrate({
           asset: assetId,
           coin: DUMMY,
@@ -85,8 +85,8 @@ export function App() {
         return;
       }
       say(`② rent ${escrowId.slice(0, 12)}… — approve in Slush`);
-      const handle = await u.escrow(escrowId);
-      const cap = await handle.rent({ tenures: 1 }).send();
+      const handle = await u.nav.escrow(escrowId);
+      const cap = await handle.write.rent({ tenures: 1 }).send();
       say(`✓ usufructCap ${cap.id}`);
       say(`  paid ${cap.receipt?.paid} · until ${cap.receipt?.expiresAt.toISOString()}`);
     } catch (e) {

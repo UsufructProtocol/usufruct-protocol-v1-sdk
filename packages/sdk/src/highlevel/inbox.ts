@@ -31,6 +31,28 @@ export interface InboxTotal {
   readonly count: number;
 }
 
+// ── the four-verb surface (additive; no nav — an inbox relates to escrows via the
+//    collection that pays in → inspect, not a single edge). ──
+/** read — the uncollected balance, now. */
+export interface InboxReadVerb {
+  balance(): Promise<Array<{ coin: string; amount: Price }>>;
+}
+/** inspect — the event log / discovery (pull). */
+export interface InboxInspectVerb {
+  history(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]>;
+  totals(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]>;
+  escrowsPushingMessages(): Promise<EscrowListing[]>;
+}
+/** react — the event log (push). */
+export interface InboxReactVerb {
+  watch(onMessage: (m: InboxMessage) => void): () => void;
+}
+/** write — protocol writes (Plan). */
+export interface InboxWriteVerb {
+  collect(): Plan<Array<{ coin: string; amount: Price }>>;
+  transfer(to: string): Plan<{ digest: string }>;
+}
+
 export interface Inbox {
   readonly inboxId: string;
   /** Pending income per coin (preview, no collect). */
@@ -71,6 +93,12 @@ export interface Inbox {
    * every escrow of the deployment. Decode-free `EscrowListing`s. Needs `graphql`.
    */
   escrowsPushingMessages(): Promise<EscrowListing[]>;
+
+  // ── the four-verb surface (additive; the flat members above are removed in Phase E) ──
+  readonly read: InboxReadVerb;
+  readonly inspect: InboxInspectVerb;
+  readonly react: InboxReactVerb;
+  readonly write: InboxWriteVerb;
 }
 
 /** The governor's income mailbox. */
@@ -137,7 +165,7 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
     );
   }
 
-  return {
+  const g: Omit<Inbox, 'read' | 'inspect' | 'react' | 'write'> = {
     inboxId,
     async balance() {
       return sumGroups(client, await discoverInboxMessages(client, inboxId, kind));
@@ -198,4 +226,15 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
       return discoverIntegrated(ctx, kind === 'fees' ? { feeInboxId: inboxId } : { earningsInboxId: inboxId });
     },
   };
+
+  const read: InboxReadVerb = { balance: g.balance };
+  const inspect: InboxInspectVerb = {
+    history: g.history,
+    totals: g.totals,
+    escrowsPushingMessages: g.escrowsPushingMessages,
+  };
+  const react: InboxReactVerb = { watch: g.watch };
+  const write: InboxWriteVerb = { collect: g.collect, transfer: g.transfer };
+
+  return { ...g, read, inspect, react, write };
 }

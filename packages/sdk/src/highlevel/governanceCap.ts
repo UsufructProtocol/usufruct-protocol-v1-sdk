@@ -38,6 +38,33 @@ import { createdIdByType } from './send.js';
 /** An escrow id, or a resolved `Escrow` handle. */
 export type EscrowRef = string | Escrow;
 
+// ── the four-verb surface (additive; no nav — a govcap relates to escrows via its
+//    portfolio collection → inspect, not a single edge). ──
+/** read — live governance check. */
+export interface GovernanceReadVerb {
+  governs(escrow: EscrowRef): Promise<boolean>;
+}
+/** inspect — the event log / discovery (pull). */
+export interface GovernanceInspectVerb {
+  escrows(): Promise<EscrowListing[]>;
+  revenueByEscrow(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<EscrowRevenue[]>;
+}
+/** react — the event log (push), across the whole portfolio. */
+export interface GovernanceReactVerb {
+  watch(onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): Promise<PortfolioWatch>;
+}
+/** write — protocol writes (Plan). */
+export interface GovernanceWriteVerb {
+  updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
+  retire(escrow: EscrowRef): Plan<{ digest: string }>;
+  claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
+  extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
+  extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
+  renounce(): Plan<{ digest: string }>;
+  transfer(to: string): Plan<{ digest: string }>;
+  integrateIntoPortfolio(asset: string, coin: CoinTag, market: Market, opts: { earningsInbox: string }): Plan<Escrow>;
+}
+
 export interface GovernanceCap {
   readonly capId: string;
 
@@ -107,6 +134,12 @@ export interface GovernanceCap {
     onChange: (e: Escrow) => void,
     opts?: { intervalMs?: number },
   ): Promise<PortfolioWatch>;
+
+  // ── the four-verb surface (additive; the flat members above are removed in Phase E) ──
+  readonly read: GovernanceReadVerb;
+  readonly inspect: GovernanceInspectVerb;
+  readonly react: GovernanceReactVerb;
+  readonly write: GovernanceWriteVerb;
 }
 
 interface RefInfo {
@@ -140,7 +173,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     );
   }
 
-  return {
+  const g: Omit<GovernanceCap, 'read' | 'inspect' | 'react' | 'write'> = {
     capId,
 
     updateMarket(ref, changes) {
@@ -296,4 +329,20 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       return watchMany(ctx, ids, onChange, watchOpts);
     },
   };
+
+  const readVerb: GovernanceReadVerb = { governs: g.governs };
+  const inspectVerb: GovernanceInspectVerb = { escrows: g.escrows, revenueByEscrow: g.revenueByEscrow };
+  const reactVerb: GovernanceReactVerb = { watch: g.watch };
+  const writeVerb: GovernanceWriteVerb = {
+    updateMarket: g.updateMarket,
+    retire: g.retire,
+    claim: g.claim,
+    extendRetireCommitment: g.extendRetireCommitment,
+    extendEnsembleCommitment: g.extendEnsembleCommitment,
+    renounce: g.renounce,
+    transfer: g.transfer,
+    integrateIntoPortfolio: g.integrateIntoPortfolio,
+  };
+
+  return { ...g, read: readVerb, inspect: inspectVerb, react: reactVerb, write: writeVerb };
 }

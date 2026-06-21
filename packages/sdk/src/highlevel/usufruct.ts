@@ -17,6 +17,7 @@ import { indexerSource, type IndexerSource } from '../indexer/index.js';
 import { fetchTypeArgs } from './typeargs.js';
 import { chainSource, type Source } from '../primitives/source.js';
 import { createReader, type Reader, type ReaderTarget } from '../read/reader.js';
+import { id as toId } from '../primitives/brand.js';
 import { createCap, type UsufructCap } from './cap.js';
 import type { HandleCtx } from './ctx.js';
 import { createEscrow, createEscrowMany, type Escrow } from './escrow.js';
@@ -91,9 +92,54 @@ export interface Primitives {
   reader(target: ReaderTarget): Reader;
 }
 
+// ── the four-verb surface at GLOBAL scope (additive; fractal with the object
+//    handles). `nav` zooms the whole protocol down to one object handle. ──
+/** nav — navigate to an object you know by id (zoom from the protocol to a node). */
+export interface RootNavVerb {
+  escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+  escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
+  usufructCap(id: string): Promise<UsufructCap>;
+  governanceCap(id: string): GovernanceCap;
+  earningsInbox(id: string): EarningsInbox;
+  feeInbox(id?: string): Promise<ProtocolFeeInbox>;
+}
+/** read — global protocol state (module-level constant views). */
+export interface RootReadVerb {
+  protocolFeeBps(): Promise<number>;
+  bpsDenominator(): Promise<number>;
+}
+/** inspect — global discovery: ask the event log which escrows exist by relationship. */
+export interface RootInspectVerb {
+  integratedBy(integrator: string): Promise<EscrowListing[]>;
+  governedBy(holder: string): Promise<EscrowListing[]>;
+  rentedBy(holder: string): Promise<EscrowListing[]>;
+  governedByCap(governanceCapId: string): Promise<EscrowListing[]>;
+  byAssetType(assetType: string): Promise<EscrowListing[]>;
+  byCoinType(coinType: string): Promise<EscrowListing[]>;
+}
+/** react — global subscriptions across many escrows over one firehose. */
+export interface RootReactVerb {
+  watchMany(escrowIds: string[], onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): PortfolioWatch;
+}
+/** write — genesis: bring an escrow into existence. */
+export interface RootWriteVerb {
+  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{
+    escrow: Escrow;
+    governanceCap: GovernanceCap;
+    earningsInbox: EarningsInbox;
+  }>;
+}
+
 export interface Usufruct {
   /** My address (identity), or `null` when anonymous. */
   readonly address: string | null;
+
+  // ── the four-verb surface (additive; the flat methods below are removed in Phase E) ──
+  readonly nav: RootNavVerb;
+  readonly read: RootReadVerb;
+  readonly inspect: RootInspectVerb;
+  readonly react: RootReactVerb;
+  readonly write: RootWriteVerb;
   /** Wire identity + signing after construction — a held `Signer`, or an `Executor` (wallet/Ledger/sponsor). */
   connect(signerOrExecutor: Signer | Executor): void;
 
@@ -296,7 +342,7 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
     ...(retry ? { retry } : {}),
   });
 
-  return {
+  const base: Omit<Usufruct, 'nav' | 'read' | 'inspect' | 'react' | 'write'> = {
     get address() {
       return resolveAccount();
     },
@@ -440,4 +486,40 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
 
     primitives,
   };
+
+  // ── the four verbs at global scope, wired over the flat methods above. The
+  //    module-level constant views need no escrow, so they read through a
+  //    placeholder target (the constant specs ignore escrowId / type args). ──
+  const constReader = (): Reader =>
+    primitives.reader({
+      packageId,
+      escrowId: toId<'Escrow'>('0x0'),
+      typeArguments: ['0x2::sui::SUI', '0x2::sui::SUI'],
+    });
+
+  const nav: RootNavVerb = {
+    escrow: base.escrow,
+    escrows: base.escrows,
+    usufructCap: base.usufructCap,
+    governanceCap: base.governanceCap,
+    earningsInbox: base.earningsInbox,
+    feeInbox: base.feeInbox,
+  };
+  const read: RootReadVerb = {
+    protocolFeeBps: () => constReader().protocolFeeBps().then(Number),
+    bpsDenominator: () => constReader().bpsDenominator().then(Number),
+  };
+  const inspect: RootInspectVerb = {
+    integratedBy: base.escrowsIntegratedBy,
+    governedBy: base.escrowsGovernedBy,
+    rentedBy: base.escrowsRentedBy,
+    governedByCap: base.escrowsGovernedByCap,
+    byAssetType: base.escrowsByAssetType,
+    byCoinType: base.escrowsByCoinType,
+  };
+  const react: RootReactVerb = { watchMany: base.watchMany };
+  const write: RootWriteVerb = { integrate: base.integrate };
+
+  // Object.assign (not spread) so the live `address` getter survives.
+  return Object.assign(base, { nav, read, inspect, react, write });
 }

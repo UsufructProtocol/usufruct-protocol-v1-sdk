@@ -32,7 +32,8 @@ import {
   type LadderRung,
   type TimelineSegment,
 } from './timeline.js';
-import { sampleEscalationLadder, type Escalation } from '../read/curve.js';
+import { sampleCreditCurve, sampleDescentCurve, sampleEscalationLadder, type Escalation } from '../read/curve.js';
+import { createScalarReadVerb, type ScalarReadVerb } from './escrowRead.js';
 import { reconstructTenancies, type Tenancy } from './ledger.js';
 import type { UsufructCapRecord } from './listings.js';
 import { createdIdByType } from './send.js';
@@ -67,6 +68,100 @@ export interface CyclePreview {
   readonly descentMs: number;
   readonly ceilingTotalMs: number | null;
   readonly handoverTotalMs: number | null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// The four-verb surface (additive — coexists with the flat members below until
+// the Phase-E cut). identity (flat) + nav (edges) + read · inspect · react · write.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** The asset's lifecycle state — the protocol `AssetState` as a discriminated union
+ *  that carries each phase's data (status + occupant + expiry + challenger + handover). */
+export type AssetState =
+  | { readonly kind: 'idle'; readonly floor: Price }
+  | { readonly kind: 'occupied'; readonly cap: string; readonly usufructuary: string; readonly stake: Price; readonly expiresAt: Date }
+  | {
+      readonly kind: 'demand';
+      readonly cap: string;
+      readonly usufructuary: string;
+      readonly challengerCap: string;
+      readonly challenger: string;
+      readonly bid: Price;
+      readonly handoverExpiresAt: Date;
+    }
+  | { readonly kind: 'descent'; readonly from: Price; readonly floor: Price; readonly expiresAt: Date }
+  | { readonly kind: 'retired' };
+
+/** What THIS signer can do here, now (caps transfer, so a live read). */
+export interface EscrowRole {
+  readonly canRent: boolean;
+  readonly canBorrow: boolean;
+  readonly canGovern: boolean;
+  readonly holdsEarnings: boolean;
+}
+
+/** A coherent cross-section at one `t` — state + role together (the explicit photo). */
+export interface EscrowSnapshot {
+  readonly at: Date;
+  readonly state: AssetState;
+  readonly role: EscrowRole;
+}
+
+/** nav — the edges out of this node (returns related handles, not state). */
+export interface EscrowNavVerb {
+  activeCap(): Promise<UsufructCap | null>;
+  pendingCap(): Promise<UsufructCap | null>;
+  governanceCap(): Promise<GovernanceCap>;
+  earningsInbox(): Promise<EarningsInbox>;
+  feeInbox(): Promise<ProtocolFeeInbox>;
+}
+
+/** read — the protocol's views, on-chain, live: the auto-rendered scalar surface
+ *  ({@link ScalarReadVerb}) + the heterogeneous composites. */
+export type EscrowReadVerb = ScalarReadVerb & {
+  /** The asset's lifecycle state now (discriminated; narrows to the phase's data). */
+  assetState(at?: When): Promise<AssetState>;
+  /** State + role coherent at one `t` (the explicit batch). */
+  snapshot(at?: When): Promise<EscrowSnapshot>;
+  /** This signer's role here, now. */
+  role(): Promise<EscrowRole>;
+  /** The escrow's payment coin tag (immutable; cached). */
+  coin(): Promise<CoinTag>;
+  market(): Promise<Market>;
+  cycle(): Promise<CyclePreview | null>;
+  tenureSettlement(): Promise<TenureSettlement>;
+  handoverSettlement(boundary: When): Promise<HandoverSettlement>;
+  nextFloorPrice(totalBid: Price, tenures: number): Promise<Price>;
+  escalationLadder(opts?: { steps?: number; tenures?: number; from?: Price }): Promise<LadderRung[]>;
+  /** The CURRENT cycle's curve, sampled LIVE from the views (no event log) — the
+   *  historical multi-segment versions are `inspect.creditHistory`/`priceTimeline`. */
+  creditCurve(opts?: CurveOpts): Promise<CreditSegment | null>;
+  descentCurve(opts?: CurveOpts): Promise<DescentSegment | null>;
+};
+
+/** inspect — the event log (pull): history + the event-sourced reconstructions. */
+export interface EscrowInspectVerb {
+  history(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<HistoryEvent[]>;
+  priceTimeline(opts?: CurveOpts): Promise<TimelineSegment[]>;
+  creditHistory(opts?: CurveOpts): Promise<CreditSegment[]>;
+  tenancies(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<Tenancy[]>;
+  usufructCaps(): Promise<UsufructCapRecord[]>;
+}
+
+/** react — the event log (push): the gRPC firehose + version watch. */
+export interface EscrowReactVerb {
+  watch(onChange: (escrow: Escrow) => void, opts?: { intervalMs?: number }): () => void;
+  waitFor(predicate: (escrow: Escrow) => boolean, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<Escrow>;
+  onEvents(onEvent: (event: HistoryEvent) => void, opts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean }): () => void;
+  on(kind: string, onEvent: (event: HistoryEvent) => void): () => void;
+  nextEvent(opts?: { kinds?: readonly string[]; where?: (event: HistoryEvent) => boolean; timeoutMs?: number }): Promise<HistoryEvent>;
+  next(kind: string, opts?: { where?: (event: HistoryEvent) => boolean; timeoutMs?: number }): Promise<HistoryEvent>;
+}
+
+/** write — the protocol's write functions (PTB / Plan). */
+export interface EscrowWriteVerb {
+  rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap>;
+  applyPendingTransitionStates(): Plan<{ digest: string }>;
 }
 
 /** The hub handle. Reads are sync getters off one fetch; writes return handles. */
@@ -333,6 +428,14 @@ export interface Escrow {
 
   /** Escape hatch: the drift-free kernel reader for this escrow (all ~80 views). */
   readonly reader: Reader;
+
+  // ── the four-verb surface (additive; the flat members above are deprecated and
+  //    removed in the Phase-E cut). nav + read · inspect · react · write. ──
+  readonly nav: EscrowNavVerb;
+  readonly read: EscrowReadVerb;
+  readonly inspect: EscrowInspectVerb;
+  readonly react: EscrowReactVerb;
+  readonly write: EscrowWriteVerb;
 }
 
 /** The unconditional snapshot views — status booleans + floor + the four ids — read in one batch. */
@@ -745,6 +848,166 @@ export async function createEscrow(
     });
   }
 
+  // ── verb composites (all LIVE — read the deployed views, never the fetch-time
+  //    snapshot, so they never go stale). ──
+  const spanTimes = (start: bigint, span: bigint, points: number): bigint[] => {
+    const out: bigint[] = [];
+    for (let i = 0; i <= points; i++) out.push(start + (span * BigInt(i)) / BigInt(points));
+    return out;
+  };
+  const curvePoints = (start: bigint, ts: readonly bigint[], vals: readonly bigint[]) =>
+    ts.map((tp, i) => ({ atMs: Number(tp), offsetMs: Number(tp - start), value: price(vals[i]!, coin) }));
+
+  async function assetState(at?: When): Promise<AssetState> {
+    const tt = await resolveWhen(client, at);
+    const b = await reader.batch(['isRetired', 'isOccupied', 'isDemand', 'isDescending', 'floorPriceMist'], { t: tt });
+    const st = statusOf(b);
+    if (st === 'retired') return { kind: 'retired' };
+    const floor = price(b['floorPriceMist'] as Mist, coin);
+    if (st === 'idle') return { kind: 'idle', floor };
+    if (st === 'descent') {
+      const [fromM, expM] = await Promise.all([reader.lastRentPriceMist(), reader.descentExpiryMs()]);
+      return { kind: 'descent', from: price(fromM ?? mist(0n), coin), floor, expiresAt: new Date(Number(expM ?? 0n)) };
+    }
+    const seat = await reader.batch(
+      ['activeUsufructCapId', 'activeUsufructuaryAddr', 'activeStakeBalanceMist', 'tenureExpiryMs'],
+      { t: tt },
+    );
+    const seatCap = (seat['activeUsufructCapId'] as string | null) ?? '';
+    const seatAddr = (seat['activeUsufructuaryAddr'] as string | null) ?? '';
+    const seatStake = price((seat['activeStakeBalanceMist'] as Mist | null) ?? mist(0n), coin);
+    if (st === 'occupied') {
+      return {
+        kind: 'occupied',
+        cap: seatCap,
+        usufructuary: seatAddr,
+        stake: seatStake,
+        expiresAt: new Date(Number((seat['tenureExpiryMs'] as Ms | null) ?? 0n)),
+      };
+    }
+    const dem = await reader.batch(
+      ['pendingUsufructCapId', 'pendingUsufructuaryAddr', 'pendingStakeBalanceMist', 'handoverExpiryMs'],
+      { t: tt },
+    );
+    return {
+      kind: 'demand',
+      cap: seatCap,
+      usufructuary: seatAddr,
+      challengerCap: (dem['pendingUsufructCapId'] as string | null) ?? '',
+      challenger: (dem['pendingUsufructuaryAddr'] as string | null) ?? '',
+      bid: price((dem['pendingStakeBalanceMist'] as Mist | null) ?? mist(0n), coin),
+      handoverExpiresAt: new Date(Number((dem['handoverExpiryMs'] as Ms | null) ?? 0n)),
+    };
+  }
+
+  async function roleRead(): Promise<EscrowRole> {
+    const rb = await reader.batch(['activeUsufructCapId', 'isRetired']);
+    const r = await resolveRole(
+      client,
+      packageId,
+      owner,
+      (rb['activeUsufructCapId'] as string | null) ?? null,
+      govCapId,
+      inboxId,
+    );
+    return {
+      canRent: owner != null && !(rb['isRetired'] as boolean),
+      canBorrow: r.capId != null,
+      canGovern: r.governs,
+      holdsEarnings: r.holdsEarnings,
+    };
+  }
+
+  async function snapshotRead(at?: When): Promise<EscrowSnapshot> {
+    const tt = await resolveWhen(client, at);
+    const [state, r] = await Promise.all([assetState(new Date(Number(tt))), roleRead()]);
+    return { at: new Date(Number(tt)), state, role: r };
+  }
+
+  async function liveCreditCurve(curveOpts?: CurveOpts): Promise<CreditSegment | null> {
+    const pts = curveOpts?.points ?? 24;
+    const [occ, stakeM, phaseM, ceilM, shape, capId] = await Promise.all([
+      reader.isOccupied(),
+      reader.activeStakeBalanceMist(),
+      reader.phaseStartMs(),
+      reader.activeCeilingTotalMs(),
+      reader.creditShape(),
+      reader.activeUsufructCapId(),
+    ]);
+    if (!occ || stakeM == null || phaseM == null || ceilM == null) return null;
+    const ts = spanTimes(phaseM, ceilM, pts);
+    const vals = await sampleCreditCurve(client, packageId, { stakeMist: stakeM, phaseStartMs: phaseM, ceilingMs: ceilM, shape }, ts);
+    return {
+      capId: capId ?? null,
+      principal: price(stakeM, coin),
+      shape,
+      startedAt: new Date(Number(phaseM)),
+      ceilingMs: Number(ceilM),
+      points: curvePoints(phaseM, ts, vals),
+    };
+  }
+
+  async function liveDescentCurve(curveOpts?: CurveOpts): Promise<DescentSegment | null> {
+    const pts = curveOpts?.points ?? 24;
+    // In descent there is no *active* cycle (no tenant), so `activeCycleParams` is
+    // null — the params come from the live descent views instead: the phase start,
+    // its expiry (→ duration), the last acquisition (→ ceiling), and the rest floor
+    // read as the floor AT expiry (where the descent bottoms out).
+    const [desc, lastM, phaseM, expM, shape] = await Promise.all([
+      reader.isDescending(),
+      reader.lastRentPriceMist(),
+      reader.phaseStartMs(),
+      reader.descentExpiryMs(),
+      reader.auctionShape(),
+    ]);
+    if (!desc || lastM == null || phaseM == null || expM == null) return null;
+    const descentMs = expM - phaseM;
+    if (descentMs <= 0n) return null;
+    const floorM = await reader.floorPriceMist(expM); // descent bottoms at the rest floor
+    const ts = spanTimes(phaseM, descentMs, pts);
+    const vals = await sampleDescentCurve(
+      client,
+      packageId,
+      { lastAcqMist: lastM, phaseStartMs: phaseM, floorMist: floorM, descentMs, shape },
+      ts,
+    );
+    return {
+      shape,
+      startedAt: new Date(Number(phaseM)),
+      descentMs: Number(descentMs),
+      from: price(lastM, coin),
+      to: price(floorM, coin),
+      points: curvePoints(phaseM, ts, vals),
+    };
+  }
+
+  // ── assemble the verb sub-objects (wire the closures above into the four verbs) ──
+  const nav: EscrowNavVerb = {
+    activeCap: async () => capHandle(await reader.activeUsufructCapId()),
+    pendingCap: async () => capHandle(await reader.pendingUsufructCapId()),
+    governanceCap: () => Promise.resolve(governanceCap),
+    earningsInbox: () => Promise.resolve(earningsInbox),
+    feeInbox: () => Promise.resolve(feeInbox),
+  };
+  const read: EscrowReadVerb = {
+    ...createScalarReadVerb(reader, coin, client),
+    assetState,
+    snapshot: snapshotRead,
+    role: roleRead,
+    coin: () => Promise.resolve(coinTag(coin)),
+    market,
+    cycle,
+    tenureSettlement,
+    handoverSettlement,
+    nextFloorPrice,
+    escalationLadder,
+    creditCurve: liveCreditCurve,
+    descentCurve: liveDescentCurve,
+  };
+  const inspect: EscrowInspectVerb = { history, priceTimeline, creditHistory, tenancies, usufructCaps };
+  const react: EscrowReactVerb = { watch, waitFor, onEvents, on, nextEvent, next };
+  const write: EscrowWriteVerb = { rent, applyPendingTransitionStates: applyPending };
+
   return {
     id: idStr,
     assetType: assetType,
@@ -803,6 +1066,11 @@ export async function createEscrow(
     nextEvent,
     next,
     reader,
+    nav,
+    read,
+    inspect,
+    react,
+    write,
   };
 }
 

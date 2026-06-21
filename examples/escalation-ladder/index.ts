@@ -44,8 +44,8 @@ async function mintAsset(): Promise<string> {
 
 async function ladderFor(escalation: Market['escalation']): Promise<LadderRung[]> {
   const u = usufruct({ client, signer: me });
-  const { escrow } = await u.integrate({ asset: await mintAsset(), coin: DUMMY, market: { ...baseMarket, escalation } }).send();
-  return (await u.escrow(escrow.id)).escalationLadder({ steps: 10, from: DUMMY(0.5) });
+  const { escrow } = await u.write.integrate({ asset: await mintAsset(), coin: DUMMY, market: { ...baseMarket, escalation } }).send();
+  return (await u.nav.escrow(escrow.id)).read.escalationLadder({ steps: 10, from: DUMMY(0.5) });
 }
 
 /** Two ladders side by side at a shared scale — read the policy shape off the bars. */

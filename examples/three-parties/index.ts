@@ -65,7 +65,7 @@ async function main() {
   const u = usufruct({ client, signer: alice, graphql: GRAPHQL_TESTNET });
 
   step('list A (tenure 40s, handover 10s → displacement mid-tenure) + B in the same portfolio');
-  const { escrow: A, governanceCap, earningsInbox } = await u
+  const { escrow: A, governanceCap, earningsInbox } = await u.write
     .integrate({
       asset: await mintAsset(), coin: DUMMY,
       market: {
@@ -75,7 +75,7 @@ async function main() {
       },
     })
     .send();
-  const B = await governanceCap
+  const B = await governanceCap.write
     .integrateIntoPortfolio(await mintAsset(), DUMMY, {
       restPrice: DUMMY(0.01), tenure: '15s', multiTenure: false,
       creditShape: 'linear', auctionShape: 'linear', descent: 'off', handover: 'off',
@@ -87,31 +87,32 @@ async function main() {
   const bobU = usufruct({ client, signer: bob, graphql: GRAPHQL_TESTNET });
 
   step('Alice rents A; Bob outbids; the handover window closes → Alice displaced (partial refund)');
-  const seatA = await u.escrow(A.id);
-  const capA: UsufructCap = await seatA.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
-  await (await bobU.escrow(A.id)).rent({ tenures: 1, pay: DUMMY(0.6) }).send();
-  const demand = await u.escrow(A.id);
-  check('A is in demand (Bob is challenging)', demand.status === 'demand', demand.status);
-  await waitForChainTime(client, BigInt((await demand.nextBoundaryAt())!.getTime()));
-  await seatA.applyPendingTransitionStates().send();
-  check('Bob took over A (Alice displaced)', (await u.escrow(A.id)).status === 'occupied');
+  const seatA = await u.nav.escrow(A.id);
+  const capA: UsufructCap = await seatA.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+  await (await bobU.nav.escrow(A.id)).write.rent({ tenures: 1, pay: DUMMY(0.6) }).send();
+  const demand = await u.nav.escrow(A.id);
+  const demandState = await demand.read.assetState();
+  check('A is in demand (Bob is challenging)', demandState.kind === 'demand', demandState.kind);
+  await waitForChainTime(client, BigInt((await demand.read.nextBoundaryAt())!.getTime()));
+  await seatA.write.applyPendingTransitionStates().send();
+  check('Bob took over A (Alice displaced)', (await (await u.nav.escrow(A.id)).read.assetState()).kind === 'occupied');
 
   step('settle B — Alice rents and runs the tenure to expiry');
-  const seatB = await u.escrow(B.id);
-  const capB = await seatB.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+  const seatB = await u.nav.escrow(B.id);
+  const capB = await seatB.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
   await waitForChainTime(client, BigInt(capB.receipt!.expiresAt.getTime()));
-  await seatB.applyPendingTransitionStates().send();
+  await seatB.write.applyPendingTransitionStates().send();
 
   // ── ① the renter — usufructCap.statement() ───────────────────────────────
   step('① usufructCap.statement() — Alice’s cap on A: paid → refunded + consumed');
-  const stA = await until(() => capA.statement(), (s) => s.status === 'displaced');
+  const stA = await until(() => capA.inspect.statement(), (s) => s.status === 'displaced');
   console.log(`   capA: status ${stA.status}  paid ${stA.paid.format()}  consumed ${stA.consumed.format()}  refunded ${stA.refunded.format()}`);
   check('Alice was displaced with a real refund', stA.status === 'displaced' && stA.refunded.mist > 0n && stA.consumed.mist > 0n, `${stA.consumed.format()} + ${stA.refunded.format()}`);
   check('statement reconciles: paid == consumed + refunded', stA.paid.mist === stA.consumed.mist + stA.refunded.mist, `${stA.paid.mist} == ${stA.consumed.mist + stA.refunded.mist}`);
 
   // ── ② the asset — escrow.tenancies() ─────────────────────────────────────
   step('② escrow.tenancies() — A’s occupancy ledger (Alice → Bob)');
-  const tens = await seatA.tenancies();
+  const tens = await seatA.inspect.tenancies();
   for (const t of tens) {
     const span = `${t.startedAt.toISOString().slice(11, 19)}→${t.endedAt ? t.endedAt.toISOString().slice(11, 19) : 'now'}`;
     console.log(`   ${t.usufructuary.slice(0, 10)}…  ${span}  acquired ${t.acquired.format()}  used ${t.usedCredit?.format() ?? '—'}  refund ${t.refund?.format() ?? '—'}`);
@@ -122,10 +123,10 @@ async function main() {
 
   // ── ③ the governor — governanceCap.revenueByEscrow() ─────────────────────
   step('③ governanceCap.revenueByEscrow() — earnings attributed per asset');
-  const rev = await until(() => governanceCap.revenueByEscrow(), (r) => r.length >= 2);
+  const rev = await until(() => governanceCap.inspect.revenueByEscrow(), (r) => r.length >= 2);
   const sumMist = (e: typeof rev) => e.reduce((a, x) => a + x.earnings.reduce((b, c) => b + c.total.mist, 0n), 0n);
   for (const r of rev) console.log(`   ${r.escrowId.slice(0, 10)}…  ${r.earnings.map((c) => `${c.total.format()} ×${c.count}`).join(', ')}`);
-  const totals = await earningsInbox.totals();
+  const totals = await earningsInbox.inspect.totals();
   console.log(`   earningsInbox.totals(): ${totals.map((t) => t.total.format()).join(', ')}`);
   check('revenue split across both escrows', rev.length === 2);
   check('per-escrow revenue sums to the inbox total', sumMist(rev) === totals.reduce((a, t) => a + t.total.mist, 0n), `${sumMist(rev)} == ${totals.reduce((a, t) => a + t.total.mist, 0n)}`);

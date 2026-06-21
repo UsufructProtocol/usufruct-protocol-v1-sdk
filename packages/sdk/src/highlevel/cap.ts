@@ -99,6 +99,38 @@ export interface UsufructCapState {
   readonly creditCappedAt: Date | null;
 }
 
+// ── the four-verb surface (additive; coexists with the flat members until Phase E) ──
+/** nav — the edges out of this cap. */
+export interface CapNavVerb {
+  /** Back-edge: the escrow this cap belongs to (its `escrow_identity`). */
+  escrow(): Promise<Escrow>;
+}
+/** read — this cap's seat, live. */
+export interface CapReadVerb {
+  state(opts?: { at?: When }): Promise<UsufructCapState>;
+  isActive(): Promise<boolean>;
+  isPending(): Promise<boolean>;
+  isStale(): Promise<boolean>;
+}
+/** inspect — the event log (pull). */
+export interface CapInspectVerb {
+  history(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<HistoryEvent[]>;
+  statement(opts?: { at?: When }): Promise<RenterStatement>;
+}
+/** react — the event log (push). */
+export interface CapReactVerb {
+  watch(onState: (s: UsufructCapState) => void, opts?: { intervalMs?: number }): () => void;
+  waitFor(predicate: (s: UsufructCapState) => boolean, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<UsufructCapState>;
+}
+/** write — protocol writes (Plan). */
+export interface CapWriteVerb {
+  readonly borrow: BorrowMethod;
+  transfer(to: string): Plan<{ digest: string }>;
+  burn(): Plan<{ digest: string }>;
+  burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;
+  updateRefundAddress(addr: string): Plan<{ digest: string }>;
+}
+
 /** The right of use. The cap is the receiver of its writes — never a hidden arg. */
 export interface UsufructCap {
   readonly id: string;
@@ -164,6 +196,13 @@ export interface UsufructCap {
   updateRefundAddress(addr: string): Plan<{ digest: string }>;
   /** Back-edge: re-resolve the escrow this cap belongs to. */
   escrow(): Promise<Escrow>;
+
+  // ── the four-verb surface (additive; the flat members above are removed in Phase E) ──
+  readonly nav: CapNavVerb;
+  readonly read: CapReadVerb;
+  readonly inspect: CapInspectVerb;
+  readonly react: CapReactVerb;
+  readonly write: CapWriteVerb;
 }
 
 export interface CapArgs {
@@ -391,6 +430,15 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
         ),
     );
 
+  const transfer = transferOf(ctx, args.capId);
+  const escrowEdge = (): Promise<Escrow> => createEscrow(ctx, args.escrowId);
+
+  const nav: CapNavVerb = { escrow: escrowEdge };
+  const read: CapReadVerb = { state, isActive, isPending, isStale };
+  const inspect: CapInspectVerb = { history, statement };
+  const react: CapReactVerb = { watch, waitFor };
+  const write: CapWriteVerb = { borrow, transfer, burn, burnIfStale, updateRefundAddress };
+
   return {
     id: args.capId,
     escrowId: args.escrowId,
@@ -404,10 +452,15 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     history,
     statement,
     borrow,
-    transfer: transferOf(ctx, args.capId),
+    transfer,
     burnIfStale,
     burn,
     updateRefundAddress,
-    escrow: () => createEscrow(ctx, args.escrowId),
+    escrow: escrowEdge,
+    nav,
+    read,
+    inspect,
+    react,
+    write,
   };
 }

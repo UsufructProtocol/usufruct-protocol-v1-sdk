@@ -46,11 +46,11 @@ const norm = (id: string | null) => (id ?? '').replace(/^0x/, '').toLowerCase();
 /** Poll an inbox (filtered to `mine`) out of GraphQL indexing lag until `want` land. */
 async function waitForMessages(inbox: Inbox, mine: Set<string>, want: number): Promise<InboxMessage[]> {
   for (let i = 0; i < 18; i++) {
-    const log = (await inbox.history()).filter((m) => mine.has(norm(m.escrowId)));
+    const log = (await inbox.inspect.history()).filter((m) => mine.has(norm(m.escrowId)));
     if (log.length >= want) return log;
     await new Promise((r) => setTimeout(r, 5000));
   }
-  return (await inbox.history()).filter((m) => mine.has(norm(m.escrowId)));
+  return (await inbox.inspect.history()).filter((m) => mine.has(norm(m.escrowId)));
 }
 
 /** Sum messages per coin → printable `symbol → mist`. */
@@ -75,13 +75,13 @@ async function main() {
   };
 
   step('list escrow A priced in DUMMY — creates the earnings inbox');
-  const { escrow: escrowA, governanceCap, earningsInbox } = await u
+  const { escrow: escrowA, governanceCap, earningsInbox } = await u.write
     .integrate({ asset: await mintAsset(), coin: DUMMY, market: market('DUMMY') })
     .send();
-  const feeInbox = (await u.escrow(escrowA.id)).feeInbox; // the protocol's singleton fee pool
+  const feeInbox = await (await u.nav.escrow(escrowA.id)).nav.feeInbox(); // the protocol's singleton fee pool
 
   step('list escrow B priced in USDC INTO THE SAME inbox (governanceCap.integrateIntoPortfolio)');
-  const escrowB = await governanceCap
+  const escrowB = await governanceCap.write
     .integrateIntoPortfolio(await mintAsset(), USDC, market('USDC'), { earningsInbox: earningsInbox.inboxId })
     .send();
   const mine = new Set([norm(escrowA.id), norm(escrowB.id)]);
@@ -92,10 +92,10 @@ async function main() {
     ['USDC', escrowB.id, USDC(0.5)],
   ] as const) {
     step(`settle the ${label} escrow — rent ${pay.format()}, run to expiry (governor earns ~90%)`);
-    const seat = await u.escrow(id);
-    const cap = await seat.rent({ tenures: 1, pay }).send();
+    const seat = await u.nav.escrow(id);
+    const cap = await seat.write.rent({ tenures: 1, pay }).send();
     await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-    await seat.applyPendingTransitionStates().send();
+    await seat.write.applyPendingTransitionStates().send();
   }
 
   step('the two inboxes, read by the SAME methods — governor 90% (earnings) + protocol 10% (fees)');
@@ -114,9 +114,9 @@ async function main() {
     console.log(`   ${sym.padEnd(6)}  ${stake.toFixed(2)}    ${(Number(get(earn, t)) / dec).toFixed(4).padStart(8)}        ${(Number(get(fee, t)) / dec).toFixed(4).padStart(8)}`);
   }
 
-  const earnTotals = await earningsInbox.totals();
+  const earnTotals = await earningsInbox.inspect.totals();
   console.log(`\n   earningsInbox.totals(): ${earnTotals.map((x) => x.total.format()).join(', ')}`);
-  console.log(`   feeInbox.totals() (deployment-wide): ${(await feeInbox.totals()).map((x) => x.total.format()).join(', ')}`);
+  console.log(`   feeInbox.totals() (deployment-wide): ${(await feeInbox.inspect.totals()).map((x) => x.total.format()).join(', ')}`);
 
   check('earnings inbox is coin-polymorphic (DUMMY + USDC)', earnTotals.length === 2, `${earnTotals.length} coins`);
   check('governor earned 90% per coin', get(earn, dummy) === 450_000_000n && get(earn, usdc) === 450_000n, `${get(earn, dummy)} / ${get(earn, usdc)}`);

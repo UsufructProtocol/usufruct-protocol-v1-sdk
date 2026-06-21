@@ -151,7 +151,7 @@ async function main() {
   // are measured); writes go through `writer`. The live oracle uses a third client.
   const u = usufruct({ client: counting, signer: me, graphql: GRAPHQL_TESTNET });
   const uWrite = usufruct({ client: writer, signer: me, graphql: GRAPHQL_TESTNET });
-  const { escrow, governanceCap } = await uWrite
+  const { escrow, governanceCap } = await uWrite.write
     .integrate({
       asset: assetId,
       coin: DUMMY,
@@ -166,8 +166,8 @@ async function main() {
     })
     .send();
 
-  const seat = await u.escrow(escrow.id); // reads via counting client
-  const writeSeat = await uWrite.escrow(escrow.id);
+  const seat = await u.nav.escrow(escrow.id); // reads via counting client
+  const writeSeat = await uWrite.nav.escrow(escrow.id);
   const oracle = createReader(makeClient(), {
     packageId: PKG,
     escrowId: toId<'Escrow'>(escrow.id),
@@ -176,19 +176,19 @@ async function main() {
 
   // ── Cycle 1 — exponential credit ──────────────────────────────────────
   step('cycle 1 — rent (overpay → big principal); escrow.creditCurve() (creditShape exponential +4)');
-  await writeSeat.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+  await writeSeat.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
 
-  const c1 = (await seat.creditCurve())!;
+  const c1 = (await seat.read.creditCurve())!;
   console.log(`   credit accrual — shape ${shapeLabel(c1.shape)}, principal ${c1.principal.format()}:\n`);
   console.log(renderCurve(c1.points));
   await assertDriftZero('credit (exp)', c1.points, (t) => oracle.accruedCreditMist(t as never) as Promise<bigint>);
 
   step('cycle 1 — settle into descent; escrow.descentCurve() (auctionShape logistic)');
   await waitForChainTime(writer, BigInt(c1.startedAt.getTime()) + BigInt(c1.ceilingMs));
-  await writeSeat.applyPendingTransitionStates().send();
-  check('escrow is in descent', (await uWrite.escrow(escrow.id)).status === 'descent');
+  await writeSeat.write.applyPendingTransitionStates().send();
+  check('escrow is in descent', (await (await uWrite.nav.escrow(escrow.id)).read.assetState()).kind === 'descent');
 
-  const d1 = (await seat.descentCurve())!;
+  const d1 = (await seat.read.descentCurve())!;
   console.log(`   descent floor — shape ${shapeLabel(d1.shape)}, ${d1.from.format()} → ${d1.to.format()}:\n`);
   console.log(renderCurve(d1.points));
   await assertDriftZero('descent (logistic)', d1.points, (t) => oracle.floorPriceMist(t as never) as Promise<bigint>);
@@ -196,13 +196,13 @@ async function main() {
   // ── flip the curve shape mid-life ─────────────────────────────────────
   step('governance — flip creditShape exponential(+4) → logistic, then start cycle 2');
   await waitForChainTime(writer, BigInt(d1.startedAt.getTime()) + BigInt(d1.descentMs));
-  await writeSeat.applyPendingTransitionStates().send();
-  await governanceCap.updateMarket(escrow.id, { creditShape: 'logistic' }).send();
+  await writeSeat.write.applyPendingTransitionStates().send();
+  await governanceCap.write.updateMarket(escrow.id, { creditShape: 'logistic' }).send();
 
   // ── Cycle 2 — logistic credit, from the SAME log ──────────────────────
   step('cycle 2 — rent again; escrow.creditCurve() now reads logistic, from the same log');
-  await writeSeat.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
-  const c2 = (await seat.creditCurve())!;
+  await writeSeat.write.rent({ tenures: 1, pay: DUMMY(0.5) }).send();
+  const c2 = (await seat.read.creditCurve())!;
   console.log(`   credit accrual — shape ${shapeLabel(c2.shape)}, principal ${c2.principal.format()}:\n`);
   console.log(renderCurve(c2.points));
   await assertDriftZero('credit (logistic)', c2.points, (t) => oracle.accruedCreditMist(t as never) as Promise<bigint>);
@@ -210,7 +210,7 @@ async function main() {
   // ── the whole picture, via the handle ─────────────────────────────────
   step('escrow.creditHistory() — every tenure, each curve drawn with its cycle’s shape');
   const before = count();
-  const hist = await seat.creditHistory({ points: 14 });
+  const hist = await seat.inspect.creditHistory({ points: 14 });
   const histSims = count() - before;
   console.log('   the same escrow, two cycles — the historical curve remembers its shape:\n');
   console.log(renderHistory(hist));
@@ -220,7 +220,7 @@ async function main() {
   check('credit history spans two cycles with two shapes', hist.length === 2 && hist[0]!.shape.kind !== hist[1]!.shape.kind, hist.map((s) => s.shape.kind).join(' → '));
 
   step('escrow.priceTimeline() — discrete acquisitions + descent curves, one chronology');
-  const timeline = await seat.priceTimeline({ points: 12 });
+  const timeline = await seat.inspect.priceTimeline({ points: 12 });
   for (const s of timeline) {
     const at = s.at.toISOString().slice(11, 19);
     if (s.kind === 'descent') {

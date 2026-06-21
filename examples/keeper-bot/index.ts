@@ -72,15 +72,15 @@ async function mintAsset(): Promise<string> {
  * until the keeper's own `apply` flushes it.
  */
 async function settleAtNextBoundary(u: ReturnType<typeof usufruct>, escrowId: string, label: string) {
-  let e = await u.escrow(escrowId);
+  let e = await u.nav.escrow(escrowId);
   // The scheduling oracle: the next FUTURE boundary across all phases (tenure end /
   // handover end / auction descent end), via the on-chain `next_boundary_ms` view.
   // (This used to compose `handoverExpiresAt ?? expiresAt` by hand — blind in
   // descent; `nextBoundaryAt()` covers it, drift-zero. NOT `nextTransitionAt()`,
   // which is null until a transition is already overdue.)
-  const at = await e.nextBoundaryAt();
+  const at = await e.read.nextBoundaryAt();
   if (!at) {
-    console.log(`   [keeper] ${label}: no boundary on this phase (status=${e.status})`);
+    console.log(`   [keeper] ${label}: no boundary on this phase (status=${(await e.read.assetState()).kind})`);
     return e;
   }
   console.log(`   [keeper] ${label}: next boundary ${at.toISOString()} — sleeping on the CHAIN clock…`);
@@ -91,9 +91,9 @@ async function settleAtNextBoundary(u: ReturnType<typeof usufruct>, escrowId: st
   await waitForChainTime(client, BigInt(at.getTime()));
   const quietAcrossBoundary = watchFires === firesBefore; // no event fired as time crossed it
   console.log(`   [keeper] ${label}: boundary passed; watch fired during the wait? ${watchFires - firesBefore} times`);
-  await e.applyPendingTransitionStates().send(); // the ONLY write in the quiet window
-  e = await u.escrow(escrowId);
-  console.log(`   [keeper] ${label}: applied → status=${e.status}`);
+  await e.write.applyPendingTransitionStates().send(); // the ONLY write in the quiet window
+  e = await u.nav.escrow(escrowId);
+  console.log(`   [keeper] ${label}: applied → status=${(await e.read.assetState()).kind}`);
   check(`${label}: subscribe stayed silent across the wall-clock boundary`, quietAcrossBoundary);
   return e;
 }
@@ -115,32 +115,33 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log('   escrow', escrow.id);
 
   // the EVENT signal: watch fires on every on-chain CHANGE (version bump), and only then.
-  const stopWatch = (await a.escrow(escrow.id)).watch(
+  const stopWatch = (await a.nav.escrow(escrow.id)).react.watch(
     (e) => {
       watchFires += 1;
-      console.log(`   [watch] on-chain change #${watchFires} → status=${e.status}`);
+      void e.read.assetState().then((s) => console.log(`   [watch] on-chain change #${watchFires} → status=${s.kind}`));
     },
     { intervalMs: POLL_MS },
   );
 
   step('② occupy + challenge (organic writes — each self-applies)');
-  await usufruct({ client, signer: bob }).escrow(escrow.id).then((e) => e.rent({ tenures: 1 }).send());
+  await usufruct({ client, signer: bob }).nav.escrow(escrow.id).then((e) => e.write.rent({ tenures: 1 }).send());
   console.log('   Bob rented → occupied');
-  await usufruct({ client, signer: carol }).escrow(escrow.id).then((e) => e.rent({ tenures: 1 }).send());
+  await usufruct({ client, signer: carol }).nav.escrow(escrow.id).then((e) => e.write.rent({ tenures: 1 }).send());
   console.log('   Carol bid on the occupied escrow → demand (handover window open)');
 
   step('③ KEEPER, quiet window #1 — the challenge handover');
   const settled = await settleAtNextBoundary(a, escrow.id, 'handover');
-  const carolActive = settled.activeUsufructCapId != null && settled.status === 'occupied';
-  check('handover settled by the keeper → challenger now active (occupied)', carolActive, settled.status);
+  const settledState = await settled.read.assetState();
+  check('handover settled by the keeper → challenger now active (occupied)', settledState.kind === 'occupied', settledState.kind);
 
   step('④ KEEPER, quiet window #2 — the tenure expiry');
   const released = await settleAtNextBoundary(a, escrow.id, 'tenure');
-  check('tenure expiry settled by the keeper → seat released (idle)', released.status === 'idle', released.status);
+  const releasedState = await released.read.assetState();
+  check('tenure expiry settled by the keeper → seat released (idle)', releasedState.kind === 'idle', releasedState.kind);
 
   stopWatch();
   console.log(`\nwatch fired ${watchFires}× total — once per organic write + once per keeper apply, never on a bare clock tick.`);
