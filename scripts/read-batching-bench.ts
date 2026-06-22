@@ -122,12 +122,11 @@ async function main() {
         const [aState, bState] = [await a.read.assetState(), await b.read.assetState()];
         const [aFloor, bFloor] = [await a.read.floorPrice(), await b.read.floorPrice()];
         const [aCap, bCap] = [await a.read.activeUsufructCapId(), await b.read.activeUsufructCapId()];
-        const [aRole, bRole] = [await a.read.role(), await b.read.role()];
-        return aState.kind === bState.kind && `${aFloor}` === `${bFloor}` && aCap === bCap && aRole.canBorrow === bRole.canBorrow;
+        return aState.kind === bState.kind && `${aFloor}` === `${bFloor}` && aCap === bCap;
       }),
     )
   ).every(Boolean);
-  console.log(`\nspot-check (status/floor/activeCap/canBorrow match loop↔batch): ${same ? 'OK ✓' : 'MISMATCH ✗'}`);
+  console.log(`\nspot-check (status/floor/activeCap match loop↔batch): ${same ? 'OK ✓' : 'MISMATCH ✗'}`);
   console.log(`statuses: ${(await Promise.all(batched.map(async (e) => (await e.read.assetState()).kind))).join(', ')}`);
 }
 

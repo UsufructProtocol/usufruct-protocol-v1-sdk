@@ -35,6 +35,15 @@ shape (release candidate).
   `u.primitives.reader(target)`.
 - **`react.waitFor`** takes an async predicate over the handle and resolves to the
   handle: `escrow.react.waitFor(async e => (await e.read.assetState()).kind === 'demand')`.
+- **No `escrow.read.role()`.** The composite that bundled `canRent`/`canBorrow`/
+  `canGovern`/`holdsEarnings` is removed — authority in Usufruct is plain Sui object
+  ownership, not a permission read, so a single "role" overstated it. Ask the canonical
+  views instead: `escrow.read.isRetired()` (rentable), `cap.read.isActive()` (hold the
+  seat), `u.inspect.governedBy(addr)` / `rentedBy(addr)` (govern/rent), or the
+  `ownedIds` primitive those compose over. `EscrowSnapshot` drops its `role` field
+  (now `{ at, state }`); `EscrowRole` and `resolveRole` are gone (`ownedIds` stays).
+- **`graphql` defaults from `network`** (testnet/mainnet/devnet) — `inspect.*` works
+  out of the box; pass `graphql: false` to disable, or a URL/client to override.
 - **One cross-state cycle-params view.** The reader's `activeCycleParams` (Renting
   only) + `nextCycleParams` (Waiting only) collapse into a single `cycleParams`,
   matching the protocol's unified `cycle_*` views (the resolved cycle of the active

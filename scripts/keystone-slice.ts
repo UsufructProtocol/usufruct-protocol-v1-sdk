@@ -88,16 +88,15 @@ async function main() {
   const escrowA = await integrate();
   check('escrow A integrated', escrowA.length === 66, escrowA);
 
-  step('2. NEW API — Bob reads it (state + role in one fetch)');
+  step('2. NEW API — Bob reads it (state + canonical possession views)');
   const u = usufruct({ client, signer: bob });
   const sword = await u.nav.escrow(escrowA);
   const swordState = await sword.read.assetState();
-  const swordRole = await sword.read.role();
   const swordFloor = await sword.read.floorPrice();
   check('status idle', swordState.kind === 'idle', swordState.kind);
   check('isAvailable', ['idle', 'descent'].includes(swordState.kind) === true);
-  check('canRent (Bob has a signer)', swordRole.canRent === true);
-  check('canBorrow false (no cap yet)', swordRole.canBorrow === false);
+  check('rentable (the market is not retired)', (await sword.read.isRetired()) === false);
+  check('no active seat yet (no cap to hold)', (await sword.read.activeUsufructCapId()) === null);
   check('floorPrice == rest price', swordFloor.mist === REST_PRICE, `${swordFloor}`);
 
   step('3. NEW API — Bob rents 2 tenures (pay defaults to floor×2)');
@@ -120,12 +119,11 @@ async function main() {
   }).send();
   check('borrow returned the asset (one PTB)', returned === true, digest);
 
-  step('5. NEW API — role re-resolves: Bob now holds the active cap');
+  step('5. NEW API — possession is the role: Bob now holds the active seat');
   const swordAfter = await u.nav.escrow(escrowA);
-  const swordAfterRole = await swordAfter.read.role();
   const swordAfterActiveCap = await swordAfter.nav.activeCap();
   const swordAfterState = await swordAfter.read.assetState();
-  check('canBorrow true now', swordAfterRole.canBorrow === true);
+  check('Bob holds the active seat (cap.read.isActive)', (await cap.read.isActive()) === true);
   check('escrow.activeCap id matches the rented cap', swordAfterActiveCap?.id === cap.id, `${swordAfterActiveCap?.id}`);
   check('status occupied', swordAfterState.kind === 'occupied', swordAfterState.kind);
 

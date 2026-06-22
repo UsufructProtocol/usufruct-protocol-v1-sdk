@@ -57,7 +57,7 @@ const escrow = await u.nav.escrow('0x…');       // resolve the handle (identit
 const s = await escrow.read.assetState();       // live: a discriminated union
 s.kind;              // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
 await escrow.read.floorPrice();                 // a Price, rendered in the escrow's own coin
-(await escrow.read.role()).canGovern;           // do I hold this escrow's GovernanceCap?
+(await u.inspect.governedBy(myAddr)).some(l => l.escrowId === escrow.id); // do I govern it?
 ```
 
 ## Identity + five verbs

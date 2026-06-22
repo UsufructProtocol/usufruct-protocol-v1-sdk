@@ -30,7 +30,6 @@ export type {
   HandoverSettlement,
   CyclePreview,
   AssetState,
-  EscrowRole,
   EscrowSnapshot,
   EscrowNavVerb,
   EscrowReadVerb,

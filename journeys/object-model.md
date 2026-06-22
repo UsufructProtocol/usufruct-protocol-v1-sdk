@@ -248,15 +248,17 @@ await escrow.nav.earningsInbox(); // EarningsInbox      — read.balance, write.
 await escrow.nav.feeInbox();      // ProtocolFeeInbox
 ```
 
-**Possession is a separate axis** — "what can *I* do here?", honest that
-the answer is an owned-objects lookup, not an identity the SDK assumes. The booleans
-live under `escrow.read.role()`:
+**Possession is a separate axis** — "what can *I* do here?". There is **no `role()`
+composite** that hides it: the answer is an owned-objects lookup (Sui object
+ownership), so you ask the canonical views directly:
 
 ```ts
-(await escrow.read.role()).canRent;       // I can rent (signer set, not retired)
-(await escrow.read.role()).canBorrow;     // I hold the active UsufructCap
-(await escrow.read.role()).canGovern;     // I hold the GovernanceCap
-(await escrow.read.role()).holdsEarnings; // I hold the EarningsInbox
+!(await escrow.read.isRetired());            // I can rent (the market is open)
+await activeCap.read.isActive();             // I hold the active seat → I can borrow
+(await u.inspect.governedBy(myAddr))         // the escrows I govern (I hold their GovernanceCap)
+  .some((l) => l.escrowId === escrow.id);
+(await u.inspect.rentedBy(myAddr))           // the escrows I rent
+  .some((l) => l.escrowId === escrow.id);
 ```
 
 So the counterpart objects are always there to ask (reached via `nav.*()`); possession
@@ -381,8 +383,7 @@ developer-facing framing as four verbs — **read · write · inspect · react**
 1. **State** — *the chain as it is now.* The `Escrow` handle's `read.*` (live curated
    views, `escrow.read.snapshot()` for a coherent cross-section) and
    `u.primitives.reader(escrow)` (live drift-free views). `u.nav.escrow(id)`,
-   `(await escrow.read.assetState()).kind`, `await escrow.read.floorPrice()`,
-   `escrow.read.role()`.
+   `(await escrow.read.assetState()).kind`, `await escrow.read.floorPrice()`.
 2. **Writes** — *change it.* The capability handles' methods, each on the object
    that authorizes it: `escrow.write.rent`, `usufructCap.write.borrow`, `governanceCap.write.updateMarket`,
    `inbox.write.collect`, `write.transfer`. Authority is possession; nothing is hidden.

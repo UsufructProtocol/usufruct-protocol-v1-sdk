@@ -45,7 +45,7 @@ Pick the object you hold, then `.nav` / `.read` / `.inspect` / `.react` / `.writ
 
 | | **nav** | **read** | **inspect** (pull) | **react** (push) | **write** |
 |---|---|---|---|---|---|
-| **Escrow** | `activeCap()`, `pendingCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `assetState()`, `floorPrice()`, `market()`, `cycle()`, `role()`, the 60+ views… | `history()`, `priceTimeline()`, `creditHistory()`, `tenancies()`, `usufructCaps()` | `watch()`/`waitFor()`, `on()`/`next()`/`onEvents` | `rent()`, `applyPendingTransitionStates()` |
+| **Escrow** | `activeCap()`, `pendingCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `assetState()`, `floorPrice()`, `market()`, `cycle()`, the 60+ views… | `history()`, `priceTimeline()`, `creditHistory()`, `tenancies()`, `usufructCaps()` | `watch()`/`waitFor()`, `on()`/`next()`/`onEvents` | `rent()`, `applyPendingTransitionStates()` |
 | **UsufructCap** | `escrow()` | `state()`, `isActive/isPending/isStale()` | `history()`, `statement()` | `watch()`, `waitFor()` | `borrow()`, `burn()`, `burnIfStale()`, `updateRefundAddress()`, `transfer()` |
 | **GovernanceCap** | — | `governs(escrow)` | `escrows()`, `revenueByEscrow()` | `watch()` (portfolio) | `updateMarket()`, `retire()`, `claim()`, `extend…()`, `renounce()`, `transfer()`, `integrateIntoPortfolio()` |
 | **EarningsInbox** / **ProtocolFeeInbox** | — | `balance()` | `history()`, `totals()`, `escrowsPushingMessages()` | `watch()` (new income) | `collect()`, `transfer()` |
@@ -58,7 +58,10 @@ Two notes on the shape:
   `inspect` (`governanceCap.inspect.escrows()`), not `nav`.
 - **Possession is not a gate on the handles.** Anyone can resolve any object's handle
   and `read`/`inspect` it; a `write` only *succeeds* if you actually hold the bearer
-  object (else the tx aborts). To ask "can I?", read `escrow.read.role()`.
+  object (else the tx aborts). There is **no `role()` composite** — authority is just
+  Sui object ownership, so you ask the canonical views: "am I retired?"
+  (`escrow.read.isRetired()`), "do I hold the active seat?" (`cap.read.isActive()`), or
+  "which escrows do I govern / rent?" (`u.inspect.governedBy(me)` / `rentedBy(me)`).
 
 ---
 
@@ -94,7 +97,7 @@ if (s.kind === 'demand') {                  // 'idle' | 'occupied' | 'demand' | 
 
 await escrow.read.floorPrice();             // a Price, rendered in the escrow's coin
 await escrow.read.market();                 // the full policy (rest price, tenure, curves…)
-await escrow.read.role();                   // { canRent, canBorrow, canGovern, holdsEarnings }
+await escrow.read.usufructCapIsActive(id);  // is this cap the active seat? (a possession view)
 await escrow.read.creditCurve();            // the CURRENT tenure's curve, sampled live
 await seat?.read.state();                   // the seat's economics — ask the cap itself
 await inbox.read.balance();                 // uncollected income, per coin

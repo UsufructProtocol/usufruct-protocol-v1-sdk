@@ -11,7 +11,8 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, usufruct, type InboxMessage, type Market } from '@usufruct-protocol/sdk';
-import { GRAPHQL_TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { GRAPHQL_TESTNET, TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { ownedIds } from '@usufruct-protocol/sdk/highlevel/role.js';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send, sleep, step, waitForChainTime } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
@@ -130,11 +131,15 @@ async function main(): Promise<void> {
   const governanceCapHandle = await e.nav.governanceCap();
   const earningsInboxHandle = await e.nav.earningsInbox();
   const feeInboxHandle = await e.nav.feeInbox();
-  const role = await e.read.role();
   check('governanceCap handle present + governs', (await governanceCapHandle.read.governs(escrow.id)) === true);
   check('earningsInbox handle present', typeof earningsInboxHandle.inboxId === 'string');
   check('feeInbox handle present', typeof feeInboxHandle.inboxId === 'string');
-  console.log(`  possession: canGovern=${role.canGovern} holdsEarnings=${role.holdsEarnings} canBorrow=${role.canBorrow}`);
+  // Possession is the role — and possession is just Sui object ownership. There is no
+  // `role()`; ask the canonical lookup whether my address owns the object the escrow names.
+  const holds = async (kind: string, id: string) => (await ownedIds(client, me, `${TESTNET.packageId}::${kind}`)).has(id);
+  const canGovern = await holds('governance_cap::GovernanceCap', governanceCapHandle.capId);
+  const holdsEarnings = await holds('earnings_inbox::EarningsInbox', earningsInboxHandle.inboxId);
+  console.log(`  possession (object ownership): canGovern=${canGovern} holdsEarnings=${holdsEarnings}`);
 
   step('⑨ react on the seat — usufructCap.react.watch() (the renter watches their own seat)');
   const seen: string[] = [];

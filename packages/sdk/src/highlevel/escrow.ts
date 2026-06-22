@@ -42,7 +42,6 @@ import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
 import { readMarket } from './marketReadback.js';
 import type { Market } from './market.js';
-import { resolveRole } from './role.js';
 import { fetchTypeArgs } from './typeargs.js';
 import type { When } from './usufruct.js';
 
@@ -91,19 +90,10 @@ export type AssetState =
   | { readonly kind: 'descent'; readonly from: Price; readonly floor: Price; readonly expiresAt: Date }
   | { readonly kind: 'retired' };
 
-/** What THIS signer can do here, now (caps transfer, so a live read). */
-export interface EscrowRole {
-  readonly canRent: boolean;
-  readonly canBorrow: boolean;
-  readonly canGovern: boolean;
-  readonly holdsEarnings: boolean;
-}
-
-/** A coherent cross-section at one `t` — state + role together (the explicit photo). */
+/** A coherent cross-section at one `t` — the asset state with the time it was read. */
 export interface EscrowSnapshot {
   readonly at: Date;
   readonly state: AssetState;
-  readonly role: EscrowRole;
 }
 
 /** nav — the edges out of this node (returns related handles, not state). */
@@ -120,10 +110,8 @@ export interface EscrowNavVerb {
 export type EscrowReadVerb = ScalarReadVerb & {
   /** The asset's lifecycle state now (discriminated; narrows to the phase's data). */
   assetState(at?: When): Promise<AssetState>;
-  /** State + role coherent at one `t` (the explicit batch). */
+  /** The asset state with the `t` it was read at (a coherent, timestamped photo). */
   snapshot(at?: When): Promise<EscrowSnapshot>;
-  /** This signer's role here, now. */
-  role(): Promise<EscrowRole>;
   /** The escrow's payment coin tag (immutable; cached). */
   coin(): Promise<CoinTag>;
   market(): Promise<Market>;
@@ -196,8 +184,7 @@ export async function createEscrow(
   at?: When,
   pre?: ResolvedEscrow,
 ): Promise<Escrow> {
-  const { client, packageId, account, defaultExecutor, retry } = ctx;
-  const owner = account; // identity for role resolution + the build-time sender
+  const { client, packageId, defaultExecutor, retry } = ctx;
   const escrowId = toId<'Escrow'>(idStr);
 
   // Construction fetches only what IDENTITY needs: the type args (from the object's
@@ -548,28 +535,10 @@ export async function createEscrow(
     };
   }
 
-  async function roleRead(): Promise<EscrowRole> {
-    const rb = await reader.batch(['activeUsufructCapId', 'governanceCapId', 'earningsInboxId', 'isRetired']);
-    const r = await resolveRole(
-      client,
-      packageId,
-      owner,
-      (rb['activeUsufructCapId'] as string | null) ?? null,
-      (rb['governanceCapId'] as string | null) ?? null,
-      (rb['earningsInboxId'] as string | null) ?? null,
-    );
-    return {
-      canRent: owner != null && !(rb['isRetired'] as boolean),
-      canBorrow: r.capId != null,
-      canGovern: r.governs,
-      holdsEarnings: r.holdsEarnings,
-    };
-  }
-
   async function snapshotRead(at?: When): Promise<EscrowSnapshot> {
     const tt = await resolveWhen(client, at);
-    const [state, r] = await Promise.all([assetState(new Date(Number(tt))), roleRead()]);
-    return { at: new Date(Number(tt)), state, role: r };
+    const state = await assetState(new Date(Number(tt)));
+    return { at: new Date(Number(tt)), state };
   }
 
   async function liveCreditCurve(curveOpts?: CurveOpts): Promise<CreditSegment | null> {
@@ -641,7 +610,6 @@ export async function createEscrow(
     ...createScalarReadVerb(reader, coin, client),
     assetState,
     snapshot: snapshotRead,
-    role: roleRead,
     coin: () => Promise.resolve(coinTag(coin)),
     market,
     cycle,
