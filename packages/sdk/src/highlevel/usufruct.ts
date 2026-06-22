@@ -53,7 +53,9 @@ const GRPC_URL: Record<Network, string> = {
 };
 
 /** The public GraphQL endpoint per network — the default for `inspect.*` discovery.
- *  No `localnet` entry (no standard local indexer): there you must pass `graphql`. */
+ *  No `localnet` entry (no standard local indexer): there you must pass `graphql`.
+ *  Only `testnet` is verified live; `mainnet`/`devnet` follow the same hostname
+ *  pattern but are best-effort — pass an explicit `graphql` if Mysten moves them. */
 const GRAPHQL_URL: Partial<Record<Network, string>> = {
   testnet: 'https://graphql.testnet.sui.io/graphql',
   mainnet: 'https://graphql.mainnet.sui.io/graphql',

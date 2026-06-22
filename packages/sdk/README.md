@@ -15,7 +15,7 @@ window before displacement. State transitions execute lazily on the next
 transaction that touches the escrow — no keeper, no cron.
 
 - Protocol: https://github.com/UsufructProtocol/usufruct-protocol-v1
-- Live on Sui **testnet** (`v1.4.3`), source-verified on-chain.
+- Live on Sui **testnet** (`v1.4.7`), source-verified on-chain.
 
 ## Drift-zero by construction
 
