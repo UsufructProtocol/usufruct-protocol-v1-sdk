@@ -7,6 +7,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
+## [1.0.0-rc.1] — Unreleased
+
+The handle API is reshaped into one fractal, navigable form: every object is its
+**identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
+write`** — repeated identically on the root `u` and on every handle. This is the v1.0
+shape (release candidate).
+
+### Changed (breaking)
+
+- **Handles are identity + verbs only.** The flat surface is gone:
+  `escrow.status`/`floorPrice`/`rent()`/`activeCap`/… → `escrow.read.assetState()`
+  (a discriminated union), `escrow.read.floorPrice()`, `escrow.write.rent()`,
+  `escrow.nav.activeCap()`. Same for `UsufructCap`, `GovernanceCap`, the inboxes, and
+  the root (`u.escrow(id)` → `u.nav.escrow(id)`; `u.escrowsGovernedBy` →
+  `u.inspect.governedBy`; `u.integrate` → `u.write.integrate`).
+- **No fetch-time photo.** `Escrow` construction is lazy — it resolves only identity
+  (type args + coin); the verbs read the deployed views live, so nothing the handle
+  exposes can go stale. The eager snapshot/role batch (and its `createEscrowMany`
+  pre-resolution) is removed.
+- **`nav`** is the new verb for graph edges (an escrow's seats/counterparts, a cap's
+  escrow, the root's "open this id"); collections stay under `inspect`.
+- **`read`** auto-renders the protocol's whole view surface (mist→`Price`,
+  ms→`Date`/duration) — every on-chain view has a home on the object — plus composites
+  (`assetState`, `market`, `cycle`, `role`, live `creditCurve`/`descentCurve`).
+- **No `escrow.reader`** on the handle; the kernel reader stays reachable via
+  `u.primitives.reader(target)`.
+- **`react.waitFor`** takes an async predicate over the handle and resolves to the
+  handle: `escrow.react.waitFor(async e => (await e.read.assetState()).kind === 'demand')`.
+- **No `escrow.read.role()`.** The composite that bundled `canRent`/`canBorrow`/
+  `canGovern`/`holdsEarnings` is removed — authority in Usufruct is plain Sui object
+  ownership, not a permission read, so a single "role" overstated it. Ask the canonical
+  views instead: `escrow.read.isRetired()` (rentable), `cap.read.isActive()` (hold the
+  seat), `u.inspect.governedBy(addr)` / `rentedBy(addr)` (govern/rent), or the
+  `ownedIds` primitive those compose over. `EscrowSnapshot` drops its `role` field
+  (now `{ at, state }`); `EscrowRole` and `resolveRole` are gone (`ownedIds` stays).
+- **`graphql` defaults from `network`** (testnet/mainnet/devnet) — `inspect.*` works
+  out of the box; pass `graphql: false` to disable, or a URL/client to override.
+- **One cross-state cycle-params view.** The reader's `activeCycleParams` (Renting
+  only) + `nextCycleParams` (Waiting only) collapse into a single `cycleParams`,
+  matching the protocol's unified `cycle_*` views (the resolved cycle of the active
+  ensemble is cross-state — non-null in every state but `retired`). The `sim` mirror
+  view and the golden fixtures follow. Re-codegen'd against the new testnet deployment.
+
+### Fixed
+
+- The live `escrow.read.cycle()` and `escrow.read.descentCurve()` read the resolved
+  cycle from the cross-state `cycleParams` view, so both work in idle/descent (the old
+  `activeCycleParams` was `None` there — a latent null that surfaced as a broken
+  `descentCurve`). Drift-zero against the view.
+
 ## [0.1.0] — Unreleased
 
 First public release. The SDK is the high-level, object-centric TypeScript API over

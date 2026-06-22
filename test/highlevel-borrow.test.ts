@@ -36,19 +36,19 @@ const SENDER = '0x0000000000000000000000000000000000000000000000000000000000000a
 describe('cap.borrow — variadic composition (Plan.build)', () => {
   it('composes several Use middles in order, inside one borrow→return bracket', async () => {
     const tx = new Transaction();
-    await cap.borrow(call('a'), call('b'), call('c')).build(tx, SENDER);
+    await cap.write.borrow(call('a'), call('b'), call('c')).build(tx, SENDER);
     expect(moveCalls(tx)).toEqual(['borrow_asset', 'a', 'b', 'c', 'return_asset']);
   });
 
   it('a single Use is the same call shape', async () => {
     const tx = new Transaction();
-    await cap.borrow(call('solo')).build(tx, SENDER);
+    await cap.write.borrow(call('solo')).build(tx, SENDER);
     expect(moveCalls(tx)).toEqual(['borrow_asset', 'solo', 'return_asset']);
   });
 
   it('repeating a step repeats its commands, in order', async () => {
     const tx = new Transaction();
-    await cap.borrow(call('read'), call('use'), call('use'), call('use')).build(tx, SENDER);
+    await cap.write.borrow(call('read'), call('use'), call('use'), call('use')).build(tx, SENDER);
     expect(moveCalls(tx)).toEqual(['borrow_asset', 'read', 'use', 'use', 'use', 'return_asset']);
   });
 
@@ -56,14 +56,14 @@ describe('cap.borrow — variadic composition (Plan.build)', () => {
     const tx = new Transaction();
     const seen: unknown[] = [];
     const spy: Use = (asset) => void seen.push(asset);
-    await cap.borrow(spy, spy).build(tx, SENDER);
+    await cap.write.borrow(spy, spy).build(tx, SENDER);
     expect(seen).toHaveLength(2);
     expect(seen[0]).toBe(seen[1]);
   });
 
   it('no steps still produces a well-formed (empty) bracket', async () => {
     const tx = new Transaction();
-    await cap.borrow().build(tx, SENDER);
+    await cap.write.borrow().build(tx, SENDER);
     expect(moveCalls(tx)).toEqual(['borrow_asset', 'return_asset']);
   });
 });

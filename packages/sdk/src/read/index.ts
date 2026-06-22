@@ -17,3 +17,13 @@ export {
   type ReadCtx,
   type ReadArg,
 } from './spec.js';
+export {
+  constructShape,
+  sampleDescentCurve,
+  sampleCreditCurve,
+  sampleEscalationLadder,
+  type CurveShape,
+  type DescentParams,
+  type CreditParams,
+  type Escalation,
+} from './curve.js';

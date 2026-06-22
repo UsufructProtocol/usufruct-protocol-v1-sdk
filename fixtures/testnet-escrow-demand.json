@@ -55,13 +55,12 @@
       "creditIsCapped": true,
       "creditCappedAtMs": "1781475300172",
       "hasPendingEnsembleUpdate": true,
-      "activeCycleParams": {
+      "cycleParams": {
         "ceilingMs": "90000",
         "descentMs": "0",
         "floorMist": "1000",
         "handoverMs": "25000"
       },
-      "nextCycleParams": null,
       "pendingCycleParams": {
         "ceilingMs": "90000",
         "descentMs": "0",

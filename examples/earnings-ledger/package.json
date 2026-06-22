@@ -1,0 +1,16 @@
+{
+  "name": "usufruct-earnings-ledger",
+  "private": true,
+  "type": "module",
+  "description": "Probe — inbox.history() / totals() on both inbox kinds: governor earnings (90%) + protocol fees (10%), summed per coin (multi-coin DUMMY + USDC), the 90/10 split reconciled",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@usufruct-protocol/sdk": "file:../../packages/sdk"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

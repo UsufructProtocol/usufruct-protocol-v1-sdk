@@ -120,10 +120,10 @@ const u = usufruct({ network: 'testnet', client, account });   // .send() will r
 ### ① `send()` — the SDK drives (the 90%)
 
 ```ts
-const cap     = await escrow.rent({ tenures: 1 }).send();
-const amounts = await earningsInbox.collect().send();
-await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
-const { digest } = await cap.borrow((asset, tx) => {
+const cap     = await escrow.write.rent({ tenures: 1 }).send();
+const amounts = await earningsInbox.write.collect().send();
+await governanceCap.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+const { digest } = await cap.write.borrow((asset, tx) => {
   tx.transferObjects([tx.moveCall({ target: `${PKG}::asset::use`, arguments: [asset] })], BOB);
 }).send();
 ```
@@ -131,7 +131,7 @@ const { digest } = await cap.borrow((asset, tx) => {
 ### ② `send(executor)` — different signer, same rich result
 
 ```ts
-const cap = await escrow.rent({ tenures: 1 }).send(walletExecutor);  // wallet / Ledger / sponsor
+const cap = await escrow.write.rent({ tenures: 1 }).send(walletExecutor);  // wallet / Ledger / sponsor
 // → still returns a typed UsufructCap; only who signed changed
 ```
 
@@ -139,8 +139,8 @@ const cap = await escrow.rent({ tenures: 1 }).send(walletExecutor);  // wallet /
 
 ```ts
 const [a, b] = await u.batch(
-  govA.updateMarket(eA, { restPrice: eA.coin(0.02) }),
-  govB.updateMarket(eB, { restPrice: eB.coin(0.03) }),
+  govA.write.updateMarket(eA, { restPrice: eA.coin(0.02) }),
+  govB.write.updateMarket(eB, { restPrice: eB.coin(0.03) }),
 ).send();                                  // one .send(), one tx, all-or-nothing
 ```
 
@@ -152,11 +152,11 @@ import { Transaction } from '@mysten/sui/transactions';
 const tx = new Transaction();
 const ME = signer.toSuiAddress();
 
-const rentPlan = escrow.rent({ tenures: 1 });
+const rentPlan = escrow.write.rent({ tenures: 1 });
 await rentPlan.build(tx, ME);                          // append
 const fee = tx.splitCoins(tx.gas, [1_000])[0]!;        // raw Sui command, mid-PTB
 tx.transferObjects([fee], TREASURY);
-await cap.borrow(useAndKeepCoupon(BOB)).build(tx, ME); // the bracket nests too
+await cap.write.borrow(useAndKeepCoupon(BOB)).build(tx, ME); // the bracket nests too
 
 const res    = await signerExecutor(client, signer).execute(tx);   // one execute
 const rented = await rentPlan.decode(res);                          // decode if you want the handle
@@ -165,7 +165,7 @@ const rented = await rentPlan.decode(res);                          // decode if
 ### ⑤ `toTransaction()` — build-only (wallet / offline)
 
 ```ts
-const plan = escrow.rent({ tenures: 1 });
+const plan = escrow.write.rent({ tenures: 1 });
 const tx   = await plan.toTransaction(ME);      // unsigned PTB
 const res  = await wallet.signAndExecute(tx);   // signed/sent outside the SDK
 const cap  = await plan.decode(res);            // you interpret the effects
@@ -174,26 +174,26 @@ const cap  = await plan.decode(res);            // you interpret the effects
 ### ⑥ Multi-tx — dependent writes (each its own `.send()`)
 
 ```ts
-const cap = await escrow.rent({ tenures: 1 }).send();   // tx1
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // tx1
 await sleep(handover);                                   // the cap isn't active yet
-await cap.borrow(recipe).send();                         // tx2 — can't share tx1
+await cap.write.borrow(recipe).send();                         // tx2 — can't share tx1
 ```
 
 ### Reads — no `.send()`, for contrast
 
 ```ts
-await escrow.market();        escrow.status;        await cap.state();
-await earningsInbox.balance(); const e = await u.escrow(id);   // resolver, not a write
+await escrow.read.market();   (await escrow.read.assetState()).kind;   await cap.read.state();
+await earningsInbox.read.balance(); const e = await u.nav.escrow(id);   // resolver, not a write
 ```
 
 ## Path 1 — `send()`: let the SDK drive (the 90%)
 
 ```ts
-const cap     = await escrow.rent({ tenures: 1 }).send();
-const amounts = await earningsInbox.collect().send();
-await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+const cap     = await escrow.write.rent({ tenures: 1 }).send();
+const amounts = await earningsInbox.write.collect().send();
+await governanceCap.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
 
-const { digest } = await cap.borrow((asset, tx) => {
+const { digest } = await cap.write.borrow((asset, tx) => {
   tx.transferObjects([tx.moveCall({ target: `${PKG}::asset::use`, arguments: [asset] })], BOB);
 }).send();
 ```
@@ -205,7 +205,7 @@ on the session (`usufruct({ signer })`); pass one to override:
 ```ts
 // sign with a wallet / Ledger / sponsor instead of the configured signer —
 // the rich typed result still comes back (the executor returns the effects, the SDK decodes).
-const cap = await escrow.rent({ tenures: 1 }).send(walletExecutor);
+const cap = await escrow.write.rent({ tenures: 1 }).send(walletExecutor);
 ```
 
 Identity and signing are separate: `account` (who I am — reads + the build-time
@@ -226,8 +226,8 @@ once, and decodes each — all-or-nothing, in `build` order.
 ```ts
 // atomic governance: change the market on two escrows in one transaction
 const [a, b] = await u.batch(
-  govA.updateMarket(eA, { restPrice: eA.coin(0.02) }),
-  govB.updateMarket(eB, { restPrice: eB.coin(0.03) }),
+  govA.write.updateMarket(eA, { restPrice: eA.coin(0.02) }),
+  govB.write.updateMarket(eB, { restPrice: eB.coin(0.03) }),
 ).send();
 ```
 
@@ -253,9 +253,9 @@ import { signerExecutor } from '@usufruct-protocol/sdk';
 const tx = new Transaction();
 const ME = signer.toSuiAddress();
 
-const rentPlan = escrow.rent({ tenures: 1 });
+const rentPlan = escrow.write.rent({ tenures: 1 });
 await rentPlan.build(tx, ME);            // ① append
-const collectPlan = inbox.collect();
+const collectPlan = inbox.write.collect();
 await collectPlan.build(tx, ME);         // ① append
 
 const res = await signerExecutor(client, signer).execute(tx);   // ② execute once
@@ -267,7 +267,7 @@ const amounts = await collectPlan.decode(res);
 ### Mix raw Sui commands around a write
 
 ```ts
-await escrow.rent({ tenures: 1 }).build(tx, ME);
+await escrow.write.rent({ tenures: 1 }).build(tx, ME);
 const fee = tx.splitCoins(tx.gas, [1_000])[0]!;   // your own command, mid-PTB
 tx.transferObjects([fee], TREASURY);
 ```
@@ -275,7 +275,7 @@ tx.transferObjects([fee], TREASURY);
 ### The borrow bracket nests through `build` too
 
 ```ts
-await cap.borrow(useAndKeepCoupon(BOB)).build(tx, ME);
+await cap.write.borrow(useAndKeepCoupon(BOB)).build(tx, ME);
 // borrow_asset … return_asset land inside THIS tx, alongside everything else
 ```
 
@@ -293,7 +293,7 @@ import { usufruct, walletExecutor } from '@usufruct-protocol/sdk';
 const u = usufruct({ client });
 u.connect(walletExecutor(client, wallet, account));   // identity + signing from the wallet
 
-const cap = await escrow.rent({ tenures: 1 }).send();  // wallet prompts; cap fully decoded
+const cap = await escrow.write.rent({ tenures: 1 }).send();  // wallet prompts; cap fully decoded
 ```
 
 **The wallet only signs; the SDK executes.** This is deliberate, not incidental.
@@ -314,7 +314,7 @@ signer — take the unsigned PTB, have it signed/sent there, then `decode` the
 effects yourself:
 
 ```ts
-const plan = escrow.rent({ tenures: 1 });
+const plan = escrow.write.rent({ tenures: 1 });
 const tx   = await plan.toTransaction(ME);     // unsigned PTB
 const res  = await wallet.signAndExecute(tx);  // executed outside the SDK
 const cap  = await plan.decode(res);           // turn the effects into the typed result
@@ -342,9 +342,9 @@ writes. Writes that depend on the previous one's *on-chain* result need separate
 transactions, each with its own `send()`:
 
 ```ts
-const cap = await escrow.rent({ tenures: 1 }).send();   // tx1
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // tx1
 await sleep(handover);                                   // the new cap isn't active yet
-await cap.borrow(recipe).send();                         // tx2 — cannot share tx1
+await cap.write.borrow(recipe).send();                         // tx2 — cannot share tx1
 ```
 
 This is not a limitation of the SDK but of the protocol (the handover window): two
@@ -352,12 +352,13 @@ real transactions, two honest `send()`s.
 
 ## Reads — for contrast
 
-Reads never send and never carry `.send()`. They return data, eagerly. The `.send()`
-on a write is exactly what tells write from read at a glance:
+Reads never send and never carry `.send()`. They are live methods you `await` —
+construction is lazy (no fetch-time snapshot); each read goes to the chain when
+called. The `.send()` on a write is exactly what tells write from read at a glance:
 
 ```ts
-await escrow.market();        escrow.status;        await cap.state();
-await earningsInbox.balance(); const e = await u.escrow(id);   // resolver, not a write
+await escrow.read.market();   (await escrow.read.assetState()).kind;   await cap.read.state();
+await earningsInbox.read.balance(); const e = await u.nav.escrow(id);   // resolver, not a write
 ```
 
 ## Decision guide
@@ -410,7 +411,7 @@ special handling** — that is the whole point.
 const governor = new MultiSigSigner(mpk, [kpA, kpB]);          // 2 of 3 present → meets threshold
 const u = usufruct({ network: 'testnet', client, signer: governor });
 
-const earnings = await u.earningsInbox(INBOX).collect().send();
+const earnings = await u.nav.earningsInbox(INBOX).write.collect().send();
 console.log(earnings);                                          // [{ coin, amount }] per coin (§5.2)
 ```
 
@@ -437,7 +438,7 @@ const multisigExecutor: Executor = {
 };
 
 const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() }); // identity only
-const earnings = await u.earningsInbox(INBOX).collect().send(multisigExecutor);
+const earnings = await u.nav.earningsInbox(INBOX).write.collect().send(multisigExecutor);
 ```
 
 ### Case 3 — build now, sign later (offline / asynchronous multisig)
@@ -452,7 +453,7 @@ import { toBase64, fromBase64 } from '@mysten/sui/utils';
 const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() });
 
 // ① NOW — build and freeze; carry away the bytes
-const plan  = u.earningsInbox(INBOX).collect();
+const plan  = u.nav.earningsInbox(INBOX).write.collect();
 const tx    = await plan.toTransaction(mpk.toSuiAddress());
 const bytes = await tx.build({ client });
 const b64   = toBase64(bytes);                          // the portable artifact → distribute

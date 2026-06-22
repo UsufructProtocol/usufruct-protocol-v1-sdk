@@ -73,31 +73,31 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}`);
 
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  await withRetry(async () => (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send());
+  await withRetry(async () => (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send());
   console.log('② Bob rented — occupied\n');
 
-  const handle = await withRetry(() => a.escrow(escrow.id));
+  const handle = await withRetry(() => a.nav.escrow(escrow.id));
 
   // ③ NEXT — keeper A awaits the next BidPlaced (any), one-shot, no plumbing
-  console.log("③ keeper A: await escrow.next('BidPlaced')  (any bid)");
-  const anyBid = handle.next('BidPlaced', { timeoutMs: 120_000 });
+  console.log("③ keeper A: await escrow.react.next('BidPlaced')  (any bid)");
+  const anyBid = handle.react.next('BidPlaced', { timeoutMs: 120_000 });
 
   // ③b WHERE — keeper B awaits a BidPlaced whose bidder is Carol: filter by a
   //   FIELD VALUE of the decoded event, not just its type. A bid from anyone else
   //   is skipped (the firehose carries it; the predicate drops it).
-  console.log("③b keeper B: escrow.next('BidPlaced', { where: e => e.data.pending_usufructuary_address === Carol })");
-  const carolBid = handle.next('BidPlaced', {
+  console.log("③b keeper B: escrow.react.next('BidPlaced', { where: e => e.data.pending_usufructuary_address === Carol })");
+  const carolBid = handle.react.next('BidPlaced', {
     where: (e) => e.data['pending_usufructuary_address'] === carol.toSuiAddress(),
     timeoutMs: 120_000,
   });
 
   // ④ CHALLENGE — Carol bids
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  await withRetry(async () => (await uc.escrow(escrow.id)).rent({ tenures: 1 }).send());
+  await withRetry(async () => (await uc.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send());
   console.log('④ Carol bid on the occupied escrow\n');
 
   // ⑤ REACT — both promises resolve; keeper B matched on the FIELD VALUE
@@ -110,13 +110,14 @@ async function main() {
   console.log(`   pending_bid_amount = ${d['pending_bid_amount']} · floor_price = ${d['floor_price']}`);
   console.log(`   keeper B (where bidder === Carol) resolved on the matching value: ${whereMatched ? '✓' : '✗'}`);
   console.log('   acting: settling the handover…');
-  const challenged = await withRetry(() => a.escrow(escrow.id));
-  await waitForChainTime(client, BigInt(challenged.handoverExpiresAt!.getTime()));
-  await challenged.applyPendingTransitionStates().send();
-  const after = await withRetry(() => a.escrow(escrow.id));
-  console.log(`   settled — status=${after.status}`);
+  const challenged = await withRetry(() => a.nav.escrow(escrow.id));
+  await waitForChainTime(client, BigInt((await challenged.read.handoverExpiresAt())!.getTime()));
+  await challenged.write.applyPendingTransitionStates().send();
+  const after = await withRetry(() => a.nav.escrow(escrow.id));
+  const afterKind = (await after.read.assetState()).kind;
+  console.log(`   settled — status=${afterKind}`);
   console.log(
-    after.status === 'occupied' && bidderIsCarol && whereMatched
+    afterKind === 'occupied' && bidderIsCarol && whereMatched
       ? '\nALL PASS — keeper reacted to the typed BidPlaced (and the where-filtered one) and settled.'
       : '\nUNEXPECTED',
   );

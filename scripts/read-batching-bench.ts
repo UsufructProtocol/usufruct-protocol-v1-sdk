@@ -87,12 +87,12 @@ async function setup(c: ClientWithCoreApi): Promise<string[]> {
   const alice = usufruct({ network: 'testnet', client: c, signer: ALICE });
   const ids: string[] = [];
   for (const asset of assetIds) {
-    const { escrow } = await alice.integrate({ asset, coin: DUMMY, market: MARKET }).send();
+    const { escrow } = await alice.write.integrate({ asset, coin: DUMMY, market: MARKET }).send();
     ids.push(escrow.id);
   }
   // rent the FIRST so the set is mixed: 1 occupied + (N-1) idle.
   const bob = usufruct({ network: 'testnet', client: c, signer: BOB });
-  await (await bob.escrow(ids[0]!)).rent({ tenures: 1 }).send();
+  await (await bob.nav.escrow(ids[0]!)).write.rent({ tenures: 1 }).send();
   return ids;
 }
 
@@ -106,21 +106,28 @@ async function main() {
 
   reset();
   const loop = [];
-  for (const id of ids) loop.push(await bob.escrow(id));
-  console.log(`loop  for(id) u.escrow(id)  → ${fmt(counts)}`);
+  for (const id of ids) loop.push(await bob.nav.escrow(id));
+  console.log(`loop  for(id) u.nav.escrow(id)  → ${fmt(counts)}`);
 
   reset();
-  const batched = await bob.escrows(ids);
-  console.log(`batch u.escrows(ids)        → ${fmt(counts)}`);
+  const batched = await bob.nav.escrows(ids);
+  console.log(`batch u.nav.escrows(ids)        → ${fmt(counts)}`);
 
   // spot-check: the two paths resolve identical fields per escrow.
-  const same = ids.every((_, i) => {
-    const a = loop[i]!;
-    const b = batched[i]!;
-    return a.status === b.status && `${a.floorPrice}` === `${b.floorPrice}` && a.activeUsufructCapId === b.activeUsufructCapId && a.canBorrow === b.canBorrow;
-  });
-  console.log(`\nspot-check (status/floor/activeCap/canBorrow match loop↔batch): ${same ? 'OK ✓' : 'MISMATCH ✗'}`);
-  console.log(`statuses: ${batched.map((e) => e.status).join(', ')}`);
+  const same = (
+    await Promise.all(
+      ids.map(async (_, i) => {
+        const a = loop[i]!;
+        const b = batched[i]!;
+        const [aState, bState] = [await a.read.assetState(), await b.read.assetState()];
+        const [aFloor, bFloor] = [await a.read.floorPrice(), await b.read.floorPrice()];
+        const [aCap, bCap] = [await a.read.activeUsufructCapId(), await b.read.activeUsufructCapId()];
+        return aState.kind === bState.kind && `${aFloor}` === `${bFloor}` && aCap === bCap;
+      }),
+    )
+  ).every(Boolean);
+  console.log(`\nspot-check (status/floor/activeCap match loop↔batch): ${same ? 'OK ✓' : 'MISMATCH ✗'}`);
+  console.log(`statuses: ${(await Promise.all(batched.map(async (e) => (await e.read.assetState()).kind))).join(', ')}`);
 }
 
 main()

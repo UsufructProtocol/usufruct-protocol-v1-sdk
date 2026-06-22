@@ -1,0 +1,16 @@
+{
+  "name": "usufruct-price-curve",
+  "private": true,
+  "type": "module",
+  "description": "Probe — render the Dutch-auction floor curve; surfaces the O(N) read cost of sampling a view over time",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@usufruct-protocol/sdk": "file:../../packages/sdk"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

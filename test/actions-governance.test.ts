@@ -56,7 +56,7 @@ describe('updateEnsemble', () => {
     const { state, result } = actions.updateEnsemble(newCfg).step(idleState(), ms(2_000));
     expect(result.applied).toBe('immediate');
     expect(views.restPrice(state, t0)).toEqual({ kind: 'fixed', priceMist: 2_000n });
-    expect(views.nextCycleParams(state, t0)?.floorMist).toBe(2_000n);
+    expect(views.cycleParams(state, t0)?.floorMist).toBe(2_000n);
     expect(views.hasPendingEnsembleUpdate(state, t0)).toBe(false);
   });
 

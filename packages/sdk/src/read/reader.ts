@@ -108,8 +108,9 @@ export interface Reader {
   creditCappedAtMs(): Promise<Ms | null>;
   hasPendingEnsembleUpdate(): Promise<boolean>;
   // cycle params
-  activeCycleParams(): Promise<CycleParamsView | null>;
-  nextCycleParams(): Promise<CycleParamsView | null>;
+  /** The resolved cycle (floor/ceiling/handover/descent) of the active ensemble —
+   *  cross-state, non-null in every state but `retired`. */
+  cycleParams(): Promise<CycleParamsView | null>;
   pendingCycleParams(): Promise<CycleParamsView | null>;
   activeCeilingTotalMs(): Promise<Ms | null>;
   activeHandoverTotalMs(): Promise<Ms | null>;
@@ -217,8 +218,7 @@ export function createReader(client: ClientWithCoreApi, target: ReaderTarget): R
     creditCappedAtMs: () => run('creditCappedAtMs'),
     hasPendingEnsembleUpdate: () => run('hasPendingEnsembleUpdate'),
 
-    activeCycleParams: () => run('activeCycleParams'),
-    nextCycleParams: () => run('nextCycleParams'),
+    cycleParams: () => run('cycleParams'),
     pendingCycleParams: () => run('pendingCycleParams'),
     activeCeilingTotalMs: () => run('activeCeilingTotalMs'),
     activeHandoverTotalMs: () => run('activeHandoverTotalMs'),

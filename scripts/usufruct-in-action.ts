@@ -48,7 +48,7 @@ async function main() {
   // ════════════ ① INTEGRATE — Alice lists her asset as a rental market ════════════
   const alice = usufruct({ network: 'testnet', client, signer: ALICE });
 
-  const { escrow, governanceCap, earningsInbox } = await alice.integrate({
+  const { escrow, governanceCap, earningsInbox } = await alice.write.integrate({
     asset: swordId,
     coin: DUMMY, // the payment coin — an IMMUTABLE phantom type fixed here, never in the market
     // Every field is required — a market is a set of economic decisions, and the
@@ -70,18 +70,18 @@ async function main() {
     },
   }).send();
   console.log(`① listed ${escrow.id}`);
-  console.log(`   floor ${escrow.floorPrice} · governanceCap ${governanceCap.capId} · earningsInbox ${earningsInbox.inboxId}\n`);
+  console.log(`   floor ${await escrow.read.floorPrice()} · governanceCap ${governanceCap.capId} · earningsInbox ${earningsInbox.inboxId}\n`);
 
   // ════════════ ② RENT — Bob acquires the right of use ════════════
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
-  const sword = await bob.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
-  const cap = await sword.rent({ tenures: 1 }).send();
+  const sword = await bob.nav.escrow(escrow.id); // an `Escrow` handle — Bob's typed view of the same market
+  const cap = await sword.write.rent({ tenures: 1 }).send();
   console.log(`② rented — usufructCap ${cap.id}`);
   console.log(`   paid ${cap.receipt!.paid} · until ${cap.receipt!.expiresAt.toISOString()}\n`);
 
   // ════════════ ③ BORROW — Bob injects his own PTB code around the asset ════════════
-  const { digest } = await cap.borrow((asset, tx) => {
+  const { digest } = await cap.write.borrow((asset, tx) => {
     // YOUR code, mid-PTB: the asset handle is yours to compose with any Sui call;
     // the borrow before and the return after are appended for you (guaranteed).
     const coupon = tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::use_asset`, arguments: [asset] });
@@ -94,8 +94,8 @@ async function main() {
   // (permissionless), then collect from the EarningsInbox Alice holds.
   console.log('④ waiting for the tenure to expire, then settling…');
   await waitForChainTime(client, BigInt(cap.receipt!.expiresAt.getTime()));
-  await sword.applyPendingTransitionStates().send(); // permissionless; the next rent would do it anyway
-  const earned = await earningsInbox.collect().send();
+  await sword.write.applyPendingTransitionStates().send(); // permissionless; the next rent would do it anyway
+  const earned = await earningsInbox.write.collect().send();
   console.log(`   collected ${earned.map((e) => `${e.amount}`).join(', ') || '(nothing yet)'} from ${earningsInbox.inboxId}`);
 }
 

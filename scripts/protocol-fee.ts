@@ -74,31 +74,32 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const feeInboxId = await escrow.read.feeInboxId();
   console.log(`① Alice listed ${escrow.id}`);
-  console.log(`   protocol fee inbox (singleton) = ${escrow.feeInboxId}\n`);
+  console.log(`   protocol fee inbox (singleton) = ${feeInboxId}\n`);
 
   // The fee inbox is a deployment SINGLETON shared by every escrow — its balance
   // is the running total of UNCOLLECTED fees across all escrows and coins. So we
   // measure this run's contribution as a DELTA, not as the absolute balance.
   // The holder resolves it with no id: u.feeInbox() reads the configured feeRef.
   const p = usufruct({ network: 'testnet', client, signer: PROTOCOL });
-  const feeInbox = await p.feeInbox(); // arg-less: resolved from the configured ProtocolFeeRef
-  check('u.feeInbox() resolves the same singleton as escrow.feeInboxId', feeInbox.inboxId === escrow.feeInboxId);
+  const feeInbox = await p.nav.feeInbox(); // arg-less: resolved from the configured ProtocolFeeRef
+  check('u.feeInbox() resolves the same singleton as escrow.feeInboxId', feeInbox.inboxId === feeInboxId);
   const dummyMist = async () =>
-    (await feeInbox.balance()).find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
+    (await feeInbox.read.balance()).find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   const before = await dummyMist();
 
   // ════════════ ② RENT — Bob takes it; pays the stake that becomes credit ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
+  const bobCap = await (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send();
   console.log(`② Bob rented — paid ${bobCap.receipt!.paid}; tenure ends ${bobCap.receipt!.expiresAt.toISOString()}\n`);
 
   // ════════════ ③ EXPIRE — wait out the tenure, then settle (posts the fee) ════════════
   console.log('③ waiting out the tenure, then settling (apply posts earnings + fee)…');
   await waitForChainTime(client, BigInt(bobCap.receipt!.expiresAt.getTime()));
-  await (await a.escrow(escrow.id)).applyPendingTransitionStates().send();
-  console.log(`   settled — status is now ${(await a.escrow(escrow.id)).status}\n`);
+  await (await a.nav.escrow(escrow.id)).write.applyPendingTransitionStates().send();
+  console.log(`   settled — status is now ${(await (await a.nav.escrow(escrow.id)).read.assetState()).kind}\n`);
 
   // ════════════ ④ PREVIEW — the fee delta is exactly 10% of consumed credit ════════════
   const after = await dummyMist();
@@ -110,17 +111,17 @@ async function main() {
   // ════════════ ⑤ GUARD — a non-holder cannot collect; the chain refuses ════════════
   // Authority IS possession: Alice doesn't hold the inbox, so her collect (which
   // needs &mut ProtocolFeeInbox) is rejected at execution — not by our code, by Sui.
-  const aliceFeeInbox = await a.feeInbox();
+  const aliceFeeInbox = await a.nav.feeInbox();
   let refused = false;
   try {
-    await aliceFeeInbox.collect().send();
+    await aliceFeeInbox.write.collect().send();
   } catch {
     refused = true;
   }
   check('Alice (non-holder) cannot collect the protocol fee', refused);
 
   // ════════════ ⑥ COLLECT — the deployer collects, partitioned by coin (§5.2) ════════════
-  const collected = await feeInbox.collect().send();
+  const collected = await feeInbox.write.collect().send();
   console.log(`⑥ deployer swept:`, collected.map((b) => `${b.amount}`).join(', ') || '(empty)');
   const collectedDummy = collected.find((b) => b.coin === COIN_T)?.amount.mist ?? 0n;
   check('deployer collected at least this run’s fee', collectedDummy >= expected, `${collectedDummy} mist`);

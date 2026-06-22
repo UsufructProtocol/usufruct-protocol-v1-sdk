@@ -66,35 +66,35 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
-  const reader = escrow.reader; // ← the drift-free kernel reader, straight off the handle
-  console.log(`listed ${escrow.id}; reader hangs off the handle (no re-wiring)\n`);
+  const { escrow, governanceCap } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const read = escrow.read; // ← the drift-free read verb, straight off the handle
+  console.log(`listed ${escrow.id}; read verb hangs off the handle (no re-wiring)\n`);
 
-  // ════════════ A · CONFIG — restPrice before/after governanceCap.updateMarket ════════════
-  const restBefore = (await reader.restPrice()).priceMist;
-  await governanceCap.updateMarket(escrow, { restPrice: DUMMY(0.025) }).send(); // high-level write
-  const restAfter = (await reader.restPrice()).priceMist;
+  // ════════════ A · CONFIG — restPrice before/after governanceCap.write.updateMarket ════════════
+  const restBefore = (await read.market()).restPrice.mist;
+  await governanceCap.write.updateMarket(escrow, { restPrice: DUMMY(0.025) }).send(); // high-level write
+  const restAfter = (await read.market()).restPrice.mist;
   console.log(`A · restPrice  ${restBefore} → ${restAfter} mist`);
-  check('reader.restPrice reflects governanceCap.updateMarket', restBefore !== restAfter && restAfter === DUMMY(0.025).mist);
+  check('reader.restPrice reflects governanceCap.write.updateMarket', restBefore !== restAfter && restAfter === DUMMY(0.025).mist);
 
   // ════════════ B · STATE — isOccupied / activeUsufructCapId before/after rent ════════════
-  const [occBefore, capBefore] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
+  const [occBefore, capBefore] = [await read.isOccupied(), await read.activeUsufructCapId()];
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send(); // high-level write
-  const [occAfter, capAfter] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
+  const bobCap = await (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send(); // high-level write
+  const [occAfter, capAfter] = [await read.isOccupied(), await read.activeUsufructCapId()];
   console.log(`B · isOccupied ${occBefore} → ${occAfter}; activeCap ${capBefore} → ${capAfter}`);
-  check('reader.isOccupied flips false→true on rent', occBefore === false && occAfter === true);
-  check('reader.activeUsufructCapId becomes the minted cap', capBefore === null && capAfter === bobCap.id);
+  check('read.isOccupied flips false→true on rent', occBefore === false && occAfter === true);
+  check('read.activeUsufructCapId becomes the minted cap', capBefore === null && capAfter === bobCap.id);
 
   // ════════════ C · LAZY — activeUsufructCapId before/after applyPendingTransitionStates ════════════
   console.log('\nC · waiting out the tenure, then applying the lazy transition…');
   await waitForChainTime(client, BigInt(bobCap.receipt!.expiresAt.getTime()));
-  const capPreApply = await reader.activeUsufructCapId();
-  await (await a.escrow(escrow.id)).applyPendingTransitionStates().send(); // high-level write
-  const [occPostApply, capPostApply] = [await reader.isOccupied(), await reader.activeUsufructCapId()];
+  const capPreApply = await read.activeUsufructCapId();
+  await (await a.nav.escrow(escrow.id)).write.applyPendingTransitionStates().send(); // high-level write
+  const [occPostApply, capPostApply] = [await read.isOccupied(), await read.activeUsufructCapId()];
   console.log(`C · activeCap ${capPreApply} → ${capPostApply}; isOccupied now ${occPostApply}`);
-  check('reader.activeUsufructCapId clears on settlement', capPreApply === bobCap.id && capPostApply === null);
-  check('reader.isOccupied is false after the tenure settles', occPostApply === false);
+  check('read.activeUsufructCapId clears on settlement', capPreApply === bobCap.id && capPostApply === null);
+  check('read.isOccupied is false after the tenure settles', occPostApply === false);
 
   finish();
 }

@@ -38,7 +38,7 @@ async function suiMist(): Promise<bigint> {
 
 async function main() {
   const u = usufruct({ network: 'testnet', client, signer: ALICE, graphql: GRAPHQL_TESTNET });
-  const listed = await u.escrowsGovernedBy(me); // ← escrows whose cap we hold (possession)
+  const listed = await u.inspect.governedBy(me); // ← escrows whose cap we hold (possession)
   console.log(`discovered ${listed.length} escrow(s) governed by ${me.slice(0, 10)}…\n`);
 
   const before = await suiMist();
@@ -55,14 +55,15 @@ async function main() {
       continue; // gone already
     }
     // Only idle/descent escrows are claimable after retire.
-    if (!(escrow.status === 'idle' || escrow.status === 'descent')) {
-      console.log(`  [skip] ${l.escrowId.slice(0, 10)}… status=${escrow.status} (in use)`);
+    const status = (await escrow.read.assetState()).kind;
+    if (!(status === 'idle' || status === 'descent')) {
+      console.log(`  [skip] ${l.escrowId.slice(0, 10)}… status=${status} (in use)`);
       skipped++;
       continue;
     }
 
     if (DRY) {
-      console.log(`  [dry]  would retire+claim ${l.escrowId.slice(0, 10)}… (${escrow.status})`);
+      console.log(`  [dry]  would retire+claim ${l.escrowId.slice(0, 10)}… (${status})`);
       cleaned++;
       continue;
     }
@@ -78,7 +79,7 @@ async function main() {
     const typeArgs: [string, string] = [escrow.assetType, escrow.coinType];
     const tx = new Transaction();
     const escrowArg = tx.object(l.escrowId);
-    const capArg = tx.object(escrow.governanceCapId);
+    const capArg = tx.object(await escrow.read.governanceCapId());
     retireCall({ package: PKG, arguments: [escrowArg, capArg], typeArguments: typeArgs })(tx);
     const asset = claimCall({ package: PKG, arguments: [escrowArg, capArg], typeArguments: typeArgs })(tx);
     tx.transferObjects([asset], me);

@@ -1,8 +1,8 @@
 /**
- * Cycle-params views — record collapse of the 12 unrolled
- * `{active,pending,next}_ensemble_{floor_price_mist,ceiling_ms,handover_ms,descent_ms}`
- * Move views (broad collapse, user decision 2026-06-12), plus the resolved
- * tenancy totals.
+ * Cycle-params views — record collapse of the unrolled
+ * `{cycle,pending_ensemble}_{floor_price_mist,ceiling_ms,handover_ms,descent_ms}`
+ * Move views, plus the resolved tenancy totals. `cycle_*` is one cross-state view
+ * (the active ensemble's resolved cycle); `pending_ensemble_*` is the scheduled one.
  */
 import type { Ms } from '@usufruct-protocol/sdk/primitives/brand.js';
 import { mist, ms } from '@usufruct-protocol/sdk/primitives/brand.js';
@@ -23,18 +23,15 @@ function toView(c: CycleParamsData): CycleParamsView {
   };
 }
 
-/** Collapses `active_ensemble_*` — the cycle the current tenancy runs under. */
-export const activeCycleParams: View<CycleParamsView | null> = (state) => {
+/** Collapses `cycle_*` — the resolved cycle of the active ensemble, cross-state.
+ *  Non-null in every state but `retired` (which holds no cycle). */
+export const cycleParams: View<CycleParamsView | null> = (state) => {
   const s = assetState(state);
-  if (s.$kind !== 'Renting') return null;
-  const cycle = s.Renting.$kind === 'Occupied' ? s.Renting.Occupied.cycle : s.Renting.Demand.cycle;
-  return toView(cycle);
-};
-
-/** Collapses `next_ensemble_*` — the resolved cycle a Waiting escrow offers. */
-export const nextCycleParams: View<CycleParamsView | null> = (state) => {
-  const s = assetState(state);
-  if (s.$kind !== 'Waiting' || s.Waiting.$kind === 'Retired') return null;
+  if (s.$kind === 'Renting') {
+    const cycle = s.Renting.$kind === 'Occupied' ? s.Renting.Occupied.cycle : s.Renting.Demand.cycle;
+    return toView(cycle);
+  }
+  if (s.Waiting.$kind === 'Retired') return null;
   const cycle = s.Waiting.$kind === 'Idle' ? s.Waiting.Idle.cycle : s.Waiting.Descent.cycle;
   return toView(cycle);
 };

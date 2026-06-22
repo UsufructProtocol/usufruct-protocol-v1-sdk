@@ -38,7 +38,7 @@ describe('highlevel/governanceCap — handle wiring (object, not role)', () => {
     const g = createGovernanceCap(readOnlyCtx, CAP);
     expect(g.capId).toBe(CAP);
     for (const m of ['updateMarket', 'retire', 'claim', 'extendRetireCommitment', 'extendEnsembleCommitment', 'renounce', 'integrateIntoPortfolio', 'transfer'] as const) {
-      expect(typeof g[m]).toBe('function');
+      expect(typeof g.write[m]).toBe('function');
     }
     // earnings are a SEPARATE object — not on the GovernanceCap.
     expect('earnings' in g).toBe(false);
@@ -46,11 +46,11 @@ describe('highlevel/governanceCap — handle wiring (object, not role)', () => {
 
   it('write Plans need an executor (you must hold the cap)', async () => {
     const g = createGovernanceCap(readOnlyCtx, CAP);
-    await expect(g.updateMarket(ESCROW, MARKET).send()).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.retire(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.claim(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.renounce().send()).rejects.toBeInstanceOf(NotConnected);
-    await expect(g.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.write.updateMarket(ESCROW, MARKET).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.write.retire(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.write.claim(ESCROW).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.write.renounce().send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(g.write.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
   });
 });
 
@@ -58,14 +58,15 @@ describe('highlevel/inbox — earnings/fees inbox is its own object handle', () 
   it('exposes inboxId + balance/collect/transfer', () => {
     const inbox = createInbox(readOnlyCtx, INBOX, 'earnings');
     expect(inbox.inboxId).toBe(INBOX);
-    for (const m of ['balance', 'collect', 'transfer'] as const) {
-      expect(typeof inbox[m]).toBe('function');
+    expect(typeof inbox.read.balance).toBe('function');
+    for (const m of ['collect', 'transfer'] as const) {
+      expect(typeof inbox.write[m]).toBe('function');
     }
   });
   it('collect / transfer Plans need an executor (you must hold the inbox)', async () => {
     const inbox = createInbox(readOnlyCtx, INBOX, 'earnings');
-    await expect(inbox.collect().send()).rejects.toBeInstanceOf(NotConnected);
-    await expect(inbox.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(inbox.write.collect().send()).rejects.toBeInstanceOf(NotConnected);
+    await expect(inbox.write.transfer(hex('cc')).send()).rejects.toBeInstanceOf(NotConnected);
   });
 });
 

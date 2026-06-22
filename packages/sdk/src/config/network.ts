@@ -10,11 +10,12 @@ export interface PackageIds {
   readonly feeRefId: string;
 }
 
-/** usufruct on Sui testnet (source-verified, immutable) — the deploy that adds the
- *  next_boundary_ms / descent_expiry_ms views. */
+/** usufruct on Sui testnet (source-verified, immutable) — the parameterized curve views
+ *  (descent_floor_at / used_credit_at / ascending_floor_with), with the curve shapes read
+ *  from the ensemble events (CycleParamsResolved carries only the resolved scalars). */
 export const TESTNET: PackageIds = {
-  packageId: '0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3',
-  feeRefId: '0x1d15c4dc987d638b0da1200857a9911f9f74c028fdc8967e0e8be94b41dd2aea',
+  packageId: '0x1045b0984ff9eab840abfd8a02f7c938a99334da7668e24e16737deb9979f2ee',
+  feeRefId: '0xf910aed3b021373d1e8bc7a77d46c97a6e8c836645bc248084443514d85318e6',
 };
 
 /** System singletons (FFI artefacts — injected by the codegen layer). */

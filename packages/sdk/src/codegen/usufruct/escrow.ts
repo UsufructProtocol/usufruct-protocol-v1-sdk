@@ -1239,12 +1239,12 @@ export function tenureExpiryMs(options: TenureExpiryMsOptions) {
         typeArguments: options.typeArguments
     });
 }
-export interface ActiveEnsembleFloorPriceMistArguments {
+export interface CycleFloorPriceMistArguments {
     escrow: RawTransactionArgument<string>;
 }
-export interface ActiveEnsembleFloorPriceMistOptions {
+export interface CycleFloorPriceMistOptions {
     package?: string;
-    arguments: ActiveEnsembleFloorPriceMistArguments | [
+    arguments: CycleFloorPriceMistArguments | [
         escrow: RawTransactionArgument<string>
     ];
     typeArguments: [
@@ -1252,7 +1252,7 @@ export interface ActiveEnsembleFloorPriceMistOptions {
         string
     ];
 }
-export function activeEnsembleFloorPriceMist(options: ActiveEnsembleFloorPriceMistOptions) {
+export function cycleFloorPriceMist(options: CycleFloorPriceMistOptions) {
     const packageAddress = options.package ?? '@local-pkg/usufruct';
     const argumentsTypes = [
         null
@@ -1261,17 +1261,17 @@ export function activeEnsembleFloorPriceMist(options: ActiveEnsembleFloorPriceMi
     return (tx: Transaction) => tx.moveCall({
         package: packageAddress,
         module: 'escrow',
-        function: 'active_ensemble_floor_price_mist',
+        function: 'cycle_floor_price_mist',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });
 }
-export interface ActiveEnsembleCeilingMsArguments {
+export interface CycleCeilingMsArguments {
     escrow: RawTransactionArgument<string>;
 }
-export interface ActiveEnsembleCeilingMsOptions {
+export interface CycleCeilingMsOptions {
     package?: string;
-    arguments: ActiveEnsembleCeilingMsArguments | [
+    arguments: CycleCeilingMsArguments | [
         escrow: RawTransactionArgument<string>
     ];
     typeArguments: [
@@ -1279,7 +1279,7 @@ export interface ActiveEnsembleCeilingMsOptions {
         string
     ];
 }
-export function activeEnsembleCeilingMs(options: ActiveEnsembleCeilingMsOptions) {
+export function cycleCeilingMs(options: CycleCeilingMsOptions) {
     const packageAddress = options.package ?? '@local-pkg/usufruct';
     const argumentsTypes = [
         null
@@ -1288,17 +1288,17 @@ export function activeEnsembleCeilingMs(options: ActiveEnsembleCeilingMsOptions)
     return (tx: Transaction) => tx.moveCall({
         package: packageAddress,
         module: 'escrow',
-        function: 'active_ensemble_ceiling_ms',
+        function: 'cycle_ceiling_ms',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });
 }
-export interface ActiveEnsembleHandoverMsArguments {
+export interface CycleHandoverMsArguments {
     escrow: RawTransactionArgument<string>;
 }
-export interface ActiveEnsembleHandoverMsOptions {
+export interface CycleHandoverMsOptions {
     package?: string;
-    arguments: ActiveEnsembleHandoverMsArguments | [
+    arguments: CycleHandoverMsArguments | [
         escrow: RawTransactionArgument<string>
     ];
     typeArguments: [
@@ -1306,7 +1306,7 @@ export interface ActiveEnsembleHandoverMsOptions {
         string
     ];
 }
-export function activeEnsembleHandoverMs(options: ActiveEnsembleHandoverMsOptions) {
+export function cycleHandoverMs(options: CycleHandoverMsOptions) {
     const packageAddress = options.package ?? '@local-pkg/usufruct';
     const argumentsTypes = [
         null
@@ -1315,17 +1315,17 @@ export function activeEnsembleHandoverMs(options: ActiveEnsembleHandoverMsOption
     return (tx: Transaction) => tx.moveCall({
         package: packageAddress,
         module: 'escrow',
-        function: 'active_ensemble_handover_ms',
+        function: 'cycle_handover_ms',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });
 }
-export interface ActiveEnsembleDescentMsArguments {
+export interface CycleDescentMsArguments {
     escrow: RawTransactionArgument<string>;
 }
-export interface ActiveEnsembleDescentMsOptions {
+export interface CycleDescentMsOptions {
     package?: string;
-    arguments: ActiveEnsembleDescentMsArguments | [
+    arguments: CycleDescentMsArguments | [
         escrow: RawTransactionArgument<string>
     ];
     typeArguments: [
@@ -1333,7 +1333,7 @@ export interface ActiveEnsembleDescentMsOptions {
         string
     ];
 }
-export function activeEnsembleDescentMs(options: ActiveEnsembleDescentMsOptions) {
+export function cycleDescentMs(options: CycleDescentMsOptions) {
     const packageAddress = options.package ?? '@local-pkg/usufruct';
     const argumentsTypes = [
         null
@@ -1342,7 +1342,7 @@ export function activeEnsembleDescentMs(options: ActiveEnsembleDescentMsOptions)
     return (tx: Transaction) => tx.moveCall({
         package: packageAddress,
         module: 'escrow',
-        function: 'active_ensemble_descent_ms',
+        function: 'cycle_descent_ms',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });
@@ -1505,114 +1505,6 @@ export function pendingEnsembleDescentMs(options: PendingEnsembleDescentMsOption
         package: packageAddress,
         module: 'escrow',
         function: 'pending_ensemble_descent_ms',
-        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-        typeArguments: options.typeArguments
-    });
-}
-export interface NextEnsembleFloorPriceMistArguments {
-    escrow: RawTransactionArgument<string>;
-}
-export interface NextEnsembleFloorPriceMistOptions {
-    package?: string;
-    arguments: NextEnsembleFloorPriceMistArguments | [
-        escrow: RawTransactionArgument<string>
-    ];
-    typeArguments: [
-        string,
-        string
-    ];
-}
-export function nextEnsembleFloorPriceMist(options: NextEnsembleFloorPriceMistOptions) {
-    const packageAddress = options.package ?? '@local-pkg/usufruct';
-    const argumentsTypes = [
-        null
-    ] satisfies (string | null)[];
-    const parameterNames = ["escrow"];
-    return (tx: Transaction) => tx.moveCall({
-        package: packageAddress,
-        module: 'escrow',
-        function: 'next_ensemble_floor_price_mist',
-        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-        typeArguments: options.typeArguments
-    });
-}
-export interface NextEnsembleCeilingMsArguments {
-    escrow: RawTransactionArgument<string>;
-}
-export interface NextEnsembleCeilingMsOptions {
-    package?: string;
-    arguments: NextEnsembleCeilingMsArguments | [
-        escrow: RawTransactionArgument<string>
-    ];
-    typeArguments: [
-        string,
-        string
-    ];
-}
-export function nextEnsembleCeilingMs(options: NextEnsembleCeilingMsOptions) {
-    const packageAddress = options.package ?? '@local-pkg/usufruct';
-    const argumentsTypes = [
-        null
-    ] satisfies (string | null)[];
-    const parameterNames = ["escrow"];
-    return (tx: Transaction) => tx.moveCall({
-        package: packageAddress,
-        module: 'escrow',
-        function: 'next_ensemble_ceiling_ms',
-        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-        typeArguments: options.typeArguments
-    });
-}
-export interface NextEnsembleHandoverMsArguments {
-    escrow: RawTransactionArgument<string>;
-}
-export interface NextEnsembleHandoverMsOptions {
-    package?: string;
-    arguments: NextEnsembleHandoverMsArguments | [
-        escrow: RawTransactionArgument<string>
-    ];
-    typeArguments: [
-        string,
-        string
-    ];
-}
-export function nextEnsembleHandoverMs(options: NextEnsembleHandoverMsOptions) {
-    const packageAddress = options.package ?? '@local-pkg/usufruct';
-    const argumentsTypes = [
-        null
-    ] satisfies (string | null)[];
-    const parameterNames = ["escrow"];
-    return (tx: Transaction) => tx.moveCall({
-        package: packageAddress,
-        module: 'escrow',
-        function: 'next_ensemble_handover_ms',
-        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-        typeArguments: options.typeArguments
-    });
-}
-export interface NextEnsembleDescentMsArguments {
-    escrow: RawTransactionArgument<string>;
-}
-export interface NextEnsembleDescentMsOptions {
-    package?: string;
-    arguments: NextEnsembleDescentMsArguments | [
-        escrow: RawTransactionArgument<string>
-    ];
-    typeArguments: [
-        string,
-        string
-    ];
-}
-export function nextEnsembleDescentMs(options: NextEnsembleDescentMsOptions) {
-    const packageAddress = options.package ?? '@local-pkg/usufruct';
-    const argumentsTypes = [
-        null
-    ] satisfies (string | null)[];
-    const parameterNames = ["escrow"];
-    return (tx: Transaction) => tx.moveCall({
-        package: packageAddress,
-        module: 'escrow',
-        function: 'next_ensemble_descent_ms',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
     });
@@ -2197,6 +2089,105 @@ export function nextFloorPriceMist(options: NextFloorPriceMistOptions) {
         function: 'next_floor_price_mist',
         arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
         typeArguments: options.typeArguments
+    });
+}
+export interface DescentFloorAtArguments {
+    lastAcqPriceMist: RawTransactionArgument<number | bigint>;
+    phaseStartMs: RawTransactionArgument<number | bigint>;
+    resolvedFloorMist: RawTransactionArgument<number | bigint>;
+    resolvedDescentMs: RawTransactionArgument<number | bigint>;
+    shape: TransactionArgument;
+    nowMs: RawTransactionArgument<number | bigint>;
+}
+export interface DescentFloorAtOptions {
+    package?: string;
+    arguments: DescentFloorAtArguments | [
+        lastAcqPriceMist: RawTransactionArgument<number | bigint>,
+        phaseStartMs: RawTransactionArgument<number | bigint>,
+        resolvedFloorMist: RawTransactionArgument<number | bigint>,
+        resolvedDescentMs: RawTransactionArgument<number | bigint>,
+        shape: TransactionArgument,
+        nowMs: RawTransactionArgument<number | bigint>
+    ];
+}
+export function descentFloorAt(options: DescentFloorAtOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        'u64',
+        'u64',
+        null,
+        'u64'
+    ] satisfies (string | null)[];
+    const parameterNames = ["lastAcqPriceMist", "phaseStartMs", "resolvedFloorMist", "resolvedDescentMs", "shape", "nowMs"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'descent_floor_at',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
+export interface UsedCreditAtArguments {
+    stakeMist: RawTransactionArgument<number | bigint>;
+    phaseStartMs: RawTransactionArgument<number | bigint>;
+    resolvedCeilingMs: RawTransactionArgument<number | bigint>;
+    shape: TransactionArgument;
+    nowMs: RawTransactionArgument<number | bigint>;
+}
+export interface UsedCreditAtOptions {
+    package?: string;
+    arguments: UsedCreditAtArguments | [
+        stakeMist: RawTransactionArgument<number | bigint>,
+        phaseStartMs: RawTransactionArgument<number | bigint>,
+        resolvedCeilingMs: RawTransactionArgument<number | bigint>,
+        shape: TransactionArgument,
+        nowMs: RawTransactionArgument<number | bigint>
+    ];
+}
+export function usedCreditAt(options: UsedCreditAtOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        'u64',
+        null,
+        'u64'
+    ] satisfies (string | null)[];
+    const parameterNames = ["stakeMist", "phaseStartMs", "resolvedCeilingMs", "shape", "nowMs"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'used_credit_at',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+    });
+}
+export interface AscendingFloorWithArguments {
+    totalBidMist: RawTransactionArgument<number | bigint>;
+    tenures: RawTransactionArgument<number | bigint>;
+    escalation: TransactionArgument;
+}
+export interface AscendingFloorWithOptions {
+    package?: string;
+    arguments: AscendingFloorWithArguments | [
+        totalBidMist: RawTransactionArgument<number | bigint>,
+        tenures: RawTransactionArgument<number | bigint>,
+        escalation: TransactionArgument
+    ];
+}
+export function ascendingFloorWith(options: AscendingFloorWithOptions) {
+    const packageAddress = options.package ?? '@local-pkg/usufruct';
+    const argumentsTypes = [
+        'u64',
+        'u64',
+        null
+    ] satisfies (string | null)[];
+    const parameterNames = ["totalBidMist", "tenures", "escalation"];
+    return (tx: Transaction) => tx.moveCall({
+        package: packageAddress,
+        module: 'escrow',
+        function: 'ascending_floor_with',
+        arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
     });
 }
 export interface LastRentPriceMistArguments {

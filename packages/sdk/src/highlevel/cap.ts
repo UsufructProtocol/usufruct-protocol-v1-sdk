@@ -20,6 +20,7 @@ import { createReader, type Reader } from '../read/reader.js';
 import { transferOf } from './bearer.js';
 import { resolveCoinInfo } from './coinmeta.js';
 import { resolveWhen } from './clock.js';
+import { reconstructStatement, type RenterStatement } from './ledger.js';
 import { retryingReader } from './retry.js';
 import { subscribeEscrowVersion } from './watch.js';
 import type { HandleCtx } from './ctx.js';
@@ -98,62 +99,52 @@ export interface UsufructCapState {
   readonly creditCappedAt: Date | null;
 }
 
+// ── the four-verb surface (additive; coexists with the flat members until Phase E) ──
+/** nav — the edges out of this cap. */
+export interface CapNavVerb {
+  /** Back-edge: the escrow this cap belongs to (its `escrow_identity`). */
+  escrow(): Promise<Escrow>;
+}
+/** read — this cap's seat, live. */
+export interface CapReadVerb {
+  state(opts?: { at?: When }): Promise<UsufructCapState>;
+  isActive(): Promise<boolean>;
+  isPending(): Promise<boolean>;
+  isStale(): Promise<boolean>;
+}
+/** inspect — the event log (pull). */
+export interface CapInspectVerb {
+  history(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<HistoryEvent[]>;
+  statement(opts?: { at?: When }): Promise<RenterStatement>;
+}
+/** react — the event log (push). */
+export interface CapReactVerb {
+  watch(onState: (s: UsufructCapState) => void, opts?: { intervalMs?: number }): () => void;
+  waitFor(predicate: (s: UsufructCapState) => boolean, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<UsufructCapState>;
+}
+/** write — protocol writes (Plan). */
+export interface CapWriteVerb {
+  readonly borrow: BorrowMethod;
+  transfer(to: string): Plan<{ digest: string }>;
+  burn(): Plan<{ digest: string }>;
+  burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;
+  updateRefundAddress(addr: string): Plan<{ digest: string }>;
+}
+
 /** The right of use. The cap is the receiver of its writes — never a hidden arg. */
 export interface UsufructCap {
+  // identity — the object's name (+ the local mint receipt). Everything else is a verb.
   readonly id: string;
   readonly escrowId: string;
   /** Mint details if this handle came from `rent()`, else `null`. */
   readonly receipt: RentReceipt | null;
 
-  /**
-   * This cap's read photo — ask the cap about its own seat (object-centric, the
-   * read twin of the writes). One batched fetch against the escrow's views,
-   * role-gated: seat numbers are this cap's only while it holds the seat.
-   */
-  state(opts?: { at?: When }): Promise<UsufructCapState>;
-  /** Does this cap hold the active seat right now? (cheap one-off) */
-  isActive(): Promise<boolean>;
-  /** Is this cap the pending challenger? */
-  isPending(): Promise<boolean>;
-  /** Has this cap been displaced (stale — burnable)? */
-  isStale(): Promise<boolean>;
-  /**
-   * React to this seat live: `onState` runs with a fresh `state()` on every change
-   * of the escrow (server-push over gRPC, poll fallback), then a `stop()`. The
-   * renter's twin of `escrow.watch` — watch *your seat*, not the whole escrow.
-   */
-  watch(onState: (s: UsufructCapState) => void, opts?: { intervalMs?: number }): () => void;
-  /** Resolve once the seat satisfies `predicate` (e.g. `s => s.role === 'stale'`). */
-  waitFor(
-    predicate: (s: UsufructCapState) => boolean,
-    opts?: { intervalMs?: number; timeoutMs?: number },
-  ): Promise<UsufructCapState>;
-  /**
-   * This cap's slice of the escrow's timeline — the typed events that mention it
-   * (mint, borrow/return, refund-address updates, the rent/bid/handover that
-   * involve it, burn). The cap's `inspect`, the pull twin of `watch`. Needs `graphql`.
-   */
-  history(opts?: {
-    sender?: string;
-    afterCheckpoint?: number;
-    beforeCheckpoint?: number;
-  }): Promise<HistoryEvent[]>;
-  /** The keystone bracket — borrow the asset, compose, return (guaranteed). */
-  readonly borrow: BorrowMethod;
-  /** Hand the right of use (this cap) to another address. */
-  transfer(to: string): Plan<{ digest: string }>;
-  /**
-   * Burn this cap, but only if it's stale (the holder was displaced). Checks the
-   * chain first: if the cap is still active/pending it's a no-op (`burned: false`).
-   * A read-then-maybe-write convenience (not a `Plan`) — it sends at most one tx.
-   */
-  burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;
-  /** Voluntarily relinquish the right of use — burn the cap unconditionally. */
-  burn(): Plan<{ digest: string }>;
-  /** Redirect where this cap's stake refunds on settlement. */
-  updateRefundAddress(addr: string): Plan<{ digest: string }>;
-  /** Back-edge: re-resolve the escrow this cap belongs to. */
-  escrow(): Promise<Escrow>;
+  // nav (edge) + the four verbs
+  readonly nav: CapNavVerb;
+  readonly read: CapReadVerb;
+  readonly inspect: CapInspectVerb;
+  readonly react: CapReactVerb;
+  readonly write: CapWriteVerb;
 }
 
 export interface CapArgs {
@@ -314,6 +305,22 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
     return events.map(toHistoryEvent).filter((he) => mentions(he.data));
   }
 
+  async function statement(opts?: { at?: When }): Promise<RenterStatement> {
+    const coin = await resolveCoinInfo(client, args.typeArguments[1]);
+    const base = reconstructStatement(await history(), args.capId, coin);
+    if (base.status !== 'active') return base; // closed/pending settle in the log
+    // Active: the log has not settled it — overlay the live remaining + accrued.
+    const t = await resolveWhen(client, opts?.at);
+    const s = await mkReader().batch(['activeStakeBalanceRemainingMist', 'accruedCreditMist'], { t });
+    const remainMist = s['activeStakeBalanceRemainingMist'] as Mist | null;
+    const accruedMist = s['accruedCreditMist'] as Mist | null;
+    return {
+      ...base,
+      consumed: accruedMist == null ? base.consumed : price(accruedMist, coin),
+      remaining: remainMist == null ? null : price(remainMist, coin),
+    };
+  }
+
   function waitFor(
     predicate: (s: UsufructCapState) => boolean,
     waitOpts?: { intervalMs?: number; timeoutMs?: number },
@@ -365,22 +372,23 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
         ),
     );
 
+  const transfer = transferOf(ctx, args.capId);
+  const escrowEdge = (): Promise<Escrow> => createEscrow(ctx, args.escrowId);
+
+  const nav: CapNavVerb = { escrow: escrowEdge };
+  const read: CapReadVerb = { state, isActive, isPending, isStale };
+  const inspect: CapInspectVerb = { history, statement };
+  const react: CapReactVerb = { watch, waitFor };
+  const write: CapWriteVerb = { borrow, transfer, burn, burnIfStale, updateRefundAddress };
+
   return {
     id: args.capId,
     escrowId: args.escrowId,
     receipt: args.receipt,
-    state,
-    isActive,
-    isPending,
-    isStale,
-    watch,
-    waitFor,
-    history,
-    borrow,
-    transfer: transferOf(ctx, args.capId),
-    burnIfStale,
-    burn,
-    updateRefundAddress,
-    escrow: () => createEscrow(ctx, args.escrowId),
+    nav,
+    read,
+    inspect,
+    react,
+    write,
   };
 }

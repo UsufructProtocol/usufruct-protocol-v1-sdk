@@ -74,7 +74,7 @@ async function main() {
   const swordId = mintRes.effects!.changedObjects!.find(
     (o) => o.idOperation === 'Created' && mintRes.objectTypes?.[o.objectId]?.includes('::dummy_asset::DummyAsset'),
   )!.objectId;
-  const { escrow } = await op
+  const { escrow } = await op.write
     .integrate({
       asset: swordId,
       coin: DUMMY,
@@ -92,7 +92,7 @@ async function main() {
       },
     })
     .send();
-  console.log('escrow', escrow.id, '· floor', String(escrow.floorPrice));
+  console.log('escrow', escrow.id, '· floor', String(await escrow.read.floorPrice()));
 
   // 2. a brand-new user funded with DUMMY ONLY — NO SUI, so it cannot pay gas.
   const user = Ed25519Keypair.generate();
@@ -111,7 +111,7 @@ async function main() {
   //    identical to any other path — the executor hides the two-party signing.
   const u = usufruct({ client });
   u.connect(sponsoredExecutor(user, operator));
-  const cap = await u.escrow(escrow.id).then((e) => e.rent({ tenures: 1 }).send());
+  const cap = await u.nav.escrow(escrow.id).then((e) => e.write.rent({ tenures: 1 }).send());
   console.log('\n✓ rent sent by the gasless user, gas sponsored — usufructCap', cap.id);
   console.log(`  paid ${String(cap.receipt!.paid)} (in DUMMY, by the user)`);
 

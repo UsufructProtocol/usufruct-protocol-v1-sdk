@@ -29,73 +29,51 @@ import { UsufructError } from './errors.js';
 import { type Commitment, type Market, toCommitmentConfig, toEnsembleConfig } from './market.js';
 import { discoverIntegrated, type EscrowListing } from './listings.js';
 import { watchMany, type PortfolioWatch } from './watch-many.js';
-import { coinInfo, coinTag, type CoinTag } from './value.js';
+import { coinInfo, coinTag, price, type CoinTag } from './value.js';
+import { resolveCoinInfo } from './coinmeta.js';
+import { type EscrowRevenue } from './ledger.js';
 import { readMarket } from './marketReadback.js';
 import { createdIdByType } from './send.js';
 
 /** An escrow id, or a resolved `Escrow` handle. */
 export type EscrowRef = string | Escrow;
 
-export interface GovernanceCap {
-  readonly capId: string;
-
-  // per-escrow governance (the target escrow is required — one cap, many escrows)
-  /**
-   * Change the market. Takes a `Partial<Market>` — only the fields you change;
-   * the rest are read from the current on-chain market and preserved. (You
-   * reasoned about every field at `integrate`; modifying touches a subset.)
-   */
+// ── the four-verb surface (additive; no nav — a govcap relates to escrows via its
+//    portfolio collection → inspect, not a single edge). ──
+/** read — live governance check. */
+export interface GovernanceReadVerb {
+  governs(escrow: EscrowRef): Promise<boolean>;
+}
+/** inspect — the event log / discovery (pull). */
+export interface GovernanceInspectVerb {
+  escrows(): Promise<EscrowListing[]>;
+  revenueByEscrow(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<EscrowRevenue[]>;
+}
+/** react — the event log (push), across the whole portfolio. */
+export interface GovernanceReactVerb {
+  watch(onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): Promise<PortfolioWatch>;
+}
+/** write — protocol writes (Plan). */
+export interface GovernanceWriteVerb {
   updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
   retire(escrow: EscrowRef): Plan<{ digest: string }>;
   claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
   extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
-
-  // cap-level
   renounce(): Plan<{ digest: string }>;
-  /** Hand governance (this cap) to another address. */
   transfer(to: string): Plan<{ digest: string }>;
+  integrateIntoPortfolio(asset: string, coin: CoinTag, market: Market, opts: { earningsInbox: string }): Plan<Escrow>;
+}
 
-  /**
-   * Integrate a NEW asset (priced in `coin`) into this cap's portfolio. The only
-   * write that depends on TWO objects: this `GovernanceCap` (the portfolio it
-   * joins) and the `earningsInbox` it will pay into — so both are named
-   * explicitly. `coin` is the new escrow's immutable `phantom CoinType` (a
-   * portfolio may hold escrows of different coins, all paying one inbox). Mirrors
-   * the Move `integrate_into_portfolio`.
-   */
-  integrateIntoPortfolio(
-    asset: string,
-    coin: CoinTag,
-    market: Market,
-    opts: { earningsInbox: string },
-  ): Plan<Escrow>;
+export interface GovernanceCap {
+  // identity — the object's name. All operations are verbs (no nav: a govcap relates
+  // to escrows via its portfolio collection → inspect, not a single edge).
+  readonly capId: string;
 
-  /**
-   * The escrows THIS cap governs — its **portfolio**, as decode-free
-   * `EscrowListing`s. The cap *is* the governor, so it answers for itself. (The
-   * cap→escrow link lives only in the event log, not on the cap.) Needs `graphql`.
-   */
-  escrows(): Promise<EscrowListing[]>;
-
-  /**
-   * Does THIS cap govern the given escrow right now? Object-centric read: one cap
-   * governs a *portfolio*, so the question names the escrow. (`governanceCapIsValid`
-   * on that escrow, probed with this cap's id.)
-   */
-  governs(escrow: EscrowRef): Promise<boolean>;
-
-  /**
-   * React to changes across this cap's **whole portfolio** over one gRPC
-   * firehose: resolves `escrows()` and `watchMany`s them. `onChange` fires with a
-   * handle per escrow's current state, then on every change. Grow/shrink and end
-   * via the returned `PortfolioWatch`. Needs `graphql` (for the portfolio
-   * discovery); the watch itself is gRPC-push, polling-fallback.
-   */
-  watch(
-    onChange: (e: Escrow) => void,
-    opts?: { intervalMs?: number },
-  ): Promise<PortfolioWatch>;
+  readonly read: GovernanceReadVerb;
+  readonly inspect: GovernanceInspectVerb;
+  readonly react: GovernanceReactVerb;
+  readonly write: GovernanceWriteVerb;
 }
 
 interface RefInfo {
@@ -129,7 +107,12 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     );
   }
 
-  return {
+  // Internal scaffolding: the closures the verbs delegate to, typed by the verb
+  // interfaces so their params keep contextual types (the public handle is verbs-only).
+  const g: { capId: string } & GovernanceReadVerb &
+    GovernanceInspectVerb &
+    GovernanceReactVerb &
+    GovernanceWriteVerb = {
     capId,
 
     updateMarket(ref, changes) {
@@ -233,6 +216,43 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       return discoverIntegrated(ctx, { governanceCapId: capId });
     },
 
+    async revenueByEscrow(revOpts) {
+      if (ctx.indexer == null) {
+        throw new UsufructError('revenueByEscrow requires a GraphQL endpoint — pass `graphql` to usufruct()');
+      }
+      const norm = (v: unknown) => String(v ?? '').replace(/^0x/, '').toLowerCase();
+      const listings = await discoverIntegrated(ctx, { governanceCapId: capId });
+      const want = new Set(listings.map((l) => norm(l.escrowId)));
+      const idForm = new Map(listings.map((l) => [norm(l.escrowId), l.escrowId]));
+      // escrow (norm) → coin → { mist, count } — one scan, filtered to this portfolio.
+      const byEscrow = new Map<string, Map<string, { mist: bigint; count: number }>>();
+      for await (const ev of ctx.indexer.events({
+        type: `${packageId}::earnings_message::EarningsMessagePosted`,
+        ...(revOpts?.afterCheckpoint !== undefined ? { afterCheckpoint: revOpts.afterCheckpoint } : {}),
+        ...(revOpts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: revOpts.beforeCheckpoint } : {}),
+      })) {
+        const eid = norm(ev.data['escrow_id'] ?? ev.escrowId);
+        if (!want.has(eid)) continue;
+        const coin = String(ev.data['coin_type'] ?? '');
+        const coins = byEscrow.get(eid) ?? new Map<string, { mist: bigint; count: number }>();
+        const cur = coins.get(coin) ?? { mist: 0n, count: 0 };
+        coins.set(coin, { mist: cur.mist + BigInt(String(ev.data['amount'] ?? '0')), count: cur.count + 1 });
+        byEscrow.set(eid, coins);
+      }
+      return Promise.all(
+        [...byEscrow.entries()].map(async ([eid, coins]) => ({
+          escrowId: idForm.get(eid) ?? eid,
+          earnings: await Promise.all(
+            [...coins.entries()].map(async ([coin, { mist, count }]) => ({
+              coin,
+              total: price(mist, await resolveCoinInfo(client, coin)),
+              count,
+            })),
+          ),
+        })),
+      );
+    },
+
     async governs(ref) {
       const r = await resolveRef(ref);
       return createReader(client, {
@@ -248,4 +268,20 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       return watchMany(ctx, ids, onChange, watchOpts);
     },
   };
+
+  const readVerb: GovernanceReadVerb = { governs: g.governs };
+  const inspectVerb: GovernanceInspectVerb = { escrows: g.escrows, revenueByEscrow: g.revenueByEscrow };
+  const reactVerb: GovernanceReactVerb = { watch: g.watch };
+  const writeVerb: GovernanceWriteVerb = {
+    updateMarket: g.updateMarket,
+    retire: g.retire,
+    claim: g.claim,
+    extendRetireCommitment: g.extendRetireCommitment,
+    extendEnsembleCommitment: g.extendEnsembleCommitment,
+    renounce: g.renounce,
+    transfer: g.transfer,
+    integrateIntoPortfolio: g.integrateIntoPortfolio,
+  };
+
+  return { capId: g.capId, read: readVerb, inspect: inspectVerb, react: reactVerb, write: writeVerb };
 }

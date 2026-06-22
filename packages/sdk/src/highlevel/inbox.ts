@@ -23,30 +23,45 @@ export interface InboxMessage {
   readonly at: Date | null;
 }
 
-export interface Inbox {
-  readonly inboxId: string;
-  /** Pending income per coin (preview, no collect). */
+/** Lifetime income in one coin — the sum of every message ever posted in it. */
+export interface InboxTotal {
+  readonly coin: string;
+  readonly total: Price;
+  /** How many settlements paid in (in this coin). */
+  readonly count: number;
+}
+
+// ── the four-verb surface (additive; no nav — an inbox relates to escrows via the
+//    collection that pays in → inspect, not a single edge). ──
+/** read — the uncollected balance, now. */
+export interface InboxReadVerb {
   balance(): Promise<Array<{ coin: string; amount: Price }>>;
-  /** Collect everything, partitioned by coin (§5.2). Requires holding the inbox. */
-  collect(): Plan<Array<{ coin: string; amount: Price }>>;
-  /** Hand the inbox (and the right to collect) to another address. */
-  transfer(to: string): Plan<{ digest: string }>;
-  /**
-   * React to income live: `onMessage` runs for each settlement pushed into THIS
-   * inbox (typed, per coin), server-push over the gRPC firehose. The inbox's twin
-   * of `escrow.on` — keyed on the inbox id across every escrow paying in (an
-   * `EarningsInbox` hears its governor's portfolio; the `ProtocolFeeInbox` hears
-   * the whole deployment). Returns a `stop()`. Needs a gRPC client (the SDK default).
-   */
-  watch(onMessage: (m: InboxMessage) => void): () => void;
-  /**
-   * The escrows whose settlements push messages into THIS inbox — object-centric,
-   * the inbox answering for itself. The inbox→escrow link lives only in the event
-   * log (`AssetIntegrated` sets the inbox id). For an `EarningsInbox` this is the
-   * governor's portfolio paying in; for the `ProtocolFeeInbox` (a singleton) it's
-   * every escrow of the deployment. Decode-free `EscrowListing`s. Needs `graphql`.
-   */
+}
+/** inspect — the event log / discovery (pull). */
+export interface InboxInspectVerb {
+  history(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]>;
+  totals(opts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]>;
   escrowsPushingMessages(): Promise<EscrowListing[]>;
+}
+/** react — the event log (push). */
+export interface InboxReactVerb {
+  watch(onMessage: (m: InboxMessage) => void): () => void;
+}
+/** write — protocol writes (Plan). */
+export interface InboxWriteVerb {
+  collect(): Plan<Array<{ coin: string; amount: Price }>>;
+  transfer(to: string): Plan<{ digest: string }>;
+}
+
+export interface Inbox {
+  // identity — the object's name. All operations are verbs (no nav: an inbox relates
+  // to escrows via the collection that pays in → inspect, not a single edge).
+  readonly inboxId: string;
+
+  readonly read: InboxReadVerb;
+  readonly inspect: InboxInspectVerb;
+  readonly react: InboxReactVerb;
+  readonly write: InboxWriteVerb;
 }
 
 /** The governor's income mailbox. */
@@ -73,8 +88,52 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
   // The Posted event + its inbox-id field, by inbox kind.
   const eventName = kind === 'fees' ? 'FeeMessagePosted' : 'EarningsMessagePosted';
   const inboxField = kind === 'fees' ? 'fee_inbox_id' : 'earnings_inbox_id';
+  const postedType = `${packageId}::${kind === 'fees' ? 'fee_message' : 'earnings_message'}::${eventName}`;
   const want = normEscrowId(inboxId);
-  return {
+
+  async function history(historyOpts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxMessage[]> {
+    if (ctx.indexer == null) {
+      throw new UsufructError('history requires a GraphQL endpoint — pass `graphql` to usufruct()');
+    }
+    const out: InboxMessage[] = [];
+    for await (const ev of ctx.indexer.events({
+      type: postedType,
+      ...(historyOpts?.afterCheckpoint !== undefined ? { afterCheckpoint: historyOpts.afterCheckpoint } : {}),
+      ...(historyOpts?.beforeCheckpoint !== undefined ? { beforeCheckpoint: historyOpts.beforeCheckpoint } : {}),
+    })) {
+      if (normEscrowId(String(ev.data[inboxField] ?? '')) !== want) continue;
+      const coin = String(ev.data['coin_type'] ?? '');
+      out.push({
+        coin,
+        amount: price(BigInt(String(ev.data['amount'] ?? '0')), await resolveCoinInfo(client, coin)),
+        escrowId: ev.escrowId,
+        at: ev.timestamp ? new Date(ev.timestamp) : null,
+      });
+    }
+    return out;
+  }
+
+  async function totals(totalsOpts?: { afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<InboxTotal[]> {
+    const sums = new Map<string, { mist: bigint; count: number }>();
+    for (const m of await history(totalsOpts)) {
+      const cur = sums.get(m.coin) ?? { mist: 0n, count: 0 };
+      sums.set(m.coin, { mist: cur.mist + m.amount.mist, count: cur.count + 1 });
+    }
+    return Promise.all(
+      [...sums.entries()].map(async ([coin, { mist, count }]) => ({
+        coin,
+        total: price(mist, await resolveCoinInfo(client, coin)),
+        count,
+      })),
+    );
+  }
+
+  // Internal scaffolding: the closures the verbs delegate to, typed by the verb
+  // interfaces so their params keep contextual types (the public handle is verbs-only).
+  const g: { inboxId: string } & InboxReadVerb &
+    InboxInspectVerb &
+    InboxReactVerb &
+    InboxWriteVerb = {
     inboxId,
     async balance() {
       return sumGroups(client, await discoverInboxMessages(client, inboxId, kind));
@@ -129,8 +188,21 @@ export function createInbox(ctx: HandleCtx, inboxId: string, kind: InboxKind): I
       })();
       return () => controller.abort();
     },
+    history,
+    totals,
     escrowsPushingMessages() {
       return discoverIntegrated(ctx, kind === 'fees' ? { feeInboxId: inboxId } : { earningsInboxId: inboxId });
     },
   };
+
+  const read: InboxReadVerb = { balance: g.balance };
+  const inspect: InboxInspectVerb = {
+    history: g.history,
+    totals: g.totals,
+    escrowsPushingMessages: g.escrowsPushingMessages,
+  };
+  const react: InboxReactVerb = { watch: g.watch };
+  const write: InboxWriteVerb = { collect: g.collect, transfer: g.transfer };
+
+  return { inboxId: g.inboxId, read, inspect, react, write };
 }

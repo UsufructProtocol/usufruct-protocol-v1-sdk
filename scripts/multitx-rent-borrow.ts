@@ -65,20 +65,20 @@ async function main() {
   const alice = usufruct({ network: 'testnet', client, signer: ALICE });
   const bob = usufruct({ network: 'testnet', client, signer: BOB });
 
-  const { escrow: e1 } = await alice.integrate({ asset: asset1, coin: DUMMY, market: MARKET }).send();
-  const { escrow: e2 } = await alice.integrate({ asset: asset2, coin: DUMMY, market: MARKET }).send();
+  const { escrow: e1 } = await alice.write.integrate({ asset: asset1, coin: DUMMY, market: MARKET }).send();
+  const { escrow: e2 } = await alice.write.integrate({ asset: asset2, coin: DUMMY, market: MARKET }).send();
   console.log(`listed ${e1.id} and ${e2.id}\n`);
 
   // ─────────── A · MULTI-TX: tx1 rent (deferred) → tx2 borrow with the real id ───────────
-  const escrow1 = await bob.escrow(e1.id);
-  const cap = await escrow1.rent({ tenures: 1 }).send(); // build → execute → decode, default signer
+  const escrow1 = await bob.nav.escrow(e1.id);
+  const cap = await escrow1.write.rent({ tenures: 1 }).send(); // build → execute → decode, default signer
   console.log('A · tx1 rent().send() →');
   console.log(`   cap.id      ${cap.id}`);
   console.log(`   cap.receipt ${cap.receipt ? `paid ${cap.receipt.paid}, until ${cap.receipt.expiresAt.toISOString()}` : 'NULL ✗'}`);
   if (cap.id == null || cap.receipt == null) throw new Error('A: rich result did NOT survive deferred execution');
 
   // tx2 — a SEPARATE transaction, using the cap whose real on-chain id came from tx1's effects.
-  const { digest: borrowDigest } = await cap.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress())).send();
+  const { digest: borrowDigest } = await cap.write.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress())).send();
   console.log(`   tx2 borrow  ${borrowDigest}  ← real id flowed tx1 → tx2\n`);
 
   // ─────────── B · THE SEAM: swap signing, rich result survives ───────────
@@ -88,15 +88,15 @@ async function main() {
     address: BOB.toSuiAddress(),
     execute: (tx) => send(client, tx, BOB),
   };
-  const escrow2 = await bob.escrow(e2.id);
-  const cap2 = await escrow2.rent({ tenures: 1 }).send(customExecutor);
+  const escrow2 = await bob.nav.escrow(e2.id);
+  const cap2 = await escrow2.write.rent({ tenures: 1 }).send(customExecutor);
   console.log('B · rent().send(customExecutor) →');
   console.log(`   cap.id      ${cap2.id}`);
   console.log(`   cap.receipt ${cap2.receipt ? `paid ${cap2.receipt.paid}` : 'NULL ✗'}  ← rich result survived a swapped signer\n`);
   if (cap2.id == null || cap2.receipt == null) throw new Error('B: rich result did NOT survive a custom executor');
 
   // ─────────── C · BUILD-ONLY: an unsigned PTB, nothing executed ───────────
-  const unsigned = await escrow1.rent({ tenures: 1 }).toTransaction(BOB.toSuiAddress());
+  const unsigned = await escrow1.write.rent({ tenures: 1 }).toTransaction(BOB.toSuiAddress());
   const commands = unsigned.getData().commands.length;
   console.log('C · rent().toTransaction(addr) →');
   console.log(`   built an unsigned PTB with ${commands} commands, sent nothing (offline / wallet / batching).`);

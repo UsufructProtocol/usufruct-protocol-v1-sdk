@@ -1,0 +1,16 @@
+{
+  "name": "usufruct-three-parties",
+  "private": true,
+  "type": "module",
+  "description": "Probe — the three parties of a settlement from events: usufructCap.statement() (renter), escrow.tenancies() (asset), governanceCap.revenueByEscrow() (governor)",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@usufruct-protocol/sdk": "file:../../packages/sdk"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

@@ -15,7 +15,7 @@ window before displacement. State transitions execute lazily on the next
 transaction that touches the escrow — no keeper, no cron.
 
 - Protocol: https://github.com/UsufructProtocol/usufruct-protocol-v1
-- Live on Sui **testnet** (`v1.4.3`), source-verified on-chain.
+- Live on Sui **testnet** (`v1.4.7`), source-verified on-chain.
 
 ## Drift-zero by construction
 
@@ -46,55 +46,65 @@ clients (gRPC, JSON-RPC, GraphQL).
 import { usufruct } from '@usufruct-protocol/sdk';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-// Reads need no signer; writes do. `graphql` enables discovery/history.
+// Reads need no signer; writes do. `network` also picks the GraphQL endpoint that
+// powers `inspect.*` discovery/history — pass `graphql` only to override it.
 const u = usufruct({
   network: 'testnet',
   signer: Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!),
-  graphql: 'https://graphql.testnet.sui.io/graphql',
 });
 
-const escrow = await u.escrow('0x…');  // one fetch: state @ now + "what can I do here?"
-escrow.status;       // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
-escrow.floorPrice;   // a Price, rendered in the escrow's own coin
-escrow.canGovern;    // do I hold this escrow's GovernanceCap? (possession = role)
+const escrow = await u.nav.escrow('0x…');       // resolve the handle (identity only)
+const s = await escrow.read.assetState();       // live: a discriminated union
+s.kind;              // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
+await escrow.read.floorPrice();                 // a Price, rendered in the escrow's own coin
+(await u.inspect.governedBy(myAddr)).some(l => l.escrowId === escrow.id); // do I govern it?
 ```
 
-## The four verbs
+## Identity + five verbs
 
-The whole surface is four verbs. Every one is **object-centric** (ask the object,
-it answers) and **decode-free** (no asset schema needed).
+Every object is its **identity** (the object's name — `escrow.id`, `cap.escrowId`,
+`inbox.inboxId`) plus five verbs. Every verb is **object-centric** (ask the object,
+it answers) and **decode-free** (no asset schema needed). The shape is **fractal** —
+the same five sit on the root `u` and on every handle.
 
-| Verb | What | Delivery | Door |
+| Verb | What | Delivery | Example |
 |---|---|---|---|
-| **Read** | the chain *as it is now* | a fetch | `u.escrow(id)` → handle + `escrow.reader` |
-| **Write** | make it *different* | a transaction | capability methods — `rent`, `borrow`, `updateMarket`, `collect`, `transfer` |
-| **Inspect** | what *happened* | pull (GraphQL) | discovery (`escrowsGovernedBy`…) + `escrow.history()` |
-| **React** | what *happens* | push (gRPC) | `escrow.watch` / `waitFor`, `escrow.on` / `next` |
+| **nav** | walk to a related object | the object graph | `escrow.nav.activeCap()`, `u.nav.escrow(id)` |
+| **read** | the chain *as it is now* | `simulateTransaction` | `escrow.read.assetState()`, `inbox.read.balance()` |
+| **inspect** | what *happened* | pull (GraphQL) | `escrow.inspect.history()`, `u.inspect.governedBy(addr)` |
+| **react** | what *happens* | push (gRPC) | `escrow.react.watch/on`, `escrow.react.waitFor/next` |
+| **write** | make it *different* | a transaction | `escrow.write.rent()`, `gov.write.updateMarket()`, `inbox.write.collect()` |
 
 ```ts
-// READ — synchronous getters off one fetch; drop to escrow.reader for any of the ~80 views
-const escrow = await u.escrow(id);
-await escrow.reader.accruedCreditMist(Date.now());
+// NAV — edges between objects (each is IO, so awaited); the root opens the first handle
+const escrow = await u.nav.escrow(id);
+const seat   = await escrow.nav.activeCap();        // the current seat, or null
+
+// READ — the deployed views, live & coin-rendered (no fetch-time photo, nothing stale)
+await escrow.read.market();                         // the full policy
+await escrow.read.creditCurve();                    // the current tenure's curve, sampled live
+// raw kernel reader (un-rendered) lives at the root escape hatch, not on the handle:
+await u.primitives.reader({ packageId, escrowId: escrow.id, typeArguments: [escrow.assetType, escrow.coinType] }).accruedCreditMist(Date.now());
 
 // WRITE — each write lives on the object that authorizes it; authority is possession
-await escrow.rent({ tenures: 1 });                 // pay the floor (`pay` to overpay → stake)
-await governanceCap.updateMarket(escrow, { restPrice: escrow.coin(0.02) });
-await earningsInbox.collect();                      // 90% governor cut, partitioned by coin
-await governanceCap.transfer(treasury);             // move the object → move the role
+await escrow.write.rent({ tenures: 1 }).send();     // pay the floor (`pay` to overpay → stake)
+await gov.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+await inbox.write.collect().send();                 // 90% governor cut, partitioned by coin
+await gov.write.transfer(treasury).send();          // move the object → move the role
 
 // INSPECT — pull the typed event log, decode-free
-await u.escrowsGovernedBy(u.address!);              // escrows whose GovernanceCap I hold
-const events = await escrow.history();              // one escrow's lifecycle, time-ordered
+await u.inspect.governedBy(u.address!);             // escrows whose GovernanceCap I hold
+await escrow.inspect.history();                     // one escrow's lifecycle, time-ordered
 
 // REACT — server-push over the gRPC checkpoint firehose
-const stop = escrow.watch(e => render(e));          // every on-chain change → fresh snapshot
-const bid = await escrow.next('BidPlaced', { timeoutMs: 120_000 });  // one-shot typed event
+const stop = escrow.react.watch(e => render(e));    // every on-chain change → fresh handle
+await escrow.react.next('BidPlaced', { timeoutMs: 120_000 });  // one-shot typed event
 ```
 
 ### Genesis — list an asset
 
 ```ts
-const { escrow, governanceCap, earningsInbox } = await u.integrate({
+const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
   asset: '0x…',                              // an owned object id (key + store)
   coin: await u.coinType('0x2::sui::SUI'),   // immutable payment coin (decimals from chain)
   market: { /* floor, rest price, handover window, curve … */ },
@@ -109,8 +119,9 @@ apart. Moving any of them moves the role it carries.
 
 See the [repository](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk):
 `SPEC.md` (authoritative design), `ARCHITECTURE.md` (the drift-zero core / mirror
-seam and the four primitives), and `journeys/` (object-model and the four-verb
-mental model).
+seam and the four primitives), and `journeys/` (the object model and the
+[fractal, navigable API](../../journeys/read-write-inspect-react.md) —
+`nav · read · inspect · react · write`).
 
 ## License
 

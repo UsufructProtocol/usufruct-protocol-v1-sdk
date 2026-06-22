@@ -10,6 +10,11 @@ export type {
   Network,
   When,
   Primitives,
+  RootNavVerb,
+  RootReadVerb,
+  RootInspectVerb,
+  RootReactVerb,
+  RootWriteVerb,
 } from './usufruct.js';
 
 export { SUI, price, coinTag, coinInfo } from './value.js';
@@ -24,7 +29,15 @@ export type {
   TenureSettlement,
   HandoverSettlement,
   CyclePreview,
+  AssetState,
+  EscrowSnapshot,
+  EscrowNavVerb,
+  EscrowReadVerb,
+  EscrowInspectVerb,
+  EscrowReactVerb,
+  EscrowWriteVerb,
 } from './escrow.js';
+export type { ScalarReadVerb } from './escrowRead.js';
 export type {
   UsufructCap,
   UsufructCapState,
@@ -33,16 +46,48 @@ export type {
   BorrowReceipt,
   BorrowMethod,
   Use,
+  CapNavVerb,
+  CapReadVerb,
+  CapInspectVerb,
+  CapReactVerb,
+  CapWriteVerb,
 } from './cap.js';
 // Deferred writes: a write is build → execute → decode; `Executor` swaps signing.
 export { signerExecutor, walletExecutor, executeSigned } from './send.js';
 export type { Executor, ExecResult, WalletSigner } from './send.js';
 export type { Plan } from './plan.js';
-export type { GovernanceCap, EscrowRef } from './governanceCap.js';
-export type { Inbox, EarningsInbox, ProtocolFeeInbox, InboxMessage } from './inbox.js';
+export type {
+  GovernanceCap,
+  EscrowRef,
+  GovernanceReadVerb,
+  GovernanceInspectVerb,
+  GovernanceReactVerb,
+  GovernanceWriteVerb,
+} from './governanceCap.js';
+export type {
+  Inbox,
+  EarningsInbox,
+  ProtocolFeeInbox,
+  InboxMessage,
+  InboxTotal,
+  InboxReadVerb,
+  InboxInspectVerb,
+  InboxReactVerb,
+  InboxWriteVerb,
+} from './inbox.js';
 export type { EscrowListing, UsufructCapRecord } from './listings.js';
 export type { HistoryEvent } from './history.js';
+export type {
+  CurvePoint,
+  CreditSegment,
+  DescentSegment,
+  PriceMarker,
+  TimelineSegment,
+  CurveOpts,
+  LadderRung,
+} from './timeline.js';
 export type { PortfolioWatch } from './watch-many.js';
+export type { RenterStatement, RenterStatus, Tenancy, EscrowRevenue } from './ledger.js';
 
 export {
   withRetry,

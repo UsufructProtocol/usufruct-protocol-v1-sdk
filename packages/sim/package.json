@@ -1,31 +1,48 @@
 {
   "name": "@usufruct-protocol/sim",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "description": "Off-chain mirror (simulator + testbed) for the Usufruct SDK — the opt-in tier that re-derives the protocol; golden-tested against the drift-zero core",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "sideEffects": false,
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./*.js": { "types": "./dist/*.d.ts", "default": "./dist/*.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
   },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk.git"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -b",
     "prepack": "tsc -b"
   },
-  "keywords": ["sui", "usufruct", "sdk", "simulator"],
+  "keywords": [
+    "sui",
+    "usufruct",
+    "sdk",
+    "simulator"
+  ],
   "author": "Antonio Jiménez <build@0xkurious.xyz>",
   "license": "Apache-2.0",
   "dependencies": {
     "@mysten/sui": "^2.17.0",
-    "@usufruct-protocol/sdk": "^0.1.0"
+    "@usufruct-protocol/sdk": "^1.0.0-rc.1"
   }
 }

@@ -64,38 +64,43 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① listed ${escrow.id}\n`);
 
   // ════════════ ② RENT — Bob takes it ════════════
   const ub = usufruct({ network: 'testnet', client, signer: bob });
-  const bobCap = await (await ub.escrow(escrow.id)).rent({ tenures: 1 }).send();
+  const bobCap = await (await ub.nav.escrow(escrow.id)).write.rent({ tenures: 1 }).send();
   console.log(`② Bob rented — cap ${bobCap.id}, paid ${bobCap.receipt!.paid}\n`);
 
   // ════════════ ③ CHALLENGE — Carol rents the OCCUPIED escrow (the bid) ════════════
   const uc = usufruct({ network: 'testnet', client, signer: carol });
-  const occupied = await uc.escrow(escrow.id);
-  console.log(`③ Carol sees status=${occupied.status}, ascending floor=${occupied.floorPrice} → she bids`);
-  const carolCap = await occupied.rent({ tenures: 1 }).send(); // renting occupied = the bid
+  const occupied = await uc.nav.escrow(escrow.id);
+  console.log(`③ Carol sees status=${(await occupied.read.assetState()).kind}, ascending floor=${await occupied.read.floorPrice()} → she bids`);
+  const carolCap = await occupied.write.rent({ tenures: 1 }).send(); // renting occupied = the bid
   console.log(`   Carol bid — cap ${carolCap.id}, paid ${carolCap.receipt!.paid}\n`);
 
   // ════════════ ④ READ — the always-liquid state, off the Escrow handle ════════════
-  const demand = await uc.escrow(escrow.id);
-  console.log(`④ status=${demand.status} (challenged=${demand.isChallenged})`);
-  console.log(`   active cap (sitting tenant) = ${demand.activeUsufructCapId === bobCap.id ? 'Bob' : demand.activeUsufructCapId}`);
-  console.log(`   pending (challenger)        = ${demand.pendingUsufructuaryAddr === carol.toSuiAddress() ? 'Carol' : demand.pendingUsufructuaryAddr}`);
-  console.log(`   handover expires at         = ${demand.handoverExpiresAt?.toISOString()}\n`);
+  const demand = await uc.nav.escrow(escrow.id);
+  const demandState = await demand.read.assetState();
+  const demandActiveCap = await demand.read.activeUsufructCapId();
+  const demandPending = demandState.kind === 'demand' ? demandState.challenger : undefined;
+  const demandHandover = demandState.kind === 'demand' ? demandState.handoverExpiresAt : undefined;
+  console.log(`④ status=${demandState.kind} (challenged=${demandState.kind === 'demand'})`);
+  console.log(`   active cap (sitting tenant) = ${demandActiveCap === bobCap.id ? 'Bob' : demandActiveCap}`);
+  console.log(`   pending (challenger)        = ${demandPending === carol.toSuiAddress() ? 'Carol' : demandPending}`);
+  console.log(`   handover expires at         = ${demandHandover?.toISOString()}\n`);
 
   // ════════════ ⑤ HANDOVER — wait out Bob's window, settle ════════════
   console.log('⑤ waiting out the handover window, then settling…');
-  await waitForChainTime(client, BigInt(demand.handoverExpiresAt!.getTime()));
-  await demand.applyPendingTransitionStates().send();
-  const after = await uc.escrow(escrow.id);
-  console.log(`   status=${after.status}; active cap is now ${after.activeUsufructCapId === carolCap.id ? 'Carol' : after.activeUsufructCapId}\n`);
+  await waitForChainTime(client, BigInt(demandHandover!.getTime()));
+  await demand.write.applyPendingTransitionStates().send();
+  const after = await uc.nav.escrow(escrow.id);
+  const afterActiveCap = await after.read.activeUsufructCapId();
+  console.log(`   status=${(await after.read.assetState()).kind}; active cap is now ${afterActiveCap === carolCap.id ? 'Carol' : afterActiveCap}\n`);
 
   // ════════════ ⑥ STALE — Bob's cap is now dead weight; he burns it ════════════
   // bobCap already carries Bob's signer; burnIfStale() checks the chain then burns.
-  const { burned, digest } = await bobCap.burnIfStale();
+  const { burned, digest } = await bobCap.write.burnIfStale();
   console.log(`⑥ Bob's cap was stale → burnIfStale() burned=${burned} (${digest})`);
 
   await sleep(0);

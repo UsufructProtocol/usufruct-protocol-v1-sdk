@@ -10,16 +10,19 @@
  *   ④ SELL GOV    — Alice sells the GovernanceCap → Dave (Alice fully exits)
  *   ⑤ RESELL LEASE— Bob resells his UsufructCap → Carol
  *
- * The point: earnings ≠ governance ≠ use. Each is a free-standing object with
- * its own holder; the handle's possession booleans `canGovern` / `holdsEarnings`
- * / `canBorrow` flip purely on who holds the object — no role registry, no
- * permission table.
+ * The point: earnings ≠ governance ≠ use. Each is a free-standing object with its
+ * own holder. There is no role registry and no permission table — authority is just
+ * Sui object ownership, so we assert it the canonical way: does the new holder's
+ * address own the object the escrow names? (`ownedIds` is the same owned-object
+ * lookup `u.inspect.governedBy/rentedBy` discovery composes over.)
  *
  * Run: `npm run secondary`.
  */
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { coinTag, usufruct, type Market } from '@usufruct-protocol/sdk';
+import { TESTNET } from '@usufruct-protocol/sdk/config/network.js';
+import { ownedIds } from '@usufruct-protocol/sdk/highlevel/role.js';
 import { check, createdId, finish, loadSigner, makeClient, rateLimited, send } from './lib.js';
 
 const DUMMY_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
@@ -61,9 +64,18 @@ async function mintAsset(): Promise<string> {
   return createdId(await send(client, tx, ALICE), '::dummy_asset::DummyAsset');
 }
 
-/** Re-resolve the escrow from `who`'s perspective (possession = role). */
+/** Re-resolve the escrow from `who`'s perspective (to write as them). */
 const seenBy = (who: Ed25519Keypair, escrowId: string) =>
-  usufruct({ network: 'testnet', client, signer: who }).escrow(escrowId);
+  usufruct({ network: 'testnet', client, signer: who }).nav.escrow(escrowId);
+
+/** Possession IS the role: does `who`'s address own the bearer object `id` of `kind`?
+ *  The canonical check — Sui object ownership, the lookup discovery composes over. */
+const holds = async (who: Ed25519Keypair, kind: string, id: string): Promise<boolean> =>
+  (await ownedIds(client, who.toSuiAddress(), `${TESTNET.packageId}::${kind}`)).has(id);
+
+const GOV = 'governance_cap::GovernanceCap';
+const INBOX = 'earnings_inbox::EarningsInbox';
+const CAP = 'usufruct_cap::UsufructCap';
 
 async function main() {
   // Funded one at a time — concurrent funding would equivocate Alice's gas coin.
@@ -83,36 +95,38 @@ async function main() {
     ensembleCommitment: 'immediate',
   };
   const a = usufruct({ network: 'testnet', client, signer: ALICE });
-  const { escrow, governanceCap, earningsInbox } = await a.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
+  const { escrow, governanceCap, earningsInbox } = await a.write.integrate({ asset: await mintAsset(), coin: DUMMY, market }).send();
   console.log(`① Alice listed ${escrow.id}`);
-  check('Alice governs after integrate', (await seenBy(ALICE, escrow.id)).canGovern);
-  check('Alice holds the EarningsInbox after integrate', (await seenBy(ALICE, escrow.id)).holdsEarnings);
+  check('Alice governs after integrate', await holds(ALICE, GOV, governanceCap.capId));
+  check('Alice holds the EarningsInbox after integrate', await holds(ALICE, INBOX, earningsInbox.inboxId));
 
   // ════════════ ② RENT — Bob takes the right of use ════════════
-  const bobCap = await (await seenBy(bob, escrow.id)).rent({ tenures: 1 }).send();
+  const bobCap = await (await seenBy(bob, escrow.id)).write.rent({ tenures: 1 }).send();
   console.log(`\n② Bob rented — UsufructCap ${bobCap.id}`);
-  check('Bob can borrow after renting', (await seenBy(bob, escrow.id)).canBorrow);
+  check('Bob holds the right of use after renting', await holds(bob, CAP, bobCap.id));
 
   // ════════════ ③ ASSIGN INCOME — EarningsInbox → Eve (governance stays Alice's) ════════════
-  await earningsInbox.transfer(eve.toSuiAddress()).send();
+  await earningsInbox.write.transfer(eve.toSuiAddress()).send();
   console.log(`\n③ Alice assigned the income stream → Eve`);
-  check('Eve now holds the EarningsInbox', (await seenBy(eve, escrow.id)).holdsEarnings);
-  check('Alice no longer holds the EarningsInbox', !(await seenBy(ALICE, escrow.id)).holdsEarnings);
-  check('Alice still governs (earnings ≠ governance)', (await seenBy(ALICE, escrow.id)).canGovern);
+  check('Eve now holds the EarningsInbox', await holds(eve, INBOX, earningsInbox.inboxId));
+  check('Alice no longer holds the EarningsInbox', !(await holds(ALICE, INBOX, earningsInbox.inboxId)));
+  check('Alice still governs (earnings ≠ governance)', await holds(ALICE, GOV, governanceCap.capId));
 
   // ════════════ ④ SELL GOVERNORSHIP — GovernanceCap → Dave (Alice fully exits) ════════════
-  await governanceCap.transfer(dave.toSuiAddress()).send();
+  await governanceCap.write.transfer(dave.toSuiAddress()).send();
   console.log(`\n④ Alice sold the governorship → Dave`);
-  const aliceAfter = await seenBy(ALICE, escrow.id);
-  check('Dave now governs', (await seenBy(dave, escrow.id)).canGovern);
-  check('Alice no longer governs', !aliceAfter.canGovern);
-  check('Alice holds nothing here (fully exited)', !aliceAfter.canGovern && !aliceAfter.holdsEarnings);
+  check('Dave now governs', await holds(dave, GOV, governanceCap.capId));
+  check('Alice no longer governs', !(await holds(ALICE, GOV, governanceCap.capId)));
+  check(
+    'Alice holds nothing here (fully exited)',
+    !(await holds(ALICE, GOV, governanceCap.capId)) && !(await holds(ALICE, INBOX, earningsInbox.inboxId)),
+  );
 
   // ════════════ ⑤ RESELL THE LEASE — Bob's UsufructCap → Carol ════════════
-  await bobCap.transfer(carol.toSuiAddress()).send();
+  await bobCap.write.transfer(carol.toSuiAddress()).send();
   console.log(`\n⑤ Bob resold the right of use → Carol`);
-  check('Carol can borrow (holds the active cap)', (await seenBy(carol, escrow.id)).canBorrow);
-  check('Bob can no longer borrow', !(await seenBy(bob, escrow.id)).canBorrow);
+  check('Carol now holds the right of use', await holds(carol, CAP, bobCap.id));
+  check('Bob no longer holds it', !(await holds(bob, CAP, bobCap.id)));
 
   finish();
 }
