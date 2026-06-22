@@ -14,8 +14,8 @@ export interface PackageIds {
  *  (descent_floor_at / used_credit_at / ascending_floor_with), with the curve shapes read
  *  from the ensemble events (CycleParamsResolved carries only the resolved scalars). */
 export const TESTNET: PackageIds = {
-  packageId: '0x49231e492e638892c80a301138d55e2275477d407b3b2b1092b0209081bb56cf',
-  feeRefId: '0x1ea3c9af25419767ccd77e401970a455c7f7af188b5c1e8c73704a508d84fcaf',
+  packageId: '0x1045b0984ff9eab840abfd8a02f7c938a99334da7668e24e16737deb9979f2ee',
+  feeRefId: '0xf910aed3b021373d1e8bc7a77d46c97a6e8c836645bc248084443514d85318e6',
 };
 
 /** System singletons (FFI artefacts — injected by the codegen layer). */

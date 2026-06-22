@@ -16,20 +16,12 @@ import {
 const t0 = ms(0);
 
 describe('cycle params views (record collapse)', () => {
-  it('activeCycleParams only while renting', () => {
-    expect(views.activeCycleParams(idleState(), t0)).toBeNull();
-    expect(views.activeCycleParams(occupiedState(0n), t0)).toEqual({
-      floorMist: 1_000n,
-      ceilingMs: 60_000n,
-      handoverMs: 0n,
-      descentMs: 30_000n,
-    });
-  });
-
-  it('nextCycleParams only while waiting (not retired)', () => {
-    expect(views.nextCycleParams(occupiedState(0n), t0)).toBeNull();
-    expect(views.nextCycleParams(retiredState(), t0)).toBeNull();
-    expect(views.nextCycleParams(descentState(0n), t0)?.floorMist).toBe(1_000n);
+  it('cycleParams resolves the active cycle in every non-retired state', () => {
+    const expected = { floorMist: 1_000n, ceilingMs: 60_000n, handoverMs: 0n, descentMs: 30_000n };
+    expect(views.cycleParams(occupiedState(0n), t0)).toEqual(expected); // Renting
+    expect(views.cycleParams(idleState(), t0)).toEqual(expected); //       Waiting · Idle
+    expect(views.cycleParams(descentState(0n), t0)?.floorMist).toBe(1_000n); // Waiting · Descent
+    expect(views.cycleParams(retiredState(), t0)).toBeNull(); //           Retired → no cycle
   });
 
   it('pendingCycleParams resolves the scheduled ensemble', () => {

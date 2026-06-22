@@ -74,8 +74,7 @@ const LOCAL: Record<string, LocalFn> = {
   creditCappedAtMs: views.creditCappedAtMs,
   hasPendingEnsembleUpdate: views.hasPendingEnsembleUpdate,
 
-  activeCycleParams: views.activeCycleParams,
-  nextCycleParams: views.nextCycleParams,
+  cycleParams: views.cycleParams,
   pendingCycleParams: views.pendingCycleParams,
   activeCeilingTotalMs: views.activeCeilingTotalMs,
   activeHandoverTotalMs: views.activeHandoverTotalMs,

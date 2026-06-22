@@ -231,7 +231,7 @@ export async function createEscrow(
 
   async function cycle(): Promise<CyclePreview | null> {
     const [cp, ceilTotal, hoTotal] = await Promise.all([
-      reader.activeCycleParams(),
+      reader.cycleParams(),
       reader.activeCeilingTotalMs(),
       reader.activeHandoverTotalMs(),
     ]);
@@ -597,17 +597,14 @@ export async function createEscrow(
 
   async function liveDescentCurve(curveOpts?: CurveOpts): Promise<DescentSegment | null> {
     const pts = curveOpts?.points ?? 24;
-    // The descent's resolved cycle (floor / descent duration) lives in the WAITING
-    // state — it is stored in `WaitingState::Descent { cycle }` and projected by
-    // `proj_waiting_resolved_*`, which the SDK exposes as `nextCycleParams`. NOT
-    // `activeCycleParams`: that is the Renting-only projection (`proj_active_cycle_params`
-    // matches Occupied/Demand and is `None` while waiting). Both name the resolved
-    // cycle; they just project different halves of the state machine.
+    // The descent's resolved cycle (floor / descent duration) comes from the one
+    // cross-state `cycleParams` view — it resolves the active ensemble in every
+    // non-retired state, so there is no Renting-vs-Waiting projection to pick.
     const [desc, lastM, phaseM, cyc, shape] = await Promise.all([
       reader.isDescending(),
       reader.lastRentPriceMist(),
       reader.phaseStartMs(),
-      reader.nextCycleParams(),
+      reader.cycleParams(),
       reader.auctionShape(),
     ]);
     if (!desc || lastM == null || phaseM == null || cyc == null) return null;

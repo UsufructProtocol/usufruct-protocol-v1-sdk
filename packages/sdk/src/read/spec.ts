@@ -176,23 +176,15 @@ export const VIEW_SPECS: readonly ViewSpec[] = [
   one('hasPendingEnsembleUpdate', ec.hasPendingEnsembleUpdate, dBool),
 
   // ── cycle params records (4 unrolled views each) ──
+  // The resolved cycle (floor/ceiling/handover/descent) of the active ensemble —
+  // one cross-state view (`cycle_*`), non-null in every non-retired state.
   {
-    name: 'activeCycleParams',
+    name: 'cycleParams',
     calls: [
-      call(ec.activeEnsembleFloorPriceMist),
-      call(ec.activeEnsembleCeilingMs),
-      call(ec.activeEnsembleHandoverMs),
-      call(ec.activeEnsembleDescentMs),
-    ],
-    decode: cycleRecord,
-  },
-  {
-    name: 'nextCycleParams',
-    calls: [
-      call(ec.nextEnsembleFloorPriceMist),
-      call(ec.nextEnsembleCeilingMs),
-      call(ec.nextEnsembleHandoverMs),
-      call(ec.nextEnsembleDescentMs),
+      call(ec.cycleFloorPriceMist),
+      call(ec.cycleCeilingMs),
+      call(ec.cycleHandoverMs),
+      call(ec.cycleDescentMs),
     ],
     decode: cycleRecord,
   },

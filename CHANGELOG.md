@@ -35,14 +35,18 @@ shape (release candidate).
   `u.primitives.reader(target)`.
 - **`react.waitFor`** takes an async predicate over the handle and resolves to the
   handle: `escrow.react.waitFor(async e => (await e.read.assetState()).kind === 'demand')`.
+- **One cross-state cycle-params view.** The reader's `activeCycleParams` (Renting
+  only) + `nextCycleParams` (Waiting only) collapse into a single `cycleParams`,
+  matching the protocol's unified `cycle_*` views (the resolved cycle of the active
+  ensemble is cross-state — non-null in every state but `retired`). The `sim` mirror
+  view and the golden fixtures follow. Re-codegen'd against the new testnet deployment.
 
 ### Fixed
 
-- The live `escrow.read.descentCurve()` reads the descent's resolved cycle from
-  `nextCycleParams` (the Waiting-state projection `proj_waiting_resolved_*`), not
-  `activeCycleParams` (the Renting-only projection `proj_active_cycle_params`, which
-  is `None` while waiting). The cycle is always resolved — the two views just project
-  different halves of the state machine. Now drift-zero against the view.
+- The live `escrow.read.cycle()` and `escrow.read.descentCurve()` read the resolved
+  cycle from the cross-state `cycleParams` view, so both work in idle/descent (the old
+  `activeCycleParams` was `None` there — a latent null that surfaced as a broken
+  `descentCurve`). Drift-zero against the view.
 
 ## [0.1.0] — Unreleased
 
