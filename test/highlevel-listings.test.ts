@@ -49,8 +49,8 @@ describe('highlevel/listings — createListing maps AssetIntegrated json (decode
 });
 
 describe('highlevel/discovery — needs the indexer (a graphql endpoint)', () => {
-  it('escrowsIntegratedBy / escrowsByAssetType throw without graphql configured', async () => {
-    const u = usufruct({ client: {} as ClientWithCoreApi });
+  it('escrowsIntegratedBy / escrowsByAssetType throw when discovery is disabled (graphql: false)', async () => {
+    const u = usufruct({ client: {} as ClientWithCoreApi, graphql: false });
     await expect(u.inspect.integratedBy(hex('5'))).rejects.toBeInstanceOf(UsufructError);
     await expect(u.inspect.byAssetType(`0x${ASSET_T}`)).rejects.toBeInstanceOf(UsufructError);
   });

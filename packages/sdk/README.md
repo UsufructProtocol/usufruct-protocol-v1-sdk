@@ -46,11 +46,11 @@ clients (gRPC, JSON-RPC, GraphQL).
 import { usufruct } from '@usufruct-protocol/sdk';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-// Reads need no signer; writes do. `graphql` enables discovery/history.
+// Reads need no signer; writes do. `network` also picks the GraphQL endpoint that
+// powers `inspect.*` discovery/history — pass `graphql` only to override it.
 const u = usufruct({
   network: 'testnet',
   signer: Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!),
-  graphql: 'https://graphql.testnet.sui.io/graphql',
 });
 
 const escrow = await u.nav.escrow('0x…');       // resolve the handle (identity only)

@@ -52,6 +52,14 @@ const GRPC_URL: Record<Network, string> = {
   localnet: 'http://127.0.0.1:9000',
 };
 
+/** The public GraphQL endpoint per network — the default for `inspect.*` discovery.
+ *  No `localnet` entry (no standard local indexer): there you must pass `graphql`. */
+const GRAPHQL_URL: Partial<Record<Network, string>> = {
+  testnet: 'https://graphql.testnet.sui.io/graphql',
+  mainnet: 'https://graphql.mainnet.sui.io/graphql',
+  devnet: 'https://graphql.devnet.sui.io/graphql',
+};
+
 export interface UsufructConfig {
   /** Pick a known network (builds a gRPC client). Default `'testnet'`. */
   readonly network?: Network;
@@ -75,8 +83,14 @@ export interface UsufructConfig {
   readonly packageId?: string;
   /** The frozen `ProtocolFeeRef` consumed by `integrate`; defaults to the network's. */
   readonly feeRefId?: string;
-  /** GraphQL endpoint (URL or client) — enables discovery (`governor.escrows()`). */
-  readonly graphql?: string | SuiGraphQLClient;
+  /**
+   * GraphQL endpoint (URL or client) for `inspect.*` discovery/history. **Defaults
+   * to the network's public endpoint** (testnet/mainnet/devnet), so `network: 'testnet'`
+   * already enables `inspect.*` — pass this only to use a custom endpoint, a
+   * preconfigured client, or `false` to disable discovery (then `inspect.*` throws).
+   * On `localnet` there is no default — supply your own.
+   */
+  readonly graphql?: string | SuiGraphQLClient | false;
   /**
    * Retry policy for transient public-fullnode faults (429/502/503 and truncated
    * reads). On by default — reads ride through flakiness; execution never retries.
@@ -215,12 +229,16 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
   // only needs `packageId`.
   const source = chainSource(client, { packageId });
 
+  // Discovery defaults to the network's public GraphQL endpoint (so picking a network
+  // is enough); pass a URL/client to override, or `false` to disable.
+  const network: Network = config.network ?? 'testnet';
+  const graphqlSetting = config.graphql === false ? null : (config.graphql ?? GRAPHQL_URL[network] ?? null);
   const rawGraphql =
-    config.graphql == null
+    graphqlSetting == null
       ? null
-      : typeof config.graphql === 'string'
-        ? new SuiGraphQLClient({ url: config.graphql, network: config.network ?? 'testnet' })
-        : config.graphql;
+      : typeof graphqlSetting === 'string'
+        ? new SuiGraphQLClient({ url: graphqlSetting, network })
+        : graphqlSetting;
   // Discovery/history (paginated GraphQL) get the same transient-status retry.
   const graphqlClient = rawGraphql && retry ? retryingGraphqlClient(rawGraphql, retry) : rawGraphql;
   const indexer: IndexerSource | null = graphqlClient

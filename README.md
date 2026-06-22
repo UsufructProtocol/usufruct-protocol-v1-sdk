@@ -35,7 +35,7 @@ npm i @usufruct-protocol/sdk @mysten/sui
 ```ts
 import { usufruct } from '@usufruct-protocol/sdk';
 
-const u = usufruct({ network: 'testnet', graphql: 'https://graphql.testnet.sui.io/graphql' });
+const u = usufruct({ network: 'testnet' }); // picks the network's RPC + GraphQL endpoints
 
 const escrow = await u.nav.escrow('0x…');           // resolve the handle (identity only)
 const state  = await escrow.read.assetState();      // live: a discriminated union
