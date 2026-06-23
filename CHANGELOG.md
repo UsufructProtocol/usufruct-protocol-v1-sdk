@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
-## [1.0.0-rc.1] — Unreleased
+## [1.0.0-rc.1] — 2026-06-23
 
 The handle API is reshaped into one fractal, navigable form: every object is its
 **identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
@@ -57,10 +57,13 @@ shape (release candidate).
   `activeCycleParams` was `None` there — a latent null that surfaced as a broken
   `descentCurve`). Drift-zero against the view.
 
-## [0.1.0] — Unreleased
+## [0.1.0] — never published
 
-First public release. The SDK is the high-level, object-centric TypeScript API over
-the Usufruct protocol (live on Sui testnet v1.4.3), split along a **drift-zero seam**.
+_Not released on its own — its contents ship as part of `1.0.0-rc.1` (the first
+published version). Kept here as the record of the core surface 1.0 builds on._
+
+The SDK is the high-level, object-centric TypeScript API over the Usufruct protocol,
+split along a **drift-zero seam**.
 
 ### Added
 

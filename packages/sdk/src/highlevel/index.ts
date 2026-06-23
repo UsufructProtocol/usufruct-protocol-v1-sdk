@@ -52,6 +52,8 @@ export type {
   CapReactVerb,
   CapWriteVerb,
 } from './cap.js';
+// Possession is the role: the canonical owned-object lookup (there is no `role()`).
+export { ownedIds } from './role.js';
 // Deferred writes: a write is build → execute → decode; `Executor` swaps signing.
 export { signerExecutor, walletExecutor, executeSigned } from './send.js';
 export type { Executor, ExecResult, WalletSigner } from './send.js';
