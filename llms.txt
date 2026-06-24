@@ -1,0 +1,36 @@
+# Usufruct Protocol SDK
+
+> The official TypeScript SDK for the Usufruct Protocol — an on-chain rental market
+> primitive for any Sui asset, priced in any payment coin. Always-liquid with
+> handover protection, lazy state transitions, composable with any Sui protocol.
+> Every object is its identity plus five verbs (nav · read · inspect · react ·
+> write); reads are drift-zero (the deployed Move views); authority is possession.
+
+For agents: load `llms-full.txt` for the complete self-contained payload (the docs
+below, concatenated inline). The links here are the curated map.
+
+## Start here
+
+- [QUICKSTART](./QUICKSTART.md): install → a full rental lifecycle, step by step.
+- [API reference](./API.md): the complete public surface — every handle, verb, signature, return type.
+
+## Concepts
+
+- [API design](./concepts/api-design.md): the four pillars (drift-zero, object-centric, navigable, five verbs) and why possession is the role.
+- [Write model](./concepts/write-model.md): the `Plan` write seam — `send` vs `build`, `batch`, sponsored/multisig signing.
+- [Borrow](./concepts/borrow.md): composing code around the rented asset (the `Use` middle, the bracket, the by-value escape hatch).
+- [Primitives](./concepts/primitives.md): the kernel layer the high-level composes from, and when to drop down.
+
+## Design reference
+
+- [ARCHITECTURE](./ARCHITECTURE.md): the four primitives and the drift-zero core / mirror seam.
+- [SPEC](./SPEC.md): the authoritative design document.
+
+## Examples
+
+- [scripts/](./scripts): runnable, testnet-validated examples of every flow (rent, borrow, governor lifecycle, earnings, discovery, mint-to).
+
+## Optional
+
+- [CHANGELOG](./CHANGELOG.md): release history.
+- [notes/design-notes.md](./notes/design-notes.md): the design & validation log (internal history).

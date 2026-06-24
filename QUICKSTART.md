@@ -319,14 +319,15 @@ await reader.accruedCreditMist(Date.now());   // any of the ~80 deployed views, 
 
 ## 10. Where next
 
-- [`journeys/read-write-inspect-react.md`](./journeys/read-write-inspect-react.md) — the
-  fractal, navigable API in depth.
-- [`journeys/object-model.md`](./journeys/object-model.md) — why possession is the role.
-- [`journeys/write-paths.md`](./journeys/write-paths.md) — `Plan`, `send` vs `build`,
+- [`API.md`](./API.md) — the complete public API surface (every handle, verb, signature).
+- [`concepts/api-design.md`](./concepts/api-design.md) — drift-zero · object-centric ·
+  navigable · the five verbs (and why possession is the role).
+- [`concepts/write-model.md`](./concepts/write-model.md) — `Plan`, `send` vs `build`,
   sponsored/multisig signing.
-- [`journeys/borrow-composition.md`](./journeys/borrow-composition.md) — composing code
-  around the borrowed asset.
-- [`examples/`](./examples) — runnable, testnet-validated probes of every flow.
+- [`concepts/borrow.md`](./concepts/borrow.md) — composing code around the borrowed asset.
+- [`concepts/primitives.md`](./concepts/primitives.md) — primitives vs high-level.
+- [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.
+- [`llms-full.txt`](./llms-full.txt) — the self-contained payload for AI agents.
 
 > Live on Sui **testnet** (`v1.4.7`), source-verified on-chain. Don't assume code works
 > by reading it — build against testnet and let the chain be the arbiter.

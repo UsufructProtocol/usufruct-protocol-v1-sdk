@@ -11,7 +11,7 @@
 > - **`cap.write.borrow(...uses)`** — a `Plan` that runs one `Use`, or composes several
 >   in order, inside the single `borrow_asset … return_asset` bracket. `.send()`
 >   signs & sends it; `.build(tx, sender)` drops the bracket into a PTB you drive
->   (see [write paths](./write-paths.md)).
+>   (see [write model](./write-model.md)).
 >
 > There is nothing else to learn: a lambda is a `Use`, a named constant is a
 > `Use`, a factory returns a `Use`, a routine is a `Use[]`. The raw
@@ -119,7 +119,7 @@ Because it is an array, you compose it with ordinary JavaScript —
 `cap.write.borrow(...)` is a `Plan`. `.send()` does build + execute + decode; `.build(tx,
 sender)` does only the build — it appends the bracket to a transaction you own, so
 you run execute yourself. Reach for `.build` when you need the transaction in your
-own hands. (This is the general write seam — see [write paths](./write-paths.md).)
+own hands. (This is the general write seam — see [write model](./write-model.md).)
 
 | | `await cap.write.borrow(...).send()` | `await cap.write.borrow(...).build(tx, me)` |
 |---|---|---|
@@ -186,6 +186,6 @@ This is deliberately **not** a second high-level method: it would duplicate `bor
 on the handle while shedding its one guarantee (you'd drive the return either way).
 The primitives are the honest home — full PTB control, the chain enforces the id.
 
-See [the object model](./object-model.md) for why `borrow` proves the cap belongs
-to its escrow, and [read · write · inspect · react](./read-write-inspect-react.md)
-for where `borrow` sits among the four verbs.
+See [api design](./api-design.md) for why possession is the role (why `borrow`
+proves the cap belongs to its escrow) and where `borrow` sits among the five verbs,
+and [primitives](./primitives.md) for the by-value escape hatch in context.

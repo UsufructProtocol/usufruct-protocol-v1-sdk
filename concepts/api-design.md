@@ -1,22 +1,42 @@
-# Nav · Read · Inspect · React · Write — the fractal, navigable API
+# API design — drift-zero, object-centric, navigable
 
-> The whole SDK is **one shape, repeated**: every object is its **identity**
-> (the object's name) plus five verbs —
->
-> - **nav** → *where* (walk to a related object)
-> - **read** → what *is* (live on-chain state)
-> - **inspect** → what *happened* (the event log, pulled)
-> - **react** → what *happens* (the event log, pushed)
-> - **write** → what I *change* (a transaction)
->
-> `read`/`write` are on-chain **state** (read it / change it with a tx); `inspect`/
-> `react` are the **event log** (pull what happened / push what happens); `nav` is
-> the **graph** (the edges between objects). Every verb is *object-centric* — you ask
-> the object you hold, it answers — and *decode-free* (no asset schema).
->
-> The shape is **fractal**: the same five verbs sit on the global root `u` (the
-> protocol seen whole) and on every object handle. See
-> [the object model](./object-model.md) for *why* possession is the role.
+> The whole SDK is **one shape, repeated**, resting on four design pillars. This
+> doc is the model; [`write-model.md`](./write-model.md) is how writes execute,
+> [`borrow.md`](./borrow.md) is the borrow bracket, and
+> [`primitives.md`](./primitives.md) is the layer the high-level composes from.
+
+## The four pillars
+
+1. **Drift-zero.** Every `read` is the deployed bytecode's *own* answer — the
+   `Reader` evaluates the on-chain Move views via `simulateTransaction` (each view
+   takes `now_ms`, so you can read at any `t`). The core never re-derives protocol
+   logic in TypeScript, so it **cannot drift** from the contract. Off-chain
+   re-derivation (simulation, what-if) is the opt-in mirror `@usufruct-protocol/sim`,
+   golden-tested against this core.
+2. **Object-centric.** A "governor", "usufructuary", "earnings collector" is not an
+   identity the SDK tracks — it is *whoever currently holds the corresponding
+   object*. Authority is **possession** of a bearer object (`key + store`), not an
+   ACL. The objects move; the roles move with them.
+3. **Navigable.** Objects form a graph and you walk it with `nav` — an escrow → its
+   seats / its governance cap / its inbox; a cap → its escrow. You hold one handle
+   and reach the rest, no ids to thread by hand.
+4. **Five verbs, fractal.** Every object is its **identity** (the object's name)
+   plus **`nav · read · inspect · react · write`** — and the *same* five sit on the
+   global root `u` and on every handle. Learn the shape once; it repeats at every
+   scale.
+
+```
+nav     → where      · walk to a related object   · escrow.nav.activeCap() · cap.nav.escrow()
+read    → what is     · live on-chain state         · escrow.read.assetState() · cap.read.state()
+inspect → what happened· the event log, pulled       · escrow.inspect.history() · u.inspect.governedBy()
+react   → what happens · the event log, pushed       · escrow.react.watch() · escrow.react.on()
+write   → what I change· a transaction (a Plan)      · rent · borrow · updateMarket · collect · integrate
+```
+
+`read`/`write` are on-chain **state** (read it / change it with a tx); `inspect`/
+`react` are the **event log** (pull what happened / push what happens); `nav` is the
+**graph** (the edges). Every verb is *object-centric* (ask the object you hold) and
+*decode-free* (no asset schema needed).
 
 ## The one rule: flat ⟺ a name
 
@@ -58,59 +78,83 @@ Two notes on the shape:
   `inspect` (`governanceCap.inspect.escrows()`), not `nav`.
 - **Possession is not a gate on the handles.** Anyone can resolve any object's handle
   and `read`/`inspect` it; a `write` only *succeeds* if you actually hold the bearer
-  object (else the tx aborts). There is **no `role()` composite** — authority is just
-  Sui object ownership, so you ask the canonical views: "am I retired?"
-  (`escrow.read.isRetired()`), "do I hold the active seat?" (`cap.read.isActive()`), or
-  "which escrows do I govern / rent?" (`u.inspect.governedBy(me)` / `rentedBy(me)`).
+  object (else the tx aborts).
+
+## Possession is the role
+
+The protocol has four capability objects, all `key + store` — so `store` means
+anyone can `public_transfer` them, and Move makes the authority **possession
+itself**: to produce a `&GovernanceCap` / `&mut EarningsInbox` / `&UsufructCap`
+inside a PTB you must pass `tx.object(id)`, which only succeeds if the *signer owns
+it*.
+
+| Object | Created at | Holding it lets you… |
+|---|---|---|
+| `GovernanceCap` | `integrate` | **govern** — `updateMarket`, `retire`, `claim`, `extend*`, `integrateIntoPortfolio` |
+| `EarningsInbox` | `integrate` | **collect earnings** (the 90% governor cut) — maybe a treasury, not the governor |
+| `UsufructCap` | `rent` | **use** — `borrow` the asset; a tradable bearer instrument |
+| `ProtocolFeeInbox` | deploy | **collect protocol fees** — the deployment singleton |
+
+The role is **emergent from possession**, never an identity the SDK stores. So:
+
+- There is **no `Governor` handle.** `integrate` mints three *independent* objects —
+  `{ escrow, governanceCap, earningsInbox }` — that can diverge: sell the governance,
+  point earnings at a treasury, run a secondary market for rights of use.
+- **`transfer` is first-class on every bearer** — moving the object moves the role:
+  ```ts
+  await governanceCap.write.transfer(treasury);  // hand off governance
+  await earningsInbox.write.transfer(treasury);  // route income elsewhere
+  await usufructCap.write.transfer(buyer);       // sell the right of use
+  ```
+  After the transfer the old holder's handle no longer authorizes writes (the chain
+  rejects a `tx.object(id)` it doesn't own → `NotGovernor` / not-owned).
+- **There is no `role()` composite.** Authority is a plain owned-objects question, so
+  you ask the canonical views: *can I rent?* `!(await escrow.read.isRetired())`; *do I
+  hold the active seat?* `await cap.read.isActive()`; *what do I govern / rent?*
+  `await u.inspect.governedBy(me)` / `await u.inspect.rentedBy(me)`.
+
+The escrow exposes **every related object as a ready handle** (via `nav`), no
+possession required — possession only governs whether a *write* on it succeeds.
+There is no handle that's null just because you don't hold it.
 
 ---
 
 ## nav — walk the graph
 
-`nav` returns a *related handle*, not state — the edges between objects. Immutable
-edges (a cap's escrow) and time-varying edges (an escrow's active seat) are both
-`await`-ed, because resolving a handle is IO:
+`nav` returns a *related handle*, not state. Immutable edges (a cap's escrow) and
+time-varying edges (an escrow's active seat) are both `await`-ed, because resolving a
+handle is IO:
 
 ```ts
 const escrow = await u.nav.escrow(id);          // the root opens the first handle
 const seat   = await escrow.nav.activeCap();    // edge: the current seat (or null)
 const gov    = await escrow.nav.governanceCap();// edge: who governs it
 const back   = await seat?.nav.escrow();        // back-edge: cap → its escrow
-
-// the root is fractal — the same nav, at protocol scope:
-const inbox  = await u.nav.feeInbox();          // the deployment's fee pool (by id-less)
-const cap    = await u.nav.usufructCap(capId);  // any object, by id
+const inbox  = await u.nav.feeInbox();           // the deployment's fee pool (id-less singleton)
 ```
 
 ## read — the chain as it is now
 
 `read` is the deployed views, live. The bulk is **auto-rendered** from the protocol's
 view surface (mist→`Price` in the escrow's own coin, ms-timestamp→`Date`,
-ms-duration/count→`number`), so every on-chain view has a home on the object, with no
-hand-wiring. A few **composites** sit alongside:
+ms-duration/count→`number`); a few **composites** sit alongside:
 
 ```ts
 const s = await escrow.read.assetState();   // discriminated union — narrows to the phase
 if (s.kind === 'demand') {                  // 'idle' | 'occupied' | 'demand' | 'descent' | 'retired'
   s.challenger; s.bid; s.handoverExpiresAt; // each phase carries its own data
 }
-
 await escrow.read.floorPrice();             // a Price, rendered in the escrow's coin
 await escrow.read.market();                 // the full policy (rest price, tenure, curves…)
-await escrow.read.usufructCapIsActive(id);  // is this cap the active seat? (a possession view)
 await escrow.read.creditCurve();            // the CURRENT tenure's curve, sampled live
 await seat?.read.state();                   // the seat's economics — ask the cap itself
 await inbox.read.balance();                 // uncollected income, per coin
 ```
 
-**Drift-zero:** every read is the deployed bytecode's own answer
-(`simulateTransaction` over the on-chain views, each taking `now_ms` so you can read
-at any `t`), so the SDK can't drift from the contract — the handle only renders it.
-For off-chain re-derivation (simulation, what-if), reach for
-`@usufruct-protocol/sim`, the opt-in mirror golden-tested against this core.
-
-Need the raw, un-rendered kernel reader (policy unions, exact bigints)? It is **not**
-on the handle — reach the escape hatch at the root: `u.primitives.reader(target)`.
+**Drift-zero:** every read is `simulateTransaction` over the on-chain views — the
+SDK can't drift from the contract, it only renders the bytecode's answer. The raw,
+un-rendered kernel reader (policy unions, exact bigints) is **not** on the handle —
+reach it at the root: `u.primitives.reader(target)` (see [`primitives.md`](./primitives.md)).
 
 ## write — make it different
 
@@ -120,24 +164,20 @@ await cap.write.borrow((asset, tx) => { /* your PTB; return is appended */ }).se
 await gov.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
 await inbox.write.collect().send();                         // 90% governor cut, partitioned by coin
 await gov.write.transfer(treasury).send();                  // move the object → move the role
-await u.write.integrate({ asset, coin, market });           // genesis: mint escrow + cap + inbox
+await u.write.integrate({ asset, coin, market }).send();    // genesis: mint escrow + cap + inbox
 ```
 
-Each write lives on the object that authorizes it. `transfer` is first-class on every
-bearer — moving the object moves the role. Every write is a **`Plan`**: `.send()`
-builds, signs, and decodes in one call; `.build(tx, sender)` lets you drive the
-transaction yourself (compose many writes, mix raw commands, sign with a
+Each write lives on the object that authorizes it, and every write is a **`Plan`**:
+`.send()` builds, signs, and decodes in one call; `.build(tx, sender)` lets you drive
+the transaction yourself (compose many, mix raw commands, sign with a
 wallet/Ledger/sponsor). Nothing touches the chain until `.send()` — reads read,
-writes wait. See [write paths](./write-paths.md).
-
-`borrow` hands you the asset mid-PTB to compose with — variadic
-(`cap.write.borrow(a, b, c)` composes recipes in order), a `Plan` like the rest. See
-[borrow — composing code around the rented asset](./borrow-composition.md).
+writes wait. See [`write-model.md`](./write-model.md). `borrow` hands you the asset
+mid-PTB to compose with — see [`borrow.md`](./borrow.md).
 
 ## inspect — what happened (pull)
 
-Every object answers two questions over the same typed, decode-free event log:
-*which escrows relate to me* (discovery) and *what happened* (history).
+Every object answers two questions over the same typed, decode-free event log: *which
+escrows relate to me* (discovery) and *what happened* (history).
 
 ```ts
 await gov.inspect.escrows();                   // discovery: this cap's portfolio
@@ -145,8 +185,6 @@ await inbox.inspect.escrowsPushingMessages();  // who pays into this inbox
 await escrow.inspect.history();                // the escrow's whole lifecycle, time-ordered
 await cap.inspect.statement();                 // the renter's P&L: paid / consumed / refunded
 await escrow.inspect.tenancies();              // the occupancy ledger, per-tenancy economics
-
-// the root inspects globally — find escrows by relationship:
 await u.inspect.governedBy(addr);              // escrows this address governs now
 await u.inspect.byCoinType(coinType);          // escrows priced in this coin
 ```
@@ -154,7 +192,28 @@ await u.inspect.byCoinType(coinType);          // escrows priced in this coin
 `escrow.inspect.history()` walks the escrow's own transactions (`affectedObject`) —
 O(its lifecycle), not O(package history). The curve reconstructions
 (`priceTimeline`/`creditHistory`/`tenancies`) replay that log into the curves the
-chain computed, drift-zero. Needs a `graphql` endpoint.
+chain computed, drift-zero. **Needs a `graphql` endpoint** (defaults from the
+network; pass `graphql: false` to disable).
+
+### Discovery is object-centric — you govern by the cap, not by an address
+
+A relationship is queryable **from whichever object stores the link** — on-chain when
+an object holds the id, in the event log otherwise. The `GovernanceCap` struct is just
+`{ id }` (it does *not* store its escrows), so cap→escrow lives only in the
+`AssetIntegrated` event:
+
+| Door | Means | Source |
+|---|---|---|
+| `u.inspect.integratedBy(addr)` | who *brought it into being* | `AssetIntegrated.governor_address == addr` |
+| `u.inspect.governedByCap(capId)` | what *this cap* governs (its portfolio) | `AssetIntegrated.governance_cap_id == capId` |
+| `u.inspect.governedBy(addr)` | what *addr* governs **now** | `addr`'s owned `GovernanceCap`s ∩ the event log |
+
+`governedBy` *follows the cap* — it includes escrows whose cap was transferred *to*
+`addr`, excludes ones given away (on testnet our address integrated 224 but governs
+196 — the 28-escrow gap is exactly the caps it sold). The `UsufructCap` is the
+asymmetric case: it *stores* its escrow on-chain (`borrow` must prove the link), so
+`usufructCap.nav.escrow()` reads it off the object and `u.inspect.rentedBy(addr)` just
+decodes owned caps.
 
 ## react — what happens (push)
 
@@ -167,9 +226,7 @@ escrow.react.on('BidPlaced', ev => counterBid(ev.data));    // events: typed, by
 await escrow.react.waitFor(async e =>                       // one-shot state (async predicate)
   (await e.read.assetState()).kind === 'demand');
 await escrow.react.next('BidPlaced', { timeoutMs: 120_000 });// one-shot event
-
 cap.react.watch(seat => render(seat));                      // the renter watches THEIR seat
-inbox.react.watch(m => credit(m.amount));                   // income lands → react
 u.react.watchMany(ids, e => dashboard(e));                  // many escrows, one firehose
 ```
 
@@ -178,21 +235,16 @@ u.react.watchMany(ids, e => dashboard(e));                  // many escrows, one
 | **state** | `escrow.react.watch(cb)` / `cap.react.watch(cb)` | `escrow.react.waitFor(pred)` / `cap.react.waitFor(pred)` |
 | **events** | `escrow.react.on(kind, cb)` / `onEvents`, `inbox.react.watch(cb)` | `escrow.react.next(kind)` / `nextEvent` |
 
-`waitFor` resolves to the **handle** (so you can act: `const e = await
-escrow.react.waitFor(…); await e.write.applyPendingTransitionStates().send()`), and
-its predicate is **async over the handle** — read whatever you need to decide.
-
-Filter not just by event *type* but by a **field value** — `where` is a predicate on
-the decoded event (`escrow.react.onEvents(act, { kinds: ['HandoverCompleted'], where:
-e => e.data.departing_usufructuary_address === target })`). gRPC can't filter a
-payload server-side, but we decode every event anyway, so `where` is free.
+`waitFor` resolves to the **handle** (so you can act on it), and its predicate is
+**async over the handle**. Filter not just by event *type* but by a **field value** —
+`where` is a predicate on the decoded event (gRPC can't filter a payload server-side,
+but we decode every event anyway, so `where` is free).
 
 ## inspect and react are the same events
 
 `escrow.inspect.history()` and `escrow.react.on(...)` decode the **same typed
 events** — one paginated over GraphQL (pull), one streamed over the gRPC firehose
-(push). Inspect reads the log; react subscribes to it. One event model, two
-deliveries.
+(push). One event model, two deliveries. That closes the loop:
 
 ```
 nav     → a related handle  · the object graph        · escrow.nav.activeCap() · cap.nav.escrow() · u.nav.escrow(id)

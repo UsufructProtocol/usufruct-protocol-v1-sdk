@@ -494,6 +494,6 @@ executor moved.
 > read, writes wait. The repetition of `.send()` is the price of that honesty, and
 > it collapses to one call whenever you compose writes into a single transaction.
 
-See [borrow composition](./borrow-composition.md) for the `Use`/`Plan.build`
-bracket in depth, and [read · write · inspect · react](./read-write-inspect-react.md)
+See [borrow](./borrow.md) for the `Use`/`Plan.build`
+bracket in depth, and [api design](./api-design.md)
 for where writes sit among the four verbs.

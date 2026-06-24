@@ -118,10 +118,10 @@ apart. Moving any of them moves the role it carries.
 ## Design & reference
 
 See the [repository](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk):
-`SPEC.md` (authoritative design), `ARCHITECTURE.md` (the drift-zero core / mirror
-seam and the four primitives), and `journeys/` (the object model and the
-[fractal, navigable API](../../journeys/read-write-inspect-react.md) —
-`nav · read · inspect · react · write`).
+`API.md` (the complete surface), `concepts/` (the [api design](../../concepts/api-design.md) —
+drift-zero · object-centric · navigable · `nav · read · inspect · react · write`),
+`SPEC.md` (authoritative design), and `ARCHITECTURE.md` (the drift-zero core / mirror
+seam and the four primitives). `llms-full.txt` is the self-contained payload for AI agents.
 
 ## License
 
