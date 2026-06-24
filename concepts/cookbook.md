@@ -68,14 +68,27 @@ const escrow = await u.nav.escrow('0xESCROW');
 const cap = await escrow.write.rent({ tenures: 1 }).send();   // pays the floor; `pay` to overpay → stake
 // rent on behalf of a buyer (cap lands with them, you pay): rent({ tenures: 1, to: '0xBUYER' })
 
+// Status after rent: renting an IDLE escrow seats you immediately → 'active' (you
+// can borrow in the same flow). Renting an OCCUPIED escrow makes you the challenger
+// → 'pending' (you get the seat only after the handover window; borrow can't run
+// until then — that's a separate tx). 'stale' = a spent/displaced cap.
 console.log((await cap.read.state()).status);    // 'active' | 'pending' | 'stale'
 
-// borrow hands you the asset mid-PTB; the return is appended for you, guaranteed.
-// External calls must take the asset BY REFERENCE (&Asset / &mut Asset).
+// borrow hands you the asset mid-PTB; the borrow before and the return after are
+// appended for you, guaranteed. External calls take the asset BY REFERENCE
+// (&Asset / &mut Asset) — never by value.
 const PKG = '0xGAME';
+
+// (a) the common case — a &mut call that mutates in place and returns nothing.
+// Nothing to capture or transfer; just append the call.
 await cap.write.borrow((asset, tx) => {
-  const coupon = tx.moveCall({ target: `${PKG}::game::play`, arguments: [asset] }); // &mut Asset
-  tx.transferObjects([coupon], me);              // keep any artifact it produced
+  tx.moveCall({ target: `${PKG}::widget::tick`, arguments: [asset] });   // tick(&mut Widget)
+}).send();
+
+// (b) the call produces an artifact you want to keep — capture and transfer it.
+await cap.write.borrow((asset, tx) => {
+  const coupon = tx.moveCall({ target: `${PKG}::game::play`, arguments: [asset] }); // play(&mut Asset): Coupon
+  tx.transferObjects([coupon], me);
 }).send();
 
 // compose several recipes in order, one atomic PTB:
