@@ -44,7 +44,7 @@ cap? whose earnings?):
 |---|---|---|---|
 | `Escrow` (shared) | `Escrow` | `write.rent`, `write.apply` (permissionless) + reads | `u.nav.escrow(id)` |
 | `UsufructCap` | `UsufructCap` | `write.borrow`/`.into`, `write.updateRefundAddress`, `write.burnIfStale`, `write.burn`, **`write.transfer`** | `u.nav.usufructCap(id)` |
-| `GovernanceCap` | `GovernanceCap` | `write.updateMarket`/`write.retire`/`write.claim`/`write.extend*`, `write.renounce`, `write.integrateIntoPortfolio`, **`write.transfer`** | `u.nav.governanceCap(id)` |
+| `GovernanceCap` | `GovernanceCap` | `write.updateMarket`/`write.retire`/`write.claim`/`write.extend*`, `write.renounceGovernance`, `write.integrateIntoPortfolio`, **`write.transfer`** | `u.nav.governanceCap(id)` |
 | `EarningsInbox` | `EarningsInbox` | `read.balance`, `write.collect`, **`write.transfer`** | `u.nav.earningsInbox(id)` |
 | `ProtocolFeeInbox` | `ProtocolFeeInbox` | `read.balance`, `write.collect`, **`write.transfer`** | `u.nav.feeInbox()` — singleton, resolved from the `ProtocolFeeRef` (or `u.nav.feeInbox(id)`) |
 

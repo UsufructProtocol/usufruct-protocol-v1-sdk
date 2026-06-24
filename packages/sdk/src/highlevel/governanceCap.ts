@@ -60,7 +60,7 @@ export interface GovernanceWriteVerb {
   claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
   extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
-  renounce(): Plan<{ digest: string }>;
+  renounceGovernance(): Plan<{ digest: string }>;
   transfer(to: string): Plan<{ digest: string }>;
   integrateIntoPortfolio(asset: string, coin: CoinTag, market: Market, opts: { earningsInbox: string }): Plan<Escrow>;
 }
@@ -173,7 +173,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       });
     },
 
-    renounce() {
+    renounceGovernance() {
       return digestPlan(
         () => ctx.defaultExecutor,
         (tx) => renounceGovernanceToPtb(tx, { pkg, governanceCapId: capId }),
@@ -278,7 +278,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     claim: g.claim,
     extendRetireCommitment: g.extendRetireCommitment,
     extendEnsembleCommitment: g.extendEnsembleCommitment,
-    renounce: g.renounce,
+    renounceGovernance: g.renounceGovernance,
     transfer: g.transfer,
     integrateIntoPortfolio: g.integrateIntoPortfolio,
   };

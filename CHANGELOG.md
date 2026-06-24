@@ -7,6 +7,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- **`UsufructCapRole` → `UsufructCapStatus`; `state.role` → `state.status`; the
+  `'unknown'` member is gone.** A held cap is always `active`, `pending`, or `stale`
+  — those three are exhaustive, so `state()` now throws on a cap that is neither a
+  seat nor stale (a wrong cap/escrow pairing) instead of returning a phantom status.
+  "Status", not "role": authority is object possession, not a permission read (the
+  same reason `escrow.read.role()` was removed).
+- **`governanceCap.write.renounce()` → `renounceGovernance()`.** An irreversible
+  burn deserves an unambiguous name, matching the Move entry `cap::renounce_governance`.
+
 ## [1.0.0-rc.1] — 2026-06-23
 
 The handle API is reshaped into one fractal, navigable form: every object is its

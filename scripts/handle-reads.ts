@@ -3,7 +3,7 @@
  * writes. The seat economics live on the `UsufructCap` (`cap.state()`), not on the
  * escrow; the escrow keeps escrow-whole reads + the bid preview / governance reads.
  *
- *   ① INTEGRATE + RENT → the active cap: cap.state().role==='active', stake>0
+ *   ① INTEGRATE + RENT → the active cap: cap.state().status==='active', stake>0
  *   ② CHALLENGE        → the challenger's pending cap routes to pending; active-only
  *                        fields (accrued / time-remaining) gate to null
  *   ③ ESCROW           → escrow-whole reads stay (floorPrice, nextFloorPrice preview)
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   const occ = await a.nav.escrow(escrow.id);
   const activeCap = await a.nav.usufructCap((await occ.read.activeUsufructCapId())!); // read-only resolve, no ownership
   const active = await activeCap.read.state();
-  check('active cap: role === active', active.role === 'active', active.role);
+  check('active cap: status === active', active.status === 'active', active.status);
   check('active cap: stake > 0', (active.stake?.mist ?? 0n) > 0n, active.stake?.format());
   check('active cap: timeRemainingMs > 0', (active.timeRemainingMs ?? 0) > 0, `${active.timeRemainingMs} ms`);
   check('active cap: accruedCredit surfaced', active.accruedCredit !== null, active.accruedCredit?.format());
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   const demand = await a.nav.escrow(escrow.id);
   const pendingCap = await a.nav.usufructCap((await demand.read.pendingUsufructCapId())!);
   const pending = await pendingCap.read.state();
-  check('pending cap: role === pending', pending.role === 'pending', pending.role);
+  check('pending cap: status === pending', pending.status === 'pending', pending.status);
   check('pending cap: stake > 0', (pending.stake?.mist ?? 0n) > 0n, pending.stake?.format());
   check('pending cap: committedTenures set', pending.committedTenures !== null, `${pending.committedTenures}`);
   check('pending cap: accruedCredit gated to null', pending.accruedCredit === null);

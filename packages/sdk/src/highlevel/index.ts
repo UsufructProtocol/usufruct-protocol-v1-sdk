@@ -41,7 +41,7 @@ export type { ScalarReadVerb } from './escrowRead.js';
 export type {
   UsufructCap,
   UsufructCapState,
-  UsufructCapRole,
+  UsufructCapStatus,
   RentReceipt,
   BorrowReceipt,
   BorrowMethod,

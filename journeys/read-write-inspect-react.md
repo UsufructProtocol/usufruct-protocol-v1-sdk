@@ -47,7 +47,7 @@ Pick the object you hold, then `.nav` / `.read` / `.inspect` / `.react` / `.writ
 |---|---|---|---|---|---|
 | **Escrow** | `activeCap()`, `pendingCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `assetState()`, `floorPrice()`, `market()`, `cycle()`, the 60+ views… | `history()`, `priceTimeline()`, `creditHistory()`, `tenancies()`, `usufructCaps()` | `watch()`/`waitFor()`, `on()`/`next()`/`onEvents` | `rent()`, `applyPendingTransitionStates()` |
 | **UsufructCap** | `escrow()` | `state()`, `isActive/isPending/isStale()` | `history()`, `statement()` | `watch()`, `waitFor()` | `borrow()`, `burn()`, `burnIfStale()`, `updateRefundAddress()`, `transfer()` |
-| **GovernanceCap** | — | `governs(escrow)` | `escrows()`, `revenueByEscrow()` | `watch()` (portfolio) | `updateMarket()`, `retire()`, `claim()`, `extend…()`, `renounce()`, `transfer()`, `integrateIntoPortfolio()` |
+| **GovernanceCap** | — | `governs(escrow)` | `escrows()`, `revenueByEscrow()` | `watch()` (portfolio) | `updateMarket()`, `retire()`, `claim()`, `extend…()`, `renounceGovernance()`, `transfer()`, `integrateIntoPortfolio()` |
 | **EarningsInbox** / **ProtocolFeeInbox** | — | `balance()` | `history()`, `totals()`, `escrowsPushingMessages()` | `watch()` (new income) | `collect()`, `transfer()` |
 | **`u`** (root) | `escrow()`, `escrows()`, `usufructCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `protocolFeeBps()`, `bpsDenominator()` | `integratedBy()`, `governedBy()`, `rentedBy()`, `governedByCap()`, `byAssetType()`, `byCoinType()` | `watchMany()` | `integrate()` |
 

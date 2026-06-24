@@ -70,8 +70,14 @@ export interface BorrowReceipt {
  */
 export type BorrowMethod = (...uses: Use[]) => Plan<BorrowReceipt>;
 
-/** This cap's relationship to its escrow's seats, by possession of the seat. */
-export type UsufructCapRole = 'active' | 'pending' | 'stale' | 'unknown';
+/**
+ * Where this cap stands relative to its escrow's seats — the cap's whole
+ * lifecycle. Minted by `rent()`, it holds the `active` seat, holds the `pending`
+ * (challenger) seat, or is `stale` (spent/displaced, awaiting burn). Those three
+ * are exhaustive: a live cap is always one of them. A status, not a permission
+ * role — authority in Usufruct is plain object ownership, so there is no "role".
+ */
+export type UsufructCapStatus = 'active' | 'pending' | 'stale';
 
 /**
  * The cap's read photo — its seat, object-centric. The seat numbers
@@ -80,7 +86,7 @@ export type UsufructCapRole = 'active' | 'pending' | 'stale' | 'unknown';
  * a displaced cap for "its" stake honestly returns `null`, not another seat's.)
  */
 export interface UsufructCapState {
-  readonly role: UsufructCapRole;
+  readonly status: UsufructCapStatus;
   /** The seat's usufructuary address (active or pending), else `null`. */
   readonly usufructuaryAddr: string | null;
   /** Staked balance — the seat's prepaid credit pool. Active or pending seat. */
@@ -202,16 +208,18 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
         capId: args.capId,
       }),
     ]);
-    const role: UsufructCapRole =
-      (r0['activeUsufructCapId'] as string | null) === args.capId
-        ? 'active'
-        : (r0['pendingUsufructCapId'] as string | null) === args.capId
-          ? 'pending'
-          : (r0['usufructCapIsStale'] as boolean)
-            ? 'stale'
-            : 'unknown';
-    const none: UsufructCapState = {
-      role,
+    // The three statuses are exhaustive for a real cap; falling through means the
+    // id is not a seat of this escrow and is not stale — a wrong cap/escrow pairing.
+    const status: UsufructCapStatus = ((): UsufructCapStatus => {
+      if ((r0['activeUsufructCapId'] as string | null) === args.capId) return 'active';
+      if ((r0['pendingUsufructCapId'] as string | null) === args.capId) return 'pending';
+      if (r0['usufructCapIsStale'] as boolean) return 'stale';
+      throw new UsufructError(
+        `cap ${args.capId} is neither a seat of escrow ${args.escrowId} nor stale — wrong cap/escrow?`,
+      );
+    })();
+    const seatless: UsufructCapState = {
+      status,
       usufructuaryAddr: null,
       stake: null,
       stakeRemaining: null,
@@ -221,7 +229,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       creditAccruing: null,
       creditCappedAt: null,
     };
-    if (role === 'active') {
+    if (status === 'active') {
       // The active seat's economics in one batched sim (coin metadata in parallel).
       const [coin, s] = await Promise.all([
         resolveCoinInfo(client, coinType),
@@ -240,7 +248,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       const leftMs = s['activeUsufructuaryTimeRemainingMs'] as bigint | null;
       const cappedAtMs = s['creditCappedAtMs'] as bigint | null;
       return {
-        role,
+        status,
         usufructuaryAddr: s['activeUsufructuaryAddr'] as string | null,
         stake: stakeMist == null ? null : price(stakeMist, coin),
         stakeRemaining: remainMist == null ? null : price(remainMist, coin),
@@ -251,7 +259,7 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
         creditCappedAt: cappedAtMs == null ? null : new Date(Number(cappedAtMs)),
       };
     }
-    if (role === 'pending') {
+    if (status === 'pending') {
       const [coin, s] = await Promise.all([
         resolveCoinInfo(client, coinType),
         reader.batch(['pendingUsufructuaryAddr', 'pendingStakeBalanceMist', 'pendingCommittedTenures']),
@@ -259,13 +267,13 @@ export function createCap(ctx: HandleCtx, args: CapArgs): UsufructCap {
       const stakeMist = s['pendingStakeBalanceMist'] as Mist | null;
       const tenures = s['pendingCommittedTenures'] as bigint | null;
       return {
-        ...none,
+        ...seatless,
         usufructuaryAddr: s['pendingUsufructuaryAddr'] as string | null,
         stake: stakeMist == null ? null : price(stakeMist, coin),
         committedTenures: tenures == null ? null : Number(tenures),
       };
     }
-    return none;
+    return seatless; // stale
   }
 
   const isActive = (): Promise<boolean> => mkReader().usufructCapIsActive(args.capId);
