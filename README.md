@@ -29,7 +29,7 @@ core" and [`SPEC.md`](./SPEC.md) §2.1/§12.
 ## Quickstart
 
 ```bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the `next` tag
 ```
 
 ```ts
@@ -49,11 +49,23 @@ Every object is its **identity** (the object's name) plus five verbs —
 five sit on the root `u` and on every handle (escrow / cap / governanceCap / inbox).
 
 **Start here:** [`QUICKSTART.md`](./QUICKSTART.md) — install → a full rental lifecycle,
-step by step. Then [the fractal, navigable API](./journeys/read-write-inspect-react.md)
-for the model in depth.
+step by step. Then [`concepts/api-design.md`](./concepts/api-design.md) for the model
+in depth, and [`API.md`](./API.md) for the complete surface.
+
+**For AI agents:** load [`llms-full.txt`](./llms-full.txt) into the model's context —
+a self-contained payload (setup · the full API · types · write model · borrow ·
+pitfalls · runnable scripts) that lets an agent write working Usufruct scripts without
+the dev learning the API. [`llms.txt`](./llms.txt) is the curated index.
 
 ## Design & reference
 
+- [`API.md`](./API.md) — the complete public API surface: every handle, verb,
+  signature, and return type.
+- [`concepts/`](./concepts) — [api design](./concepts/api-design.md) (drift-zero ·
+  object-centric · navigable · the five verbs), [write model](./concepts/write-model.md)
+  (`Plan` · `send` vs `build`), [borrow](./concepts/borrow.md) (composing code around
+  the rented asset), and [primitives](./concepts/primitives.md) (the layer the
+  high-level composes from).
 - [`SPEC.md`](./SPEC.md) — authoritative design: the drift-zero split. The **core**
   (`@usufruct-protocol/sdk`) is three primitives — `Source` (raw `EscrowSnapshot`),
   the `Reader` (on-chain views), and `Action.toPtb`; it never decodes an escrow. The
@@ -61,11 +73,6 @@ for the model in depth.
   **mirror** (`@usufruct-protocol/sim`).
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the primitives, how they compose, and the
   drift-zero seam.
-- [`journeys/`](./journeys) — the object model (authority = possession), the
-  [fractal, navigable API](./journeys/read-write-inspect-react.md)
-  (`nav · read · inspect · react · write`),
-  [write paths](./journeys/write-paths.md) (`Plan` · `send` vs `build`), and
-  [borrow composition](./journeys/borrow-composition.md) (recipes around the rented asset).
 - [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.
 
 ## Development

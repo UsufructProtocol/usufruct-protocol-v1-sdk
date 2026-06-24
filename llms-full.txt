@@ -1,0 +1,2117 @@
+# Usufruct Protocol SDK — full context for AI agents
+
+> This file is the self-contained documentation payload for `@usufruct-protocol/sdk`,
+> the official TypeScript SDK for the Usufruct Protocol — an on-chain rental market
+> primitive for any Sui asset, priced in any payment coin. Load it into an agent's
+> context to write working Usufruct scripts. It concatenates, in reading order:
+> QUICKSTART, testnet bootstrap, the concept docs (api-design, write-model, borrow,
+> primitives), the complete API reference, a cookbook of runnable recipes, and a
+> FAQ. Cross-document links are relative to the repo.
+>
+> This file is the SDK *how-to*. For *what Usufruct is* and the protocol economics,
+> see the protocol repo's agent guide:
+> https://github.com/UsufructProtocol/usufruct-protocol-v1 → llms.txt
+
+## Install & a canonical setup
+
+```bash
+npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the `next` tag
+```
+
+```ts
+import { usufruct, SUI } from '@usufruct-protocol/sdk';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+
+// signer = identity + signing. Use { account } for read-only / external wallets,
+// { executor } for a wallet/Ledger/sponsor/multisig adapter.
+const u = usufruct({ network: 'testnet', signer: Ed25519Keypair.generate() });
+
+const escrow = await u.nav.escrow('0x…');           // resolve a handle (identity only)
+const state  = await escrow.read.assetState();      // live discriminated union
+const cap    = await escrow.write.rent({ tenures: 1 }).send();  // pay the floor → a UsufructCap
+```
+
+## The model in one paragraph
+
+Every object is its **identity** (flat fields) plus five verbs — **nav · read ·
+inspect · react · write** — identical on the root `u` and on every handle
+(`Escrow`/`UsufructCap`/`GovernanceCap`/inboxes). `read`/`write` are on-chain state;
+`inspect`/`react` are the event log (pull/push); `nav` walks the object graph. Reads
+are **drift-zero** (the deployed Move views via simulateTransaction). Authority is
+**possession** of a bearer object, not an ACL. Writes are **`Plan`s** — `.send()` runs
+build+sign+decode; `.build(tx,sender)` lets you drive the PTB.
+
+---
+
+
+
+<!-- ─────────── source: QUICKSTART.md ─────────── -->
+
+# Quickstart — `@usufruct-protocol/sdk`
+
+The TypeScript SDK for the **Usufruct Protocol**: an on-chain rental market for any
+Sui asset, priced in any coin. This guide takes you from `npm install` to a full
+rental lifecycle, explaining each step.
+
+> **One sentence to hold onto:** every object is its **identity** plus five verbs —
+> **`nav · read · inspect · react · write`** — and the same shape repeats on the root
+> handle `u` and on every object. Learn it once; it's the whole API.
+
+---
+
+## 1. Install
+
+```bash
+npm i @usufruct-protocol/sdk@next @mysten/sui
+```
+
+This is a **release candidate**, published under the `next` dist-tag — so the `@next`
+is required (a bare `npm i @usufruct-protocol/sdk` won't resolve a pre-release). The
+SDK's only runtime dependency is `@mysten/sui`, so `npm i @usufruct-protocol/sdk@next`
+pulls it for you — install it explicitly too, since you'll import its types directly
+(`Ed25519Keypair`, `Transaction`, …).
+
+## 2. Connect — build the lens
+
+`usufruct()` is the single entry point. It hides the transport, the deployment ids,
+and (optionally) your signer.
+
+```ts
+import { usufruct } from '@usufruct-protocol/sdk';
+
+// Reads only — anonymous. Picks the network's RPC + GraphQL endpoints automatically.
+const u = usufruct({ network: 'testnet' });
+```
+
+To **write**, give it something that can sign. Identity ("who am I") and signing
+("how do I authorize") are separate axes — pick what fits:
+
+```ts
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+
+// (a) a held keypair — backend/scripts. Sugar for identity + signing at once.
+const u = usufruct({ network: 'testnet', signer: Ed25519Keypair.fromSecretKey(KEY) });
+
+// (b) a browser wallet — it exposes your address but signs remotely.
+const u = usufruct({ network: 'testnet', account: walletAddress });
+u.connect(myWalletExecutor);      // build it from the wallet's signTransaction (see examples/wallet-demo)
+
+// (c) anything custom — Ledger, a gas-station sponsor, a multisig — is an `Executor`.
+const u = usufruct({ network: 'testnet', executor: myExecutor });
+```
+
+**Config options** (all optional):
+
+| option | default | what it does |
+|---|---|---|
+| `network` | `'testnet'` | builds the gRPC client + picks the RPC and GraphQL endpoints |
+| `client` | — | bring your own transport (gRPC / JSON-RPC); overrides `network` |
+| `signer` | — | a held `Signer` (keypair) = identity **and** signing |
+| `account` | — | identity only (an address) — for remote/wallet signing |
+| `executor` | — | the signing adapter for `.send()` (wallet / Ledger / sponsor / multisig) |
+| `packageId` / `feeRefId` | the network's | the deployed protocol ids — you rarely set these |
+| `graphql` | the network's | endpoint for `inspect.*` (discovery/history); `false` to disable |
+| `retry` | on | rides through transient public-fullnode faults; `false` to disable |
+
+Reads need none of the signing options. Discovery (`inspect.*`) uses `graphql`, which
+now defaults from `network` — so `usufruct({ network: 'testnet' })` already has it.
+
+## 3. The five verbs
+
+Pick the object you hold, then `.nav` / `.read` / `.inspect` / `.react` / `.write` on
+it. Identity (the object's *name*) is the only flat property; everything else is a
+verb and is always `await`-ed.
+
+| verb | answers | delivery |
+|---|---|---|
+| **nav** | *where* — walk to a related object | returns a handle |
+| **read** | *what is* — live on-chain state | `simulateTransaction` over the views |
+| **inspect** | *what happened* — the event log | pull (GraphQL) |
+| **react** | *what happens* — the event log | push (gRPC firehose) |
+| **write** | *what I change* | a transaction (`Plan`) |
+
+The root `u` has the same five at protocol scope (`u.nav.escrow(id)` opens the first
+handle; `u.inspect.governedBy(addr)` is global discovery; `u.write.integrate(…)` is
+genesis).
+
+## 4. A full lifecycle
+
+### 4.1 Genesis — list an asset (`write.integrate`)
+
+Wrap an owned object into a rental market. It mints **three independent bearer
+objects** — returned as separate handles, all initially yours, transferable apart.
+
+```ts
+import { SUI } from '@usufruct-protocol/sdk';
+
+const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
+  asset: '0x…',                    // an owned object id (key + store)
+  coin: SUI,                       // the escrow's immutable payment coin
+  market: {                        // the mutable policy
+    restPrice: SUI(0.01),          // floor when idle
+    tenure: '1h', multiTenure: false,
+    creditShape: 'linear', auctionShape: 'linear',
+    descent: 'off', handover: '15s',
+    escalation: { fixed: SUI(0.001) },
+    retireCommitment: 'immediate', ensembleCommitment: 'immediate',
+  },
+}).send();
+```
+
+- `coin` is a `CoinTag` — a callable that builds prices: `SUI(0.5)` → a `Price`. For a
+  non-SUI coin, resolve its decimals/symbol once: `const USDC = await u.coinType('0x…::usdc::USDC')`.
+- `coin` is **not** a `Market` field — it is the escrow's immutable `phantom CoinType`,
+  fixed at genesis.
+- The handles are independent: move `governanceCap` and the income still flows to
+  `earningsInbox`. **Moving the object moves the role.**
+
+**`Duration` — the time fields** (`tenure`, `handover`, `descent`, `deferredFor`, …)
+take a suffixed string or a raw number of **milliseconds**:
+
+```ts
+type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;
+```
+
+| Suffix | Unit | Example → ms |
+|---|---|---|
+| `ms` | milliseconds | `'500ms'` → 500 |
+| `s` | seconds | `'25s'` → 25 000 |
+| `m` | **minutes** | `'30m'` → 1 800 000 |
+| `h` | hours | `'1h'` → 3 600 000 |
+| `d` | days | `'7d'` → 604 800 000 |
+
+- The suffix for **minutes is `m`, not `min`** — `'30min'` is rejected (the type
+  won't compile; a dynamically-built string throws `invalid duration: 30min`).
+- `'30m'` (minutes) vs `'30ms'` (milliseconds) are unambiguous — `ms` is matched first.
+- A raw number is milliseconds: `{ deferredFor: 1_800_000 }` ≡ `'30m'`.
+- Durations are **relative spans**. The contract turns them absolute on-chain by
+  reading Sui's `Clock` at execution time (e.g. `deferredFor: '7d'` → `unlock_at =
+  anchor + 604 800 000 ms`) — your machine's clock is never involved.
+
+### 4.2 Read the state (`read.assetState`)
+
+`assetState()` is a discriminated union — it narrows to each phase's data:
+
+```ts
+const s = await escrow.read.assetState();
+switch (s.kind) {
+  case 'idle':     s.floor; break;                                    // free to take at the floor
+  case 'occupied': s.cap; s.usufructuary; s.stake; s.expiresAt; break;
+  case 'demand':   s.challenger; s.bid; s.handoverExpiresAt; break;   // a challenge is running
+  case 'descent':  s.from; s.floor; s.expiresAt; break;              // Dutch auction
+  case 'retired':  break;
+}
+```
+
+Everything the protocol exposes as a view has a home on `read`, auto-rendered into the
+high-level vocabulary (mist → `Price`, ms → `Date`):
+
+```ts
+await escrow.read.floorPrice();    // a Price, in the escrow's own coin
+await escrow.read.market();        // the full policy back as a Market
+await escrow.read.cycle();         // resolved floor/ceiling/handover/descent
+await escrow.read.expiresAt();     // a Date | null
+await escrow.read.nextBoundaryAt();// the next phase boundary (a keeper schedules on this)
+```
+
+`Price` keeps `.mist` exact for assertions/PTBs and prints itself: `${price}` →
+`"0.50 SUI"`.
+
+### 4.3 Rent — take the right of use (`write.rent`)
+
+```ts
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // pays the floor by default
+// overpay → the surplus becomes stake (more credit / time):
+const cap = await escrow.write.rent({ tenures: 1, pay: escrow.coin(0.5) }).send();
+// rent on behalf of someone — the cap lands with `to`, atomically (you still pay):
+const cap = await escrow.write.rent({ tenures: 1, to: buyerAddress }).send();
+
+cap.id;                 // the UsufructCap object id (your right of use)
+cap.receipt?.paid;      // a Price — what you paid
+cap.receipt?.expiresAt; // when this tenure ends
+```
+
+> **`to` directs the minted object.** `rent`, `integrate`, and `claim` mint owned
+> objects and send them to the sender by default — pass `to` to redirect them in the
+> *same* transaction (atomic, no second transfer). `integrate` takes a structured
+> `to: { governanceCap?, earningsInbox? }` since it mints two. For routing a minted
+> object straight into another Move call, drop to the bare actions (`u.primitives` /
+> `@usufruct-protocol/sdk/actions`).
+
+`rent` returns a `UsufructCap` handle. The coin is the escrow's own — auto-sourced
+from your balance; you only choose the number.
+
+### 4.4 Use the asset — `borrow` (`cap.write.borrow`)
+
+The keystone: borrow the asset, run your code, return it — the return is appended for
+you, in **one PTB**.
+
+```ts
+const { digest, returned } = await cap.write.borrow((asset, tx) => {
+  // `asset` is the unwrapped object; compose any Move calls around it.
+  const out = tx.moveCall({ target: '0x…::game::play', arguments: [asset] });
+  tx.transferObjects([out], myAddr);
+}).send();
+```
+
+`borrow` is variadic — `cap.write.borrow(useA, useB)` composes recipes in order.
+
+### 4.5 React to a challenger (`react`)
+
+Usufruct is always-liquid: anyone can bid on an occupied escrow, and the sitting
+tenant gets a guaranteed handover window. Watch for it without polling:
+
+```ts
+// resolve once a predicate holds (async, over the handle); resolves to the handle.
+const challenged = await escrow.react.waitFor(
+  async e => (await e.read.assetState()).kind === 'demand',
+);
+
+// or react to a specific typed event, one-shot or continuously:
+const bid = await escrow.react.next('BidPlaced', { timeoutMs: 120_000 });
+const stop = escrow.react.on('BidPlaced', ev => counterBid(ev.data));
+```
+
+### 4.6 Settle and collect (`write` + `react`/`inspect`)
+
+State transitions are **lazy** — they execute on the next write that touches the
+escrow. Any write applies them; or force it explicitly:
+
+```ts
+await escrow.write.applyPendingTransitionStates().send();   // permissionless keeper
+```
+
+Settlement splits the consumed credit 90/10 (governor / protocol). Collect the
+governor's cut:
+
+```ts
+await earningsInbox.read.balance();              // pending income, per coin (preview)
+const got = await earningsInbox.write.collect().send();   // banks it, partitioned by coin
+await earningsInbox.inspect.totals();            // lifetime income per coin (from events)
+```
+
+## 5. Governance — `GovernanceCap`
+
+One cap governs a *portfolio*, so the per-escrow writes name their target escrow:
+
+```ts
+await governanceCap.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();  // a Partial<Market>
+await governanceCap.write.retire(escrow).send();
+await governanceCap.write.claim(escrow).send();            // unwrap the asset back
+await governanceCap.write.integrateIntoPortfolio(asset, coin, market, { earningsInbox: earningsInbox.inboxId }).send();
+await governanceCap.write.transfer(treasury).send();        // hand off governance
+
+await governanceCap.read.governs(escrow);                   // does this cap govern it?
+await governanceCap.inspect.escrows();                      // its portfolio
+await governanceCap.inspect.revenueByEscrow();              // earnings attributed per asset
+```
+
+## 6. Discovery & history — `inspect`
+
+Pull the typed, decode-free event log. Discovery is **object-centric** (by
+possession), so it's never an address-only query — it intersects owned objects with
+the log. Needs a `graphql` endpoint (on by default).
+
+```ts
+await u.inspect.governedBy(addr);     // escrows `addr` governs now (holds the cap)
+await u.inspect.rentedBy(addr);       // escrows `addr` rents now
+await u.inspect.byCoinType(coinType); // escrows priced in a coin
+
+await escrow.inspect.history();       // the escrow's whole lifecycle, time-ordered
+await escrow.inspect.tenancies();     // the occupancy ledger, per-tenancy economics
+await escrow.inspect.priceTimeline(); // discrete prices + descent curves, drift-zero from events
+await cap.inspect.statement();        // the renter's P&L: paid / consumed / refunded
+```
+
+## 7. Writes are deferred — the `Plan`
+
+Every write returns a `Plan`. Nothing touches the chain until you resolve it:
+
+```ts
+const plan = escrow.write.rent({ tenures: 1 });
+await plan.send();                       // build → sign (handle's executor) → decode
+await plan.send(otherExecutor);          // same write, different signer (sponsor/wallet/multisig)
+const tx = await plan.toTransaction(me); // build-only — sign elsewhere
+await plan.build(tx, me);                // drop into your own PTB (sponsorship, batching)
+await u.batch(planA, planB).send();      // several writes, ONE atomic transaction
+```
+
+This is what makes sponsored rent, multisig governance, and offline signing compose:
+the default executor is just a default — every `.send()` can swap it.
+
+## 8. Authority is possession — there is no `role()`
+
+A "governor" / "usufructuary" / "earnings collector" is not an identity the SDK
+tracks; it is *whoever holds the corresponding bearer object right now*. So "can I?"
+is answered by the canonical views, not a permission read:
+
+```ts
+!(await escrow.read.isRetired());                 // I can rent (the market is open)
+await cap.read.isActive();                        // I hold the active seat → I can borrow
+(await u.inspect.governedBy(me)).some(l => l.escrowId === escrow.id);  // I govern it
+
+// the primitive the above compose over — does an address own a specific object?
+import { ownedIds } from '@usufruct-protocol/sdk';
+(await ownedIds(client, me, `${pkg}::governance_cap::GovernanceCap`)).has(capId);
+```
+
+## 9. Escape hatch — the kernel
+
+The high-level handles render; for the raw, un-rendered views (policy unions, exact
+bigints) drop to the kernel `Reader` at the root:
+
+```ts
+const reader = u.primitives.reader({ packageId, escrowId: escrow.id, typeArguments: [escrow.assetType, escrow.coinType] });
+await reader.accruedCreditMist(Date.now());   // any of the ~80 deployed views, exact
+```
+
+`@usufruct-protocol/sim` is the opt-in mirror — re-derives the protocol off-chain
+(simulation, what-if), golden-tested against this core.
+
+## 10. Where next
+
+- [`API.md`](./API.md) — the complete public API surface (every handle, verb, signature).
+- [`concepts/api-design.md`](./concepts/api-design.md) — drift-zero · object-centric ·
+  navigable · the five verbs (and why possession is the role).
+- [`concepts/write-model.md`](./concepts/write-model.md) — `Plan`, `send` vs `build`,
+  sponsored/multisig signing.
+- [`concepts/borrow.md`](./concepts/borrow.md) — composing code around the borrowed asset.
+- [`concepts/primitives.md`](./concepts/primitives.md) — primitives vs high-level.
+- [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.
+- [`llms-full.txt`](./llms-full.txt) — the self-contained payload for AI agents.
+
+> Live on Sui **testnet** (`v1.4.7`), source-verified on-chain. Don't assume code works
+> by reading it — build against testnet and let the chain be the arbiter.
+
+
+<!-- ─────────── source: concepts/testnet-bootstrap.md ─────────── -->
+
+# Testnet bootstrap — a funded signer, an asset, a coin
+
+> Before any script runs you need three things: a **funded signer**, an **asset** to
+> list, and the **coin** rent is priced in. This is the zero-to-running path on Sui
+> testnet. (For *what Usufruct is* and the protocol economics, see the protocol
+> repo's agent guide: <https://github.com/UsufructProtocol/usufruct-protocol-v1> →
+> `llms.txt`. This doc is the SDK how-to.)
+
+## ⛔ The one rule — testnet only
+
+Every example here is **Sui testnet**, faucet SUI, zero real value. Default to a
+**fresh, ephemeral keypair** — never load a user's existing mainnet keys to sign
+SDK writes. If a dev wants to act as themselves, take their **address** (`account`,
+identity only) and let their wallet sign (`executor`); the SDK never needs private
+keys.
+
+## 1. A funded signer
+
+A generated keypair starts empty. The programmatic faucet is heavily rate-limited
+and usually refuses — so **print the address + the faucet link, let the dev fund it
+in the browser, then re-run**:
+
+```ts
+import { usufruct } from '@usufruct-protocol/sdk';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+
+const signer = Ed25519Keypair.generate();           // ephemeral — persist the secret if you want to reuse it
+const me = signer.toSuiAddress();
+
+await requestSuiFromFaucetV2({ host: getFaucetHost('testnet'), recipient: me }).catch(() => {});
+console.log(`Fund this address, then re-run:\n  https://faucet.sui.io/?network=testnet&address=${me}`);
+
+const u = usufruct({ network: 'testnet', signer });  // ready once the address has SUI for gas
+```
+
+To **reuse** a funded address across runs, persist the secret key
+(`signer.getSecretKey()`) and rebuild with `Ed25519Keypair.fromSecretKey(...)`, or
+load the Sui CLI keystore — anything that yields a `Signer`/`Ed25519Keypair`.
+
+## 2. An asset and a coin — usufruct is doubly generic
+
+`Escrow<Asset, CoinType>` is **agnostic to both**: *any* `key + store` object can be
+listed, priced in *any* `Coin<C>`. The test defaults below are just zero-friction —
+the faucet hands out SUI, and the dummy asset/coin publish freely. **Neither is
+privileged.** If the dev owns a `key + store` object on testnet, list *that*; if they
+have their own coin, price in *that*.
+
+```ts
+import { SUI, coinTag } from '@usufruct-protocol/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+
+// Coin: SUI is the zero-friction default (the faucet funds it directly). For another
+// coin, resolve metadata on-chain (await u.coinType('0x…')) or build the tag synchronously.
+const DUMMY_COIN = coinTag({
+  type: '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN',
+  decimals: 9, symbol: 'DUMMY',
+});
+
+// Asset: mint a free test asset to get an object id to list. Replace with any
+// key+store object the dev already owns.
+const DUMMY_ASSET_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
+async function mintTestAsset(client, signer): Promise<string> {
+  const tx = new Transaction();
+  tx.transferObjects([tx.moveCall({ target: `${DUMMY_ASSET_PKG}::dummy_asset::mint` })], me);
+  const res = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true } });
+  // the created DummyAsset's id is in the effects (the one object of type ::dummy_asset::DummyAsset)
+  return /* createdObjectId(res, '::dummy_asset::DummyAsset') */ '0x…';
+}
+```
+
+> **Price test escrows in `SUI`** when you can — the faucet funds it directly, so a
+> renter needs no extra step. Pricing in `DUMMY` (or any non-faucet coin) means the
+> renter must also hold that coin (the dummy coin has a public `mint`).
+
+## 3. Now you're ready
+
+With a funded `signer`, an `assetId`, and a `coin`, the rest is the
+[cookbook](./cookbook.md): `integrate` the asset → `rent` it → `borrow` to use it →
+`collect` earnings. The [api design](./api-design.md) is the model;
+[`API.md`](../API.md) is the full surface.
+
+```ts
+const { escrow } = await u.write.integrate({ asset: assetId, coin: SUI, market: { /* … */ } }).send();
+const cap = await escrow.write.rent({ tenures: 1 }).send();
+await cap.write.borrow((asset, tx) => { /* use the asset */ }).send();
+```
+
+
+<!-- ─────────── source: concepts/api-design.md ─────────── -->
+
+# API design — drift-zero, object-centric, navigable
+
+> The whole SDK is **one shape, repeated**, resting on four design pillars. This
+> doc is the model; [`write-model.md`](./write-model.md) is how writes execute,
+> [`borrow.md`](./borrow.md) is the borrow bracket, and
+> [`primitives.md`](./primitives.md) is the layer the high-level composes from.
+
+## The four pillars
+
+1. **Drift-zero.** Every `read` is the deployed bytecode's *own* answer — the
+   `Reader` evaluates the on-chain Move views via `simulateTransaction` (each view
+   takes `now_ms`, so you can read at any `t`). The core never re-derives protocol
+   logic in TypeScript, so it **cannot drift** from the contract. Off-chain
+   re-derivation (simulation, what-if) is the opt-in mirror `@usufruct-protocol/sim`,
+   golden-tested against this core.
+2. **Object-centric.** A "governor", "usufructuary", "earnings collector" is not an
+   identity the SDK tracks — it is *whoever currently holds the corresponding
+   object*. Authority is **possession** of a bearer object (`key + store`), not an
+   ACL. The objects move; the roles move with them.
+3. **Navigable.** Objects form a graph and you walk it with `nav` — an escrow → its
+   seats / its governance cap / its inbox; a cap → its escrow. You hold one handle
+   and reach the rest, no ids to thread by hand.
+4. **Five verbs, fractal.** Every object is its **identity** (the object's name)
+   plus **`nav · read · inspect · react · write`** — and the *same* five sit on the
+   global root `u` and on every handle. Learn the shape once; it repeats at every
+   scale.
+
+```
+nav     → where      · walk to a related object   · escrow.nav.activeCap() · cap.nav.escrow()
+read    → what is     · live on-chain state         · escrow.read.assetState() · cap.read.state()
+inspect → what happened· the event log, pulled       · escrow.inspect.history() · u.inspect.governedBy()
+react   → what happens · the event log, pushed       · escrow.react.watch() · escrow.react.on()
+write   → what I change· a transaction (a Plan)      · rent · borrow · updateMarket · collect · integrate
+```
+
+`read`/`write` are on-chain **state** (read it / change it with a tx); `inspect`/
+`react` are the **event log** (pull what happened / push what happens); `nav` is the
+**graph** (the edges). Every verb is *object-centric* (ask the object you hold) and
+*decode-free* (no asset schema needed).
+
+## The one rule: flat ⟺ a name
+
+A property is **flat** (a plain field, not a verb) only when it is **zero-IO and
+immutable** — i.e. the object's *name*. Everything that touches the chain, or could
+change, is a verb (always `await`-ed):
+
+| Object | Flat (identity) | Everything else |
+|---|---|---|
+| `Escrow` | `id`, `assetType`, `coinType`, `coin` | `nav` · `read` · `inspect` · `react` · `write` |
+| `UsufructCap` | `id`, `escrowId`, `receipt` | `nav` · `read` · `inspect` · `react` · `write` |
+| `GovernanceCap` | `capId` | `read` · `inspect` · `react` · `write` |
+| `EarningsInbox` / `ProtocolFeeInbox` | `inboxId` | `read` · `inspect` · `react` · `write` |
+| `u` (root) | `address` | `nav` · `read` · `inspect` · `react` · `write` |
+
+There is **no fetch-time photo**. The handle holds no state; each `read.*` asks the
+deployed views *now*, so nothing it exposes can go stale. Resolving a handle
+(`await u.nav.escrow(id)`) fetches only what identity needs — the type args and coin
+metadata — and returns immediately; the verbs do the rest, lazily.
+
+## The grid — five verbs on every object
+
+Pick the object you hold, then `.nav` / `.read` / `.inspect` / `.react` / `.write`
+*on it*. The root `u` only **resolves** the first handle (`u.nav.escrow(id)`,
+`u.nav.usufructCap(id)`, `u.write.integrate()`).
+
+| | **nav** | **read** | **inspect** (pull) | **react** (push) | **write** |
+|---|---|---|---|---|---|
+| **Escrow** | `activeCap()`, `pendingCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `assetState()`, `floorPrice()`, `market()`, `cycle()`, the 60+ views… | `history()`, `priceTimeline()`, `creditHistory()`, `tenancies()`, `usufructCaps()` | `watch()`/`waitFor()`, `on()`/`next()`/`onEvents` | `rent()`, `applyPendingTransitionStates()` |
+| **UsufructCap** | `escrow()` | `state()`, `isActive/isPending/isStale()` | `history()`, `statement()` | `watch()`, `waitFor()` | `borrow()`, `burn()`, `burnIfStale()`, `updateRefundAddress()`, `transfer()` |
+| **GovernanceCap** | — | `governs(escrow)` | `escrows()`, `revenueByEscrow()` | `watch()` (portfolio) | `updateMarket()`, `retire()`, `claim()`, `extend…()`, `renounceGovernance()`, `transfer()`, `integrateIntoPortfolio()` |
+| **EarningsInbox** / **ProtocolFeeInbox** | — | `balance()` | `history()`, `totals()`, `escrowsPushingMessages()` | `watch()` (new income) | `collect()`, `transfer()` |
+| **`u`** (root) | `escrow()`, `escrows()`, `usufructCap()`, `governanceCap()`, `earningsInbox()`, `feeInbox()` | `protocolFeeBps()`, `bpsDenominator()` | `integratedBy()`, `governedBy()`, `rentedBy()`, `governedByCap()`, `byAssetType()`, `byCoinType()` | `watchMany()` | `integrate()` |
+
+Two notes on the shape:
+- `nav` exists where an object has a **single edge** to follow (an escrow's seats and
+  counterpart objects; a cap's escrow; the root's "open this id"). `GovernanceCap` and
+  the inboxes relate to escrows through a **collection**, so that lives under
+  `inspect` (`governanceCap.inspect.escrows()`), not `nav`.
+- **Possession is not a gate on the handles.** Anyone can resolve any object's handle
+  and `read`/`inspect` it; a `write` only *succeeds* if you actually hold the bearer
+  object (else the tx aborts).
+
+## Possession is the role
+
+The protocol has four capability objects, all `key + store` — so `store` means
+anyone can `public_transfer` them, and Move makes the authority **possession
+itself**: to produce a `&GovernanceCap` / `&mut EarningsInbox` / `&UsufructCap`
+inside a PTB you must pass `tx.object(id)`, which only succeeds if the *signer owns
+it*.
+
+| Object | Created at | Holding it lets you… |
+|---|---|---|
+| `GovernanceCap` | `integrate` | **govern** — `updateMarket`, `retire`, `claim`, `extend*`, `integrateIntoPortfolio` |
+| `EarningsInbox` | `integrate` | **collect earnings** (the 90% governor cut) — maybe a treasury, not the governor |
+| `UsufructCap` | `rent` | **use** — `borrow` the asset; a tradable bearer instrument |
+| `ProtocolFeeInbox` | deploy | **collect protocol fees** — the deployment singleton |
+
+The role is **emergent from possession**, never an identity the SDK stores. So:
+
+- There is **no `Governor` handle.** `integrate` mints three *independent* objects —
+  `{ escrow, governanceCap, earningsInbox }` — that can diverge: sell the governance,
+  point earnings at a treasury, run a secondary market for rights of use.
+- **`transfer` is first-class on every bearer** — moving the object moves the role:
+  ```ts
+  await governanceCap.write.transfer(treasury);  // hand off governance
+  await earningsInbox.write.transfer(treasury);  // route income elsewhere
+  await usufructCap.write.transfer(buyer);       // sell the right of use
+  ```
+  After the transfer the old holder's handle no longer authorizes writes (the chain
+  rejects a `tx.object(id)` it doesn't own → `NotGovernor` / not-owned).
+- **There is no `role()` composite.** Authority is a plain owned-objects question, so
+  you ask the canonical views: *can I rent?* `!(await escrow.read.isRetired())`; *do I
+  hold the active seat?* `await cap.read.isActive()`; *what do I govern / rent?*
+  `await u.inspect.governedBy(me)` / `await u.inspect.rentedBy(me)`.
+
+The escrow exposes **every related object as a ready handle** (via `nav`), no
+possession required — possession only governs whether a *write* on it succeeds.
+There is no handle that's null just because you don't hold it.
+
+---
+
+## nav — walk the graph
+
+`nav` returns a *related handle*, not state. Immutable edges (a cap's escrow) and
+time-varying edges (an escrow's active seat) are both `await`-ed, because resolving a
+handle is IO:
+
+```ts
+const escrow = await u.nav.escrow(id);          // the root opens the first handle
+const seat   = await escrow.nav.activeCap();    // edge: the current seat (or null)
+const gov    = await escrow.nav.governanceCap();// edge: who governs it
+const back   = await seat?.nav.escrow();        // back-edge: cap → its escrow
+const inbox  = await u.nav.feeInbox();           // the deployment's fee pool (id-less singleton)
+```
+
+## read — the chain as it is now
+
+`read` is the deployed views, live. The bulk is **auto-rendered** from the protocol's
+view surface (mist→`Price` in the escrow's own coin, ms-timestamp→`Date`,
+ms-duration/count→`number`); a few **composites** sit alongside:
+
+```ts
+const s = await escrow.read.assetState();   // discriminated union — narrows to the phase
+if (s.kind === 'demand') {                  // 'idle' | 'occupied' | 'demand' | 'descent' | 'retired'
+  s.challenger; s.bid; s.handoverExpiresAt; // each phase carries its own data
+}
+await escrow.read.floorPrice();             // a Price, rendered in the escrow's coin
+await escrow.read.market();                 // the full policy (rest price, tenure, curves…)
+await escrow.read.creditCurve();            // the CURRENT tenure's curve, sampled live
+await seat?.read.state();                   // the seat's economics — ask the cap itself
+await inbox.read.balance();                 // uncollected income, per coin
+```
+
+**Drift-zero:** every read is `simulateTransaction` over the on-chain views — the
+SDK can't drift from the contract, it only renders the bytecode's answer. The raw,
+un-rendered kernel reader (policy unions, exact bigints) is **not** on the handle —
+reach it at the root: `u.primitives.reader(target)` (see [`primitives.md`](./primitives.md)).
+
+## write — make it different
+
+```ts
+await escrow.write.rent({ tenures: 1 }).send();             // pay the floor; `pay` to overpay → stake
+await cap.write.borrow((asset, tx) => { /* your PTB; return is appended */ }).send();
+await gov.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+await inbox.write.collect().send();                         // 90% governor cut, partitioned by coin
+await gov.write.transfer(treasury).send();                  // move the object → move the role
+await u.write.integrate({ asset, coin, market }).send();    // genesis: mint escrow + cap + inbox
+```
+
+Each write lives on the object that authorizes it, and every write is a **`Plan`**:
+`.send()` builds, signs, and decodes in one call; `.build(tx, sender)` lets you drive
+the transaction yourself (compose many, mix raw commands, sign with a
+wallet/Ledger/sponsor). Nothing touches the chain until `.send()` — reads read,
+writes wait. See [`write-model.md`](./write-model.md). `borrow` hands you the asset
+mid-PTB to compose with — see [`borrow.md`](./borrow.md).
+
+## inspect — what happened (pull)
+
+Every object answers two questions over the same typed, decode-free event log: *which
+escrows relate to me* (discovery) and *what happened* (history).
+
+```ts
+await gov.inspect.escrows();                   // discovery: this cap's portfolio
+await inbox.inspect.escrowsPushingMessages();  // who pays into this inbox
+await escrow.inspect.history();                // the escrow's whole lifecycle, time-ordered
+await cap.inspect.statement();                 // the renter's P&L: paid / consumed / refunded
+await escrow.inspect.tenancies();              // the occupancy ledger, per-tenancy economics
+await u.inspect.governedBy(addr);              // escrows this address governs now
+await u.inspect.byCoinType(coinType);          // escrows priced in this coin
+```
+
+`escrow.inspect.history()` walks the escrow's own transactions (`affectedObject`) —
+O(its lifecycle), not O(package history). The curve reconstructions
+(`priceTimeline`/`creditHistory`/`tenancies`) replay that log into the curves the
+chain computed, drift-zero. **Needs a `graphql` endpoint** (defaults from the
+network; pass `graphql: false` to disable).
+
+### Discovery is object-centric — you govern by the cap, not by an address
+
+A relationship is queryable **from whichever object stores the link** — on-chain when
+an object holds the id, in the event log otherwise. The `GovernanceCap` struct is just
+`{ id }` (it does *not* store its escrows), so cap→escrow lives only in the
+`AssetIntegrated` event:
+
+| Door | Means | Source |
+|---|---|---|
+| `u.inspect.integratedBy(addr)` | who *brought it into being* | `AssetIntegrated.governor_address == addr` |
+| `u.inspect.governedByCap(capId)` | what *this cap* governs (its portfolio) | `AssetIntegrated.governance_cap_id == capId` |
+| `u.inspect.governedBy(addr)` | what *addr* governs **now** | `addr`'s owned `GovernanceCap`s ∩ the event log |
+
+`governedBy` *follows the cap* — it includes escrows whose cap was transferred *to*
+`addr`, excludes ones given away (on testnet our address integrated 224 but governs
+196 — the 28-escrow gap is exactly the caps it sold). The `UsufructCap` is the
+asymmetric case: it *stores* its escrow on-chain (`borrow` must prove the link), so
+`usufructCap.nav.escrow()` reads it off the object and `u.inspect.rentedBy(addr)` just
+decodes owned caps.
+
+## react — what happens (push)
+
+Don't poll — subscribe over the gRPC checkpoint firehose. React to a **state**
+arriving or a **typed event** with its data, continuously or one-shot:
+
+```ts
+const stop = escrow.react.watch(e => render(e));            // state: each change → fresh handle
+escrow.react.on('BidPlaced', ev => counterBid(ev.data));    // events: typed, by kind
+await escrow.react.waitFor(async e =>                       // one-shot state (async predicate)
+  (await e.read.assetState()).kind === 'demand');
+await escrow.react.next('BidPlaced', { timeoutMs: 120_000 });// one-shot event
+cap.react.watch(seat => render(seat));                      // the renter watches THEIR seat
+u.react.watchMany(ids, e => dashboard(e));                  // many escrows, one firehose
+```
+
+|        | continuous (callback) | one-shot (promise) |
+|--------|---|---|
+| **state** | `escrow.react.watch(cb)` / `cap.react.watch(cb)` | `escrow.react.waitFor(pred)` / `cap.react.waitFor(pred)` |
+| **events** | `escrow.react.on(kind, cb)` / `onEvents`, `inbox.react.watch(cb)` | `escrow.react.next(kind)` / `nextEvent` |
+
+`waitFor` resolves to the **handle** (so you can act on it), and its predicate is
+**async over the handle**. Filter not just by event *type* but by a **field value** —
+`where` is a predicate on the decoded event (gRPC can't filter a payload server-side,
+but we decode every event anyway, so `where` is free).
+
+## inspect and react are the same events
+
+`escrow.inspect.history()` and `escrow.react.on(...)` decode the **same typed
+events** — one paginated over GraphQL (pull), one streamed over the gRPC firehose
+(push). One event model, two deliveries. That closes the loop:
+
+```
+nav     → a related handle  · the object graph        · escrow.nav.activeCap() · cap.nav.escrow() · u.nav.escrow(id)
+read    → state, now        · Reader (drift-zero)     · escrow.read.* · cap.read.state() · inbox.read.balance()
+inspect → events, pull      · Source.query/events     · escrow.inspect.history · gov.inspect.escrows · u.inspect.governedBy
+react   → events, push      · Source.subscribe (gRPC) · escrow.react.watch/on · cap.react.watch · inbox.react.watch
+write   → a transaction     · Action.toPtb            · rent · borrow · updateMarket · collect · transfer · integrate
+```
+
+Identity + five verbs, on the object you hold (and on `u`, the protocol whole), over a
+core that cannot drift. Same shape at every scale — that's the whole API.
+
+
+<!-- ─────────── source: concepts/write-model.md ─────────── -->
+
+# Write paths — `Plan`, `send`, `build`, and who drives the transaction
+
+> Every write in the SDK is a **`Plan<T>`**: a deferred value that does nothing
+> until you act on it. A write has three phases —
+>
+> - **build** — append the PTB commands (may source coins; takes the sender address)
+> - **execute** — sign + send + wait (the pluggable `Executor`)
+> - **decode** — turn the effects into the typed result (`UsufructCap`, amounts, …)
+>
+> `send()` runs all three for you; `build()` hands you phase 1 and lets you drive
+> the rest. Reads never send; a write never touches the chain until you say so.
+> This is the whole model — two paths over the same three phases.
+
+## The two paths
+
+The only real question is **who owns the transaction — the SDK, or you?**
+
+| | `send()` | `build()` |
+|---|---|---|
+| Owns the `tx` | the SDK (fresh tx) | **you** |
+| Runs execute + decode | the SDK | **you** |
+| Returns | the typed result `T` | nothing — it appended to your `tx` |
+| Use for | one write | composing many writes / raw commands / external signing |
+
+```
+send(exec?)         =  build(new tx)  →  execute  →  decode   →  returns T
+toTransaction(me)   =  build(new tx)                            →  returns the unsigned tx
+build(tx, me)       =  append to YOUR tx                        →  you run execute + decode
+```
+
+`send` is `build` + execute + decode on a fresh transaction. `build` is the open
+seam everything else is composed from.
+
+The two paths are two narratives:
+
+- **The SDK drives** (`send`) — you hand over a `Plan`; the SDK builds a fresh tx,
+  signs it with the session's executor (or one you pass), waits, and gives you the
+  typed result. You write one line.
+- **You drive** (`build` / `toTransaction`) — the SDK only contributes the write's
+  commands to a transaction *you* hold; you decide when to execute, with what, and
+  you decode. You get control: compose many writes, mix raw Sui commands, sign with
+  a wallet/Ledger/sponsor, or sign offline.
+
+## Identity and signing — `signer`, `account`, `executor`
+
+A write touches **two** concerns, and the SDK keeps them separate because they are
+needed at different moments:
+
+- **Identity** (`account`) — *who I am*, an address. Needed at **build** time (the
+  transaction sender; sourcing the payment coin) and by **reads** (role resolution:
+  am I the governor? the active renter?). It is public — a wallet exposes its
+  address without handing over keys.
+- **Signing** (`executor`) — *how a transaction is executed*: `{ address, execute(tx) }`.
+  Needed only at **execute** time. A keypair, a browser wallet, a Ledger, a sponsor
+  flow, an offline signer — each is just a different `Executor`.
+
+`signer` is **sugar for both**: a held keypair both *is* an identity and *can* sign.
+
+```
+signer  =  account  +  executor
+           (address)    (signerExecutor(client, signer))
+```
+
+And note the asymmetry: an `Executor` already carries its own `address`, so
+**`executor` contains `account`**, but `account` alone cannot sign. That is why a
+standalone `account` is the read-only / external-wallet case — identity now, the
+executor supplied per `.send(executor)`.
+
+```
+account   =  "who I am"        (address; build + reads)
+executor  =  "how I sign"      ( = address + execute )   → contains account
+signer    =  "I hold the key"  ( → account + executor )  → sugar for both
+```
+
+### How the session resolves them
+
+`usufruct({...})` resolves identity and the default executor live (so `connect`
+can rebind either). From `usufruct.ts`:
+
+```ts
+resolveAccount  = () => account ?? executor?.address ?? signer?.toSuiAddress() ?? null;
+resolveExecutor = () => executor ?? (signer ? signerExecutor(client, signer) : null);
+```
+
+### The three ways to configure
+
+```ts
+import { usufruct, signerExecutor } from '@usufruct-protocol/sdk';
+
+usufruct({ network: 'testnet', client, signer });    // keypair: SDK can sign by itself
+usufruct({ network: 'testnet', client, executor });  // wallet/Ledger adapter as the default signer
+usufruct({ network: 'testnet', client, account });   // identity only — .send() requires .send(executor)
+```
+
+| Config | `account` (identity) | default executor | `.send()` with no args |
+|---|---|---|---|
+| `{ signer }` | `signer.address` | `signerExecutor(client, signer)` | signs with the keypair |
+| `{ executor }` | `executor.address` | `executor` | signs with the adapter |
+| `{ account }` | `account` | **none** | throws `NotConnected` — pass `.send(executor)` |
+| `{ client }` only | `null` | none | reads that need a role fail; writes need `.send(executor)` |
+
+So the executor a write uses is: **the one you pass to `.send(executor)`**, else
+**the session default**, else `NotConnected`. The `account` (build-time sender) is
+always the session identity (or the address of the executor you pass).
+
+## The paths by example
+
+A runnable catalog — every path once. The sections after this explain each in depth.
+
+### Setup — identity + signing
+
+```ts
+import { usufruct, signerExecutor } from '@usufruct-protocol/sdk';
+
+const u = usufruct({ network: 'testnet', client, signer });    // signer = account + executor
+// or read-only + external signing:
+const u = usufruct({ network: 'testnet', client, account });   // .send() will require .send(executor)
+```
+
+### ① `send()` — the SDK drives (the 90%)
+
+```ts
+const cap     = await escrow.write.rent({ tenures: 1 }).send();
+const amounts = await earningsInbox.write.collect().send();
+await governanceCap.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+const { digest } = await cap.write.borrow((asset, tx) => {
+  tx.transferObjects([tx.moveCall({ target: `${PKG}::asset::use`, arguments: [asset] })], BOB);
+}).send();
+```
+
+### ② `send(executor)` — different signer, same rich result
+
+```ts
+const cap = await escrow.write.rent({ tenures: 1 }).send(walletExecutor);  // wallet / Ledger / sponsor
+// → still returns a typed UsufructCap; only who signed changed
+```
+
+### ③ `u.batch(...)` — several writes in ONE atomic tx
+
+```ts
+const [a, b] = await u.batch(
+  govA.write.updateMarket(eA, { restPrice: eA.coin(0.02) }),
+  govB.write.updateMarket(eB, { restPrice: eB.coin(0.03) }),
+).send();                                  // one .send(), one tx, all-or-nothing
+```
+
+### ④ `build()` — you drive (compose / mix raw commands)
+
+```ts
+import { Transaction } from '@mysten/sui/transactions';
+
+const tx = new Transaction();
+const ME = signer.toSuiAddress();
+
+const rentPlan = escrow.write.rent({ tenures: 1 });
+await rentPlan.build(tx, ME);                          // append
+const fee = tx.splitCoins(tx.gas, [1_000])[0]!;        // raw Sui command, mid-PTB
+tx.transferObjects([fee], TREASURY);
+await cap.write.borrow(useAndKeepCoupon(BOB)).build(tx, ME); // the bracket nests too
+
+const res    = await signerExecutor(client, signer).execute(tx);   // one execute
+const rented = await rentPlan.decode(res);                          // decode if you want the handle
+```
+
+### ⑤ `toTransaction()` — build-only (wallet / offline)
+
+```ts
+const plan = escrow.write.rent({ tenures: 1 });
+const tx   = await plan.toTransaction(ME);      // unsigned PTB
+const res  = await wallet.signAndExecute(tx);   // signed/sent outside the SDK
+const cap  = await plan.decode(res);            // you interpret the effects
+```
+
+### ⑥ Multi-tx — dependent writes (each its own `.send()`)
+
+```ts
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // tx1
+await sleep(handover);                                   // the cap isn't active yet
+await cap.write.borrow(recipe).send();                         // tx2 — can't share tx1
+```
+
+### Reads — no `.send()`, for contrast
+
+```ts
+await escrow.read.market();   (await escrow.read.assetState()).kind;   await cap.read.state();
+await earningsInbox.read.balance(); const e = await u.nav.escrow(id);   // resolver, not a write
+```
+
+## Path 1 — `send()`: let the SDK drive (the 90%)
+
+```ts
+const cap     = await escrow.write.rent({ tenures: 1 }).send();
+const amounts = await earningsInbox.write.collect().send();
+await governanceCap.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
+
+const { digest } = await cap.write.borrow((asset, tx) => {
+  tx.transferObjects([tx.moveCall({ target: `${PKG}::asset::use`, arguments: [asset] })], BOB);
+}).send();
+```
+
+One write, one transaction. `build`/`decode` stay hidden — you get the typed
+result (`UsufructCap`, amounts, a digest). `.send()` uses the executor configured
+on the session (`usufruct({ signer })`); pass one to override:
+
+```ts
+// sign with a wallet / Ledger / sponsor instead of the configured signer —
+// the rich typed result still comes back (the executor returns the effects, the SDK decodes).
+const cap = await escrow.write.rent({ tenures: 1 }).send(walletExecutor);
+```
+
+Identity and signing are separate: `account` (who I am — reads + the build-time
+sender) is public; the `Executor` (how I sign) is what `send` swaps. `signer` is
+sugar for both.
+
+## Path 2 — `build()`: you drive the transaction
+
+`build(tx, sender)` appends a write's commands to a transaction you own. You then
+execute once and decode each result. This unlocks what `send` can't:
+
+### Compose several writes into one atomic PTB — `u.batch`
+
+`u.batch(...plans)` is the ergonomic way: it returns a `Plan` whose result is the
+tuple of each plan's result. One `.send()` builds them all into one PTB, executes
+once, and decodes each — all-or-nothing, in `build` order.
+
+```ts
+// atomic governance: change the market on two escrows in one transaction
+const [a, b] = await u.batch(
+  govA.write.updateMarket(eA, { restPrice: eA.coin(0.02) }),
+  govB.write.updateMarket(eB, { restPrice: eB.coin(0.03) }),
+).send();
+```
+
+A batch is itself a `Plan`, so it composes: `.send(executor)`, `.build(tx, me)`,
+`.toTransaction(me)`.
+
+**The decode caveat.** A batch is exact for **digest-only** writes (governance,
+`transfer`), for `collect`, and for writes that create **distinct** object types.
+Batching several writes that mint the **same** type (e.g. two `rent`s) still
+executes correctly — the tx is atomic and both objects are created — but the SDK
+cannot attribute each created object to its plan from the shared effects, so the
+returned handles collide. For those, use separate `.send()`s, or re-fetch by id.
+
+### The lower-level seam — `build` it yourself
+
+When you need full control (mix raw commands, a custom executor, an external
+wallet), drive the three phases by hand. This is what `batch` is built on:
+
+```ts
+import { Transaction } from '@mysten/sui/transactions';
+import { signerExecutor } from '@usufruct-protocol/sdk';
+
+const tx = new Transaction();
+const ME = signer.toSuiAddress();
+
+const rentPlan = escrow.write.rent({ tenures: 1 });
+await rentPlan.build(tx, ME);            // ① append
+const collectPlan = inbox.write.collect();
+await collectPlan.build(tx, ME);         // ① append
+
+const res = await signerExecutor(client, signer).execute(tx);   // ② execute once
+
+const cap     = await rentPlan.decode(res);     // ③ decode each, from shared effects
+const amounts = await collectPlan.decode(res);
+```
+
+### Mix raw Sui commands around a write
+
+```ts
+await escrow.write.rent({ tenures: 1 }).build(tx, ME);
+const fee = tx.splitCoins(tx.gas, [1_000])[0]!;   // your own command, mid-PTB
+tx.transferObjects([fee], TREASURY);
+```
+
+### The borrow bracket nests through `build` too
+
+```ts
+await cap.write.borrow(useAndKeepCoupon(BOB)).build(tx, ME);
+// borrow_asset … return_asset land inside THIS tx, alongside everything else
+```
+
+## Browser wallets — `walletExecutor`
+
+A browser wallet (Slush, Suiet, …) is just another `Executor`. Wire it once and
+every write path (`send`, `batch`, the borrow bracket) works unchanged:
+
+```ts
+import { usufruct, walletExecutor } from '@usufruct-protocol/sdk';
+// `wallet` is a @mysten/dapp-kit instance (useDAppKit()/createDAppKit());
+// `account` is useCurrentAccount(). No dapp-kit dependency in the SDK — the wallet
+// is matched structurally (it just needs `signTransaction → { bytes, signature }`).
+
+const u = usufruct({ client });
+u.connect(walletExecutor(client, wallet, account));   // identity + signing from the wallet
+
+const cap = await escrow.write.rent({ tenures: 1 }).send();  // wallet prompts; cap fully decoded
+```
+
+**The wallet only signs; the SDK executes.** This is deliberate, not incidental.
+The rich decodes (`integrate`, `rent`, `claim`) read `effects` + `objectTypes` off
+the result (see `createdIdByType`), and a wallet's own sign-and-execute returns no
+`objectTypes` (and `effects` may be null). So `walletExecutor` takes the wallet's
+signed bytes and runs them through `client.core.executeTransaction(..., { include })`
+itself — the **enrichment is the SDK's job**. The decoded result is byte-identical
+to the held-`Signer` path; nothing downstream knows who signed.
+
+(If a wallet only exposes sign-and-execute, fall back to `toTransaction()` below and
+re-fetch the effects, or open an issue — a re-fetch variant is trivial to add.)
+
+## `toTransaction()` — build-only, you sign elsewhere
+
+When the effects come from outside the SDK — a browser wallet, Ledger, an offline
+signer — take the unsigned PTB, have it signed/sent there, then `decode` the
+effects yourself:
+
+```ts
+const plan = escrow.write.rent({ tenures: 1 });
+const tx   = await plan.toTransaction(ME);     // unsigned PTB
+const res  = await wallet.signAndExecute(tx);  // executed outside the SDK
+const cap  = await plan.decode(res);           // turn the effects into the typed result
+```
+
+`toTransaction(me)` is just `build` into a fresh transaction.
+
+## When the dev touches `decode`
+
+Almost never. `send()` hides it; composing via `build()` only exposes it because
+*you* ran execute. The one irreducible case is the build-only path above: the SDK
+didn't see the execution, so you hand it the effects to interpret.
+
+| Path | Touch `decode`? |
+|---|---|
+| `await write().send()` | no (hidden) |
+| `await write().send(executor)` | no (hidden) |
+| `build()` + your own execute | yes — you ran it |
+| `toTransaction()` + external wallet | yes — effects came from outside |
+
+## Single tx vs many transactions
+
+`build()` composes writes that share **one** PTB — only valid for **independent**
+writes. Writes that depend on the previous one's *on-chain* result need separate
+transactions, each with its own `send()`:
+
+```ts
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // tx1
+await sleep(handover);                                   // the new cap isn't active yet
+await cap.write.borrow(recipe).send();                         // tx2 — cannot share tx1
+```
+
+This is not a limitation of the SDK but of the protocol (the handover window): two
+real transactions, two honest `send()`s.
+
+## Reads — for contrast
+
+Reads never send and never carry `.send()`. They are live methods you `await` —
+construction is lazy (no fetch-time snapshot); each read goes to the chain when
+called. The `.send()` on a write is exactly what tells write from read at a glance:
+
+```ts
+await escrow.read.market();   (await escrow.read.assetState()).kind;   await cap.read.state();
+await earningsInbox.read.balance(); const e = await u.nav.escrow(id);   // resolver, not a write
+```
+
+## Decision guide
+
+| You want… | Path |
+|---|---|
+| One write, the SDK signs (keypair) | `await write().send()` |
+| One write, a wallet / Ledger / sponsor signs | `await write().send(executor)` |
+| One write, hand off the PTB (offline / external wallet) | `await write().toTransaction(me)` → decode after |
+| Several independent writes, one atomic tx | `await u.batch(planA, planB).send()` |
+| Same, with full control / raw commands / external wallet | `build()` each → `execute` once → `decode` each |
+| Writes that depend on each other's chain result | separate `send()`s (multi-tx) |
+
+## At a glance
+
+```
+write().send()              → SDK drives: build + sign + decode (one tx)
+write().send(executor)      → SDK drives, YOU choose how it signs (wallet/Ledger/sponsor)
+u.batch(a, b).send()        → SDK drives: many writes, ONE atomic tx, tuple of results
+write().build(tx, me)       → YOU drive: append to your tx; you execute + decode
+write().toTransaction(me)   → YOU drive: unsigned PTB; sign elsewhere, then decode
+read()                      → never .send(); never touches the chain to write
+```
+
+## Enabling use cases — a multisig governor collecting earnings
+
+A governor is often a **DAO or a multisig**, and `EarningsInbox.collect()` is the
+write they run most. A multisig is just *how a transaction is signed* — the
+`Executor` axis — so `collect()` never changes; only the executor does. Three
+shapes the build/execute/decode split unlocks, from simplest to fully offline.
+
+```ts
+import { MultiSigPublicKey, MultiSigSigner } from '@mysten/sui/multisig';
+import { usufruct, signerExecutor, type Executor, type ExecResult } from '@usufruct-protocol/sdk';
+
+// the governor's 2-of-3 multisig (the address that holds the EarningsInbox)
+const mpk = MultiSigPublicKey.fromPublicKeys({ threshold: 2, publicKeys: [
+  { publicKey: pkA, weight: 1 }, { publicKey: pkB, weight: 1 }, { publicKey: pkC, weight: 1 },
+]});
+const INBOX = '0x…'; // the EarningsInbox object the multisig governs
+```
+
+### Case 1 — the multisig keys are on hand: it's just a `Signer`
+
+`MultiSigSigner` implements `Signer`, so it drops into the `signer` slot
+(`signer = account + executor`) and `collect()` is one line. **Multisig needs no
+special handling** — that is the whole point.
+
+```ts
+const governor = new MultiSigSigner(mpk, [kpA, kpB]);          // 2 of 3 present → meets threshold
+const u = usufruct({ network: 'testnet', client, signer: governor });
+
+const earnings = await u.nav.earningsInbox(INBOX).write.collect().send();
+console.log(earnings);                                          // [{ coin, amount }] per coin (§5.2)
+```
+
+### Case 2 — co-signers are separate: a custom `Executor`
+
+When the signers are different people/devices online at submit time, the multisig
+is an `Executor` that gathers partial signatures and combines them. The session
+holds only the identity; the executor is passed to `.send()`.
+
+```ts
+const multisigExecutor: Executor = {
+  address: mpk.toSuiAddress(),                       // identity = the multisig address
+  execute: async (tx): Promise<ExecResult> => {
+    const bytes = await tx.build({ client });        // freeze the PTB
+    const sigA = (await kpA.signTransaction(bytes)).signature;  // from co-signer A
+    const sigB = (await kpB.signTransaction(bytes)).signature;  // from co-signer B
+    const signature = mpk.combinePartialSignatures([sigA, sigB]);
+    const res = await client.core.executeTransaction({
+      transaction: bytes, signature, include: { effects: true, objectTypes: true },
+    });
+    await client.core.waitForTransaction({ digest: res.Transaction.digest });
+    return res.Transaction;
+  },
+};
+
+const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() }); // identity only
+const earnings = await u.nav.earningsInbox(INBOX).write.collect().send(multisigExecutor);
+```
+
+### Case 3 — build now, sign later (offline / asynchronous multisig)
+
+The governance flow: propose the `collect` now, gather signatures over hours or
+days across devices, then submit. `toTransaction()` gives the unsigned PTB; the
+multisig signature binds to **those exact bytes**, so freeze once and distribute.
+
+```ts
+import { toBase64, fromBase64 } from '@mysten/sui/utils';
+
+const u = usufruct({ network: 'testnet', client, account: mpk.toSuiAddress() });
+
+// ① NOW — build and freeze; carry away the bytes
+const plan  = u.nav.earningsInbox(INBOX).write.collect();
+const tx    = await plan.toTransaction(mpk.toSuiAddress());
+const bytes = await tx.build({ client });
+const b64   = toBase64(bytes);                          // the portable artifact → distribute
+
+// ② LATER — each co-signer signs the SAME bytes, on their own device
+const sigA = (await kpA.signTransaction(fromBase64(b64))).signature;  // today
+const sigB = (await kpB.signTransaction(fromBase64(b64))).signature;  // tomorrow
+
+// ③ WHEN ≥ threshold — combine and submit
+const signature = mpk.combinePartialSignatures([sigA, sigB]);
+const res = await client.core.executeTransaction({
+  transaction: bytes, signature, include: { effects: true, objectTypes: true },
+});
+const earnings = await plan.decode(res.Transaction);   // typed result (keep `plan` to decode)
+```
+
+The three `Plan` phases spread **across time and machines**: `build` now (one
+machine), `execute` later (partial signatures, combine, submit), `decode` at the
+end. The write — `collect()` — is byte-for-byte the same in all three; only the
+executor moved.
+
+**Caveats (the chain is the arbiter).**
+- A combined signature is valid only for the exact built `bytes` — freeze once,
+  never rebuild before submitting.
+- Gas coins are pinned at build; if spent before submit, the tx expires — rebuild
+  and re-sign. "Sign later" has a freshness window.
+- `decode` for `collect` needs the `plan` (it carries the messages discovered at
+  build). From a fresh process, decode from effects yourself, or re-derive the sums.
+- The exact pre-signed submit surface (`client.core.executeTransaction({ transaction,
+  signature })`, `toBase64`/`fromBase64`) is `@mysten/sui` v2 API — confirm it when
+  implementing; `signerExecutor` uses `signAndExecuteTransaction` for the held-key path.
+
+## The principle
+
+> A write is **build → execute → decode**. `send()` does all three (the common
+> path); `build()` opens the middle so you can compose, batch, sponsor, or sign
+> elsewhere. Nothing sends until you call `send()` (or run the tx yourself) — reads
+> read, writes wait. The repetition of `.send()` is the price of that honesty, and
+> it collapses to one call whenever you compose writes into a single transaction.
+
+See [borrow](./borrow.md) for the `Use`/`Plan.build`
+bracket in depth, and [api design](./api-design.md)
+for where writes sit among the four verbs.
+
+
+<!-- ─────────── source: concepts/borrow.md ─────────── -->
+
+# Borrow — composing code around the rented asset
+
+> `usufructCap.write.borrow` is the heart of *use*: it hands you the rented asset, in
+> the middle of a PTB, to compose with any Sui call. The `borrow` before and the
+> `return` after are appended **for you, guaranteed** — you only write the middle.
+>
+> The whole surface is **one type and one method**:
+>
+> - **`Use`** — `(asset, tx) => void`. The middle. One zone where the code foreign
+>   to the SDK lives. The asset *and the whole `tx`* are yours.
+> - **`cap.write.borrow(...uses)`** — a `Plan` that runs one `Use`, or composes several
+>   in order, inside the single `borrow_asset … return_asset` bracket. `.send()`
+>   signs & sends it; `.build(tx, sender)` drops the bracket into a PTB you drive
+>   (see [write model](./write-model.md)).
+>
+> There is nothing else to learn: a lambda is a `Use`, a named constant is a
+> `Use`, a factory returns a `Use`, a routine is a `Use[]`. The raw
+> `(asset, tx) =>` lambda — with the whole `tx` — is always the floor.
+
+## Writing a recipe — a `Use` is just a value
+
+A recipe is any `Use`. Write it where it makes sense:
+
+```ts
+import type { Use } from '@usufruct-protocol/sdk';
+const PKG = '0xa72e…a52a';
+
+// no args → a bare Use constant
+export const inspectAsset: Use = (asset, tx) => {
+  tx.moveCall({ target: `${PKG}::dummy_asset::uses`, arguments: [asset] });
+};
+
+// needs args → a factory (args) => Use (it closes over `recipient`)
+export const useAndKeepCoupon = (recipient: string): Use => (asset, tx) => {
+  const coupon = tx.moveCall({ target: `${PKG}::dummy_asset::use_asset`, arguments: [asset] });
+  tx.transferObjects([coupon], recipient);
+};
+```
+
+The factory `(args) => Use` is plain JavaScript, not an SDK concept — it is just
+"a function that returns a recipe". Reach for it whenever the recipe needs a
+parameter (a recipient, an amount, another object id).
+
+## The three forms of `cap.write.borrow`
+
+### ① Direct lambda — a small middle, inline
+
+When the middle is small and one-off, don't extract it — write it in place:
+
+```ts
+const { digest } = await cap.write.borrow((asset, tx) => {
+  const coupon = tx.moveCall({ target: `${PKG}::dummy_asset::use_asset`, arguments: [asset] });
+  tx.transferObjects([coupon], BOB.toSuiAddress());
+}).send();
+// PTB: borrow_asset → use_asset → TransferObjects → return_asset
+```
+
+### ② Compose snippets — imported recipes, in order
+
+`borrow` is variadic: pass several `Use`s and they apply left-to-right inside the
+one bracket.
+
+```ts
+import { inspectAsset, useAndKeepCoupon } from './recipes/dummy-asset.js';
+
+const { digest } = await cap.write.borrow(
+  inspectAsset,                          // a bare Use (no parentheses)
+  useAndKeepCoupon(BOB.toSuiAddress()),  // a factory → Use
+).send();
+// PTB: borrow_asset → uses → use_asset → TransferObjects → return_asset
+```
+
+The forms **mix freely** — an imported recipe and a raw lambda in the same call:
+
+```ts
+await cap.write.borrow(
+  inspectAsset,                          // imported
+  useAndKeepCoupon(BOB.toSuiAddress()),  // factory
+  (asset, tx) => {                       // raw lambda, mid-PTB
+    const fee = tx.splitCoins(tx.gas, [1_000])[0]!;
+    tx.transferObjects([fee], ALICE.toSuiAddress());
+  },
+).send();
+```
+
+Repeating a step repeats its commands, in order — three uses of one rented asset,
+one atomic PTB:
+
+```ts
+await cap.write.borrow(
+  inspectAsset,
+  useAndKeepCoupon(BOB.toSuiAddress()),
+  useAndKeepCoupon(BOB.toSuiAddress()),
+  useAndKeepCoupon(BOB.toSuiAddress()),
+).send();
+// PTB: borrow_asset → uses → (use_asset → Transfer) ×3 → return_asset
+```
+
+### ③ A reusable routine — a `Use[]` spread in
+
+A "bundle" you reuse is a plain array — no named composer needed:
+
+```ts
+const dailyRoutine: Use[] = [
+  inspectAsset,
+  useAndKeepCoupon(BOB.toSuiAddress()),
+  useAndKeepCoupon(CAROL.toSuiAddress()),
+];
+
+await cap.write.borrow(...dailyRoutine).send();                        // as is
+await cap.write.borrow(...dailyRoutine, useAndKeepCoupon(DAN)).send(); // with an extra step appended
+```
+
+Because it is an array, you compose it with ordinary JavaScript —
+`dailyRoutine.filter(…)`, `[...a, ...b]`, `routine.map(…)`.
+
+## `Plan.build` — when you drive the PTB
+
+`cap.write.borrow(...)` is a `Plan`. `.send()` does build + execute + decode; `.build(tx,
+sender)` does only the build — it appends the bracket to a transaction you own, so
+you run execute yourself. Reach for `.build` when you need the transaction in your
+own hands. (This is the general write seam — see [write model](./write-model.md).)
+
+| | `await cap.write.borrow(...).send()` | `await cap.write.borrow(...).build(tx, me)` |
+|---|---|---|
+| Who creates the `tx`? | the SDK | **you** |
+| Signs & sends? | yes | **no** (just appends) |
+| Needs an executor | yes (default or passed) | no — you execute later |
+| Returns | `BorrowReceipt` (digest) | nothing — appends to your `tx` |
+
+Three reasons to reach for it:
+
+```ts
+// ① Sponsorship — someone else pays gas / co-signs
+const tx = new Transaction();
+await cap.write.borrow(useAndKeepCoupon(BOB.toSuiAddress())).build(tx, ME);
+// sponsor adds gas & signs as sponsor; the renter signs as sender
+
+// ② Batching — mix the borrow with unrelated commands in one atomic tx
+const tx = new Transaction();
+await cap.write.borrow(inspectAsset, useAndKeepCoupon(BOB.toSuiAddress())).build(tx, ME);
+tx.transferObjects([tx.splitCoins(tx.gas, [500])[0]!], ALICE.toSuiAddress());
+
+// ③ Several brackets — use two rented assets in the same transaction
+const tx = new Transaction();
+await capA.write.borrow(recipeForA).build(tx, ME);   // bracket for asset A
+await capB.write.borrow(recipeForB).build(tx, ME);   // bracket for asset B, same tx
+// two borrows, two returns, one atomic PTB — impossible with .send() alone,
+// since each .send() builds and sends its own transaction.
+```
+
+## The one rule
+
+> **Writing a recipe** — no args & one call? a `Use` lambda or constant. Needs
+> args? a factory `(args) => Use`. It is always just a `Use`.
+>
+> **Injecting it** — one or several, right here? `await cap.write.borrow(a, b, c).send()`.
+> A reusable bundle? a `Use[]` spread. Your own PTB (sponsorship / batching / many
+> brackets)? `await cap.write.borrow(…).build(tx, me)`.
+
+Everything is a `Use`; `borrow` runs one or composes many. The chain is the
+arbiter — external calls must take the asset **by reference** (`&Asset` /
+`&mut Asset`); consuming it by value leaves nothing to return and the PTB is
+rejected at resolution.
+
+## The by-value escape hatch — drop to the primitives
+
+`cap.write.borrow` is `&Asset`/`&mut Asset` on purpose: it returns the *same*
+handle it borrowed, so its bracket is unbreakable — you cannot fail to return the
+right object. The rare case is a Move fn that takes the asset **by value** and
+returns it intact (`fun f(a: Asset): Asset`). The protocol allows it — `return_asset`
+only asserts the returned object has the **same id** (else `EReturnedDifferentAsset`)
+— but the high-level bracket can't express it (a by-value move spends the handle
+the auto-`return` reuses). For that one case, drop to the bare actions and thread
+the returned handle into `return_asset` yourself:
+
+```ts
+import { borrowToPtb, returnAssetToPtb } from '@usufruct-protocol/sdk/actions/borrow.js';
+
+const [asset, receipt] = borrowToPtb()(tx, ptbArgs);
+const moved = tx.moveCall({ target: `${PKG}::game::play`, arguments: [asset] }); // play(a: Asset): Asset
+returnAssetToPtb(tx, { pkg, escrowId, asset: moved, receipt, typeArguments });    // give back the moved handle
+```
+
+This is deliberately **not** a second high-level method: it would duplicate `borrow`
+on the handle while shedding its one guarantee (you'd drive the return either way).
+The primitives are the honest home — full PTB control, the chain enforces the id.
+
+See [api design](./api-design.md) for why possession is the role (why `borrow`
+proves the cap belongs to its escrow) and where `borrow` sits among the five verbs,
+and [primitives](./primitives.md) for the by-value escape hatch in context.
+
+
+<!-- ─────────── source: concepts/primitives.md ─────────── -->
+
+# Primitives vs the high-level — and why the primitives compose the high-level
+
+> The high-level API (`usufruct()`, the handles) is **not a reimplementation** — it
+> is a thin composition of the kernel primitives. Every verb you call resolves to
+> `actions.*` (build a PTB), the `Reader` (read a view), or `Source` (IO). Knowing
+> the seam tells you exactly when to drop a level for control you can't get up top.
+
+## The two layers
+
+| | Primitives (kernel) | High-level (handles) |
+|---|---|---|
+| Where | `@usufruct-protocol/sdk/actions/*`, `u.primitives` (`Source` + `Reader`) | `usufruct()` → `Escrow`/`UsufructCap`/`GovernanceCap`/inboxes |
+| Shape | unbound functions: `rentToPtb()(tx, args)`, `reader.floorPriceMist()` | object-centric verbs: `escrow.write.rent(...)`, `escrow.read.floorPrice()` |
+| Returns | a PTB value / a raw bigint — you compose | a domain result (`UsufructCap`, `Price`), executed + decoded |
+| Decides destination | **no** — the minted object is a value you place | **yes** — appends `transferObjects([minted], to ?? sender)` |
+| Drift | the source of truth (the `Reader` runs the deployed views) | renders the primitives; cannot add drift |
+
+The mirror `@usufruct-protocol/sim` is a *third*, opt-in tier — the off-chain
+re-derivation (`EscrowState`, `View`, `Action.step`) for simulation/what-if,
+golden-tested against the `Reader`. The dependency arrow is **sim → sdk**.
+
+## Primitives return by value; the high-level picks a destination
+
+The Move calls that mint objects return them **by value** — the protocol does *not*
+decide a destination:
+
+```move
+public fun integrate<...>(...): (GovernanceCap, EarningsInbox)
+public fun rent<...>(...): UsufructCap
+public fun borrow_asset<...>(...): (Asset, AssetReceipt)
+```
+
+In Move a returned object *must* be consumed in the PTB (transferred, wrapped, passed
+on) or the transaction won't build. So the destination is a PTB decision — and that
+is exactly where the layers divide:
+
+- **Primitives** hand you the value to compose: transfer it, feed it into another
+  call, batch it, sponsor it. Nothing is implied.
+- **High-level** makes the common choice — `tx.transferObjects([minted], sender)` —
+  so the object lands in your wallet. The `to` option overrides the destination
+  without leaving the layer (`rent({ …, to })`, `integrate({ …, to })`,
+  `claim(escrow, { to })`).
+
+So "the cap arrives in my wallet" is a **high-level convenience, not protocol
+behaviour**. The same by-value return is what makes a secondary market, a treasury
+split, or routing a minted object straight into another Move call possible at the
+primitive layer.
+
+## Reads: curated handle views vs the full kernel reader
+
+Both are **live** (each call hits the chain) and drift-zero; they differ only in
+surface:
+
+| | `escrow.read.*` | `u.primitives.reader(target).*` |
+|---|---|---|
+| Surface | the curated hot fields + composites, rendered (`Price`/`Date`) | the ~80 raw kernel views (policy unions, exact bigints) |
+| Coherence | per-call; `escrow.read.snapshot()` for one cross-section at `t` | per-call |
+| Use for | the 95% — render, decide, act | a view the handle doesn't surface; exact mist |
+
+The `Reader` hangs straight off the root with **no re-wiring** — `packageId`,
+`escrowId`, and type args come from the handle — and the *same* reader answers before
+*and* after a write (each call is its own round-trip):
+
+```ts
+const { escrow, governanceCap } = await u.write.integrate({ asset, coin, market }).send();
+const reader = u.primitives.reader(escrow);                    // live kernel views, off the handle
+
+const before = (await reader.restPrice()).priceMist;           // 10_000_000n
+await governanceCap.write.updateMarket(escrow, { restPrice: COIN(0.025) }).send();
+const after  = (await reader.restPrice()).priceMist;           // 25_000_000n — same `reader`
+```
+
+One subtlety: the Reader shows **real chain state, not a lazily-computed view**.
+After a tenure lapses but *before* you apply the transition,
+`reader.activeUsufructCapId()` still returns the sitting cap — the chain hasn't
+settled yet. `escrow.write.applyPendingTransitionStates()` materializes it. Both
+layers agree on the protocol's lazy semantics: nothing settles until a transaction
+touches the escrow.
+
+## When to drop to the primitives
+
+The high-level covers the 95%. Reach down when you need PTB control it doesn't model:
+
+| Need | Drop to |
+|---|---|
+| A view the handle doesn't surface (raw mist, policy unions) | `u.primitives.reader(target)` |
+| Route a minted object straight into **another Move call** (not just transfer) | `rentToPtb` / `integrateToPtb` — the value is yours |
+| **By-value** borrow (`fun f(a: Asset): Asset`) | `borrowToPtb` + `returnAssetToPtb`, thread the handle (see [borrow](./borrow.md)) |
+| Custom PTB: mix raw commands, several writes, sponsorship | `plan.build(tx, sender)` (the write seam — see [write model](./write-model.md)) |
+| Raw IO / your own event scan | `u.primitives.source` (`fetch`/`query`/`subscribe`) |
+
+The escape hatches are imports, not a different SDK:
+
+```ts
+import { borrowToPtb, returnAssetToPtb, rentToPtb } from '@usufruct-protocol/sdk/actions/borrow.js';
+// …and u.primitives.{ reader(target), source } off the root handle.
+```
+
+## The principle
+
+> The high-level *is* the primitives, composed with one opinionated default
+> (transfer-to-sender) and a rendered surface (`Price`/`Date`). Nothing up top is
+> beyond reach down below — when the default or the curated surface doesn't fit, you
+> drop a level and the chain is still the arbiter. The seam is a feature: ergonomics
+> by default, full control on demand.
+
+See [api design](./api-design.md) for the five-verb model the high-level exposes, and
+[`ARCHITECTURE.md`](../ARCHITECTURE.md) / [`SPEC.md`](../SPEC.md) for the drift-zero
+seam in full.
+
+
+<!-- ─────────── source: API.md ─────────── -->
+
+# API reference — `@usufruct-protocol/sdk`
+
+The complete public surface. Every object is its **identity** (flat fields) plus
+five verbs — **`nav · read · inspect · react · write`**. Everything that touches the
+chain is `async`. See [`concepts/api-design.md`](./concepts/api-design.md) for the
+model, [`concepts/write-model.md`](./concepts/write-model.md) for the `Plan` write
+seam, [`concepts/borrow.md`](./concepts/borrow.md) for `borrow`.
+
+## Entry point
+
+```ts
+function usufruct(config?: UsufructConfig): Usufruct;
+
+interface UsufructConfig {
+  network?: 'testnet' | 'mainnet' | 'devnet' | 'localnet';   // default 'testnet'
+  client?: ClientWithCoreApi;                  // default: a SuiGrpcClient for the network
+  signer?: Signer;                             // identity + signing (a held keypair)
+  account?: string;                            // identity only (read-only / external wallet)
+  executor?: Executor;                         // signing adapter (wallet/Ledger/sponsor/multisig)
+  packageId?: string;                          // default: the network's
+  feeRefId?: string;                           // default: the network's
+  graphql?: string | SuiGraphQLClient | false; // default: from network; false disables inspect.*
+  retry?: { attempts?: number; baseMs?: number } | false;   // default on
+}
+
+interface Usufruct {
+  readonly address: string | null;             // identity (null = anonymous)
+  readonly nav: RootNavVerb;
+  readonly read: RootReadVerb;
+  readonly inspect: RootInspectVerb;
+  readonly react: RootReactVerb;
+  readonly write: RootWriteVerb;
+  connect(signerOrExecutor: Signer | Executor): void;
+  coinType(type: string): Promise<CoinTag>;
+  batch<T extends readonly Plan<unknown>[]>(...plans: T): Plan<{ [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
+  readonly primitives: { source: Source; reader(target: ReaderTarget): Reader };
+}
+```
+
+**Identity & signing** resolve as: `account ?? executor?.address ?? signer?.toSuiAddress()`
+for identity; `executor ?? signerExecutor(signer)` for the default executor (override
+per write with `.send(executor)`). See [`concepts/write-model.md`](./concepts/write-model.md).
+
+### Root verbs (`u.*`)
+
+```ts
+interface RootNavVerb {
+  escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
+  escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
+  usufructCap(id: string): Promise<UsufructCap>;
+  governanceCap(id: string): GovernanceCap;
+  earningsInbox(id: string): EarningsInbox;
+  feeInbox(id?: string): Promise<ProtocolFeeInbox>;       // id-less → the deployment singleton
+}
+interface RootReadVerb { protocolFeeBps(): Promise<number>; bpsDenominator(): Promise<number>; }
+interface RootInspectVerb {   // all → Promise<EscrowListing[]>; need graphql
+  integratedBy(integrator: string); governedBy(holder: string); rentedBy(holder: string);
+  governedByCap(governanceCapId: string); byAssetType(assetType: string); byCoinType(coinType: string);
+}
+interface RootReactVerb { watchMany(ids: string[], onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): PortfolioWatch; }
+interface RootWriteVerb {
+  integrate(args: {
+    asset: string; coin: CoinTag; market: Market;
+    to?: { governanceCap?: string; earningsInbox?: string };   // default: the sender for each
+  }): Plan<{ escrow: Escrow; governanceCap: GovernanceCap; earningsInbox: EarningsInbox }>;
+}
+```
+
+## Escrow
+
+```ts
+interface Escrow {
+  readonly id: string; readonly assetType: string; readonly coinType: string; readonly coin: CoinTag; // identity
+  readonly nav: EscrowNavVerb; readonly read: EscrowReadVerb;
+  readonly inspect: EscrowInspectVerb; readonly react: EscrowReactVerb; readonly write: EscrowWriteVerb;
+}
+
+interface EscrowNavVerb {
+  activeCap(): Promise<UsufructCap | null>; pendingCap(): Promise<UsufructCap | null>;
+  governanceCap(): Promise<GovernanceCap>; earningsInbox(): Promise<EarningsInbox>; feeInbox(): Promise<ProtocolFeeInbox>;
+}
+
+// read = the 53 auto-rendered scalar views (below) + these composites:
+type EscrowReadVerb = ScalarReadVerb & {
+  assetState(at?: When): Promise<AssetState>;
+  snapshot(at?: When): Promise<EscrowSnapshot>;     // a coherent cross-section at one t
+  coin(): Promise<CoinTag>;
+  market(): Promise<Market>;
+  cycle(): Promise<CyclePreview | null>;
+  tenureSettlement(): Promise<TenureSettlement>;
+  handoverSettlement(boundary: When): Promise<HandoverSettlement>;
+  nextFloorPrice(totalBid: Price, tenures: number): Promise<Price>;
+  escalationLadder(opts?: { steps?: number; tenures?: number; from?: Price }): Promise<LadderRung[]>;
+  creditCurve(opts?: CurveOpts): Promise<CreditSegment | null>;   // the CURRENT tenure, sampled live
+  descentCurve(opts?: CurveOpts): Promise<DescentSegment | null>;
+};
+
+interface EscrowInspectVerb {       // need graphql
+  history(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<HistoryEvent[]>;
+  priceTimeline(opts?: CurveOpts): Promise<TimelineSegment[]>;
+  creditHistory(opts?: CurveOpts): Promise<CreditSegment[]>;
+  tenancies(opts?: { sender?: string; afterCheckpoint?: number; beforeCheckpoint?: number }): Promise<Tenancy[]>;
+  usufructCaps(): Promise<UsufructCapRecord[]>;
+}
+
+interface EscrowReactVerb {
+  watch(onChange: (escrow: Escrow) => void, opts?: { intervalMs?: number }): () => void;
+  waitFor(predicate: (escrow: Escrow) => boolean | Promise<boolean>, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<Escrow>;
+  onEvents(onEvent: (e: HistoryEvent) => void, opts?: { kinds?: readonly string[]; where?: (e: HistoryEvent) => boolean }): () => void;
+  on(kind: string, onEvent: (e: HistoryEvent) => void): () => void;
+  nextEvent(opts?: { kinds?: readonly string[]; where?: (e: HistoryEvent) => boolean; timeoutMs?: number }): Promise<HistoryEvent>;
+  next(kind: string, opts?: { where?: (e: HistoryEvent) => boolean; timeoutMs?: number }): Promise<HistoryEvent>;
+}
+
+interface EscrowWriteVerb {
+  rent(args: { tenures: number; pay?: Price; to?: string }): Plan<UsufructCap>;  // to → cap destination (default sender)
+  applyPendingTransitionStates(): Plan<{ digest: string }>;
+}
+```
+
+**`ScalarReadVerb`** — the 53 auto-rendered views (mist→`Price`, ms-timestamp→`Date`,
+ms-duration/count→`number`):
+
+```ts
+// status
+isIdle/isDescending/isOccupied/isDemand/isLive/isRetired/isRented/isRetiring(): Promise<boolean>;
+// ids / names
+assetId/governanceCapId/earningsInboxId/feeInboxId(): Promise<string>;
+activeUsufructCapId/pendingUsufructCapId/activeUsufructuary/pendingUsufructuary(): Promise<string | null>;
+assetTypeName/coinTypeName(): Promise<string>;
+// seat
+activeStake/pendingStake(): Promise<Price | null>;
+activeCommittedTenures/pendingCommittedTenures(): Promise<number | null>;
+// cap verification (probe by id)
+governanceCapIsValid/usufructCapIsActive/usufructCapIsPending/usufructCapIsStale(capId: string): Promise<boolean>;
+// temporal
+phaseStartAt/expiresAt/handoverExpiresAt/descentExpiresAt/nextBoundaryAt(): Promise<Date | null>;
+transitionIsReady(at?: When): Promise<boolean>;
+nextTransitionAt/handoverExpiresIfBidAt(at?: When): Promise<Date | null>;
+activeTimeRemaining(at?: When): Promise<number | null>;
+tenureCeiling(): Promise<number>;
+integratedAt/retireUnlocksAt/retireAnchorAt/ensembleUnlocksAt/ensembleAnchorAt(): Promise<Date>;
+retireRemaining/ensembleRemaining(at?: When): Promise<number>;
+// credit / auction memory
+lastRentPrice(): Promise<Price | null>;
+creditIsAccruing/creditIsCapped/hasPendingEnsembleUpdate(): Promise<boolean>;
+creditCappedAt(): Promise<Date | null>;
+// settlement / curve math (live, time-parameterised)
+floorPrice/accruedCredit(at?: When): Promise<Price>;
+activeStakeRemaining(at?: When): Promise<Price | null>;
+// constants
+protocolFeeBps/bpsDenominator(): Promise<number>;
+```
+
+## UsufructCap
+
+```ts
+interface UsufructCap {
+  readonly id: string; readonly escrowId: string; readonly receipt: RentReceipt | null;  // identity
+  readonly nav: { escrow(): Promise<Escrow> };
+  readonly read: {
+    state(opts?: { at?: When }): Promise<UsufructCapState>;
+    isActive(): Promise<boolean>; isPending(): Promise<boolean>; isStale(): Promise<boolean>;
+  };
+  readonly inspect: { history(opts?: {...}): Promise<HistoryEvent[]>; statement(opts?: { at?: When }): Promise<RenterStatement> };
+  readonly react: {
+    watch(cb: (s: UsufructCapState) => void, opts?): () => void;
+    waitFor(pred: (s: UsufructCapState) => boolean, opts?): Promise<UsufructCapState>;
+  };
+  readonly write: {
+    readonly borrow: (...uses: Use[]) => Plan<BorrowReceipt>;   // Use = (asset, tx) => void
+    transfer(to: string): Plan<{ digest: string }>;
+    burn(): Plan<{ digest: string }>;
+    burnIfStale(): Promise<{ burned: boolean; digest: string | null }>;   // NOT a Plan — sends only if stale
+    updateRefundAddress(addr: string): Plan<{ digest: string }>;
+  };
+}
+
+type UsufructCapStatus = 'active' | 'pending' | 'stale';   // exhaustive; state() throws on a bogus cap/escrow
+interface UsufructCapState {
+  status: UsufructCapStatus;
+  usufructuaryAddr: string | null; stake: Price | null; stakeRemaining: Price | null;
+  accruedCredit: Price | null; committedTenures: number | null; timeRemainingMs: number | null;
+  creditAccruing: boolean | null; creditCappedAt: Date | null;
+}
+interface RentReceipt { paid: Price; expiresAt: Date; digest: string }
+type Use = (asset: TransactionObjectArgument, tx: Transaction) => void;
+interface BorrowReceipt { digest: string; returned: true }
+```
+
+## GovernanceCap
+
+```ts
+interface GovernanceCap {
+  readonly capId: string;   // identity (no nav)
+  readonly read: { governs(escrow: EscrowRef): Promise<boolean> };
+  readonly inspect: { escrows(): Promise<EscrowListing[]>; revenueByEscrow(opts?): Promise<EscrowRevenue[]> };
+  readonly react: { watch(cb: (e: Escrow) => void, opts?): Promise<PortfolioWatch> };
+  readonly write: {
+    updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
+    retire(escrow: EscrowRef): Plan<{ digest: string }>;
+    claim(escrow: EscrowRef, opts?: { to?: string }): Plan<{ assetId: string; digest: string }>; // to → asset destination
+    extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
+    extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
+    renounceGovernance(): Plan<{ digest: string }>;        // irreversible burn of the cap
+    transfer(to: string): Plan<{ digest: string }>;
+    integrateIntoPortfolio(asset: string, coin: CoinTag, market: Market, opts: { earningsInbox: string }): Plan<Escrow>;
+  };
+}
+type EscrowRef = string | Escrow;
+```
+
+## EarningsInbox / ProtocolFeeInbox
+
+```ts
+interface Inbox {   // EarningsInbox and ProtocolFeeInbox share the shape
+  readonly inboxId: string;   // identity (no nav)
+  readonly read: { balance(): Promise<Array<{ coin: string; amount: Price }>> };
+  readonly inspect: { history(opts?): Promise<InboxMessage[]>; totals(opts?): Promise<InboxTotal[]>; escrowsPushingMessages(): Promise<EscrowListing[]> };
+  readonly react: { watch(onMessage: (m: InboxMessage) => void): () => void };
+  readonly write: {
+    collect(): Plan<Array<{ coin: string; amount: Price }>>;  // partitioned by coin (§5.2) — one PTB per coin type
+    transfer(to: string): Plan<{ digest: string }>;
+  };
+}
+interface InboxMessage { coin: string; amount: Price; escrowId: string | null; at: Date | null }
+interface InboxTotal { coin: string; total: Price; count: number }
+```
+
+## Data types
+
+```ts
+type AssetState =
+  | { kind: 'idle';     floor: Price }
+  | { kind: 'occupied'; cap: string; usufructuary: string; stake: Price; expiresAt: Date }
+  | { kind: 'demand';   cap: string; usufructuary: string; challengerCap: string; challenger: string; bid: Price; handoverExpiresAt: Date }
+  | { kind: 'descent';  from: Price; floor: Price; expiresAt: Date }
+  | { kind: 'retired' };
+interface EscrowSnapshot { at: Date; state: AssetState }
+
+interface Market {
+  restPrice: Price; tenure: Duration; multiTenure: boolean;
+  creditShape: Shape; auctionShape: Shape;
+  descent: 'off' | Duration; handover: 'off' | 'fullTenure' | Duration;
+  escalation: { fixed: Price } | { compound: { bps: number | bigint; delta: Price } };
+  retireCommitment: Commitment; ensembleCommitment: Commitment;
+}
+type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;   // string suffix or raw ms
+type Shape = 'linear' | 'smoothstep' | 'logistic' | { powerLaw: { num; den } } | { exponential: { alpha } };
+type Commitment = 'immediate' | { deferredFor: Duration };
+
+interface Price { mist: bigint; coin: CoinInfo; toSui(): number; plus(o: Price): Price; scale(f: number): Price; format(): string; toString(): string }
+type CoinTag = ((whole: number) => Price) & CoinInfo;        // callable: SUI(0.5) → a Price
+interface CoinInfo { type: string; decimals: number; symbol: string }
+
+interface Plan<T> {
+  send(exec?: Executor): Promise<T>;            // build + sign + decode (one tx)
+  build(tx: Transaction, sender: string): Promise<void>;     // append to your tx
+  toTransaction(sender: string): Promise<Transaction>;       // unsigned PTB
+  decode(res: ExecResult): Promise<T>;
+}
+interface Executor { address: string; execute(tx: Transaction): Promise<ExecResult> }
+
+// inspect / curve result shapes
+interface CreditSegment { capId: string | null; principal: Price; shape: CurveShape; startedAt: Date; ceilingMs: number; points: CurvePoint[] }
+interface DescentSegment { shape: CurveShape; startedAt: Date; descentMs: number; from: Price; to: Price; points: CurvePoint[] }
+type TimelineSegment = PriceMarker | ({ kind: 'descent'; at: Date } & DescentSegment);
+interface CurvePoint { atMs: number; offsetMs: number; value: Price }
+interface LadderRung { step: number; price: Price }
+interface CurveOpts { points?: number }
+interface RenterStatement { capId: string; paid: Price; refunded: Price; consumed: Price; remaining: Price | null; status: RenterStatus }
+interface Tenancy { capId; usufructuary: string; startedAt: Date; endedAt: Date | null; acquired: Price; ceilingMs: number; usedCredit: Price | null; refund: Price | null; governorShare: Price | null; protocolFee: Price | null }
+interface EscrowRevenue { escrowId: string; earnings: { coin: string; total: Price; count: number }[] }
+type When = Date | number | 'now';
+interface EscrowListing { /* id + type + governanceCapId, decode-free */ }
+interface HistoryEvent { kind: string; data: Record<string, unknown>; at: Date | null; by: string | null }
+```
+
+## Top-level exports
+
+```ts
+// value construction
+SUI: CoinTag;  price(mist, coin?): Price;  coinTag(info): CoinTag;  coinInfo(type): CoinInfo;
+duration(d: Duration): Ms;  toEnsembleConfig(market): …;
+// signing
+signerExecutor(client, signer): Executor;  walletExecutor(client, wallet, account): Executor;  executeSigned(client, bytes, sigs): Promise<ExecResult>;
+// possession (there is no role())
+ownedIds(client, owner, type): Promise<Set<string>>;
+// resilience (retry, on by default)
+withRetry, retryingClient, retryingReader, retryingGraphqlClient, isTransientStatus, isTransientNetwork, …;
+// typed errors
+UsufructError, MoveAbortError, InsufficientBalance, InsufficientPayment, NotAvailable, NotConnected,
+CommittedEnsemble, CommittedRetire, NotGovernor, InvalidEscalation, InvalidShape, InvalidMarket;
+MOVE_ABORTS;
+```
+
+## Pitfalls (the chain is the arbiter)
+
+- **`inspect.*` needs `graphql`.** It defaults from the network; pass `graphql: false`
+  to disable (then `inspect.*` throws a clear error). `read`/`write`/`react` don't need it.
+- **`collect` is partitioned by coin type.** A coin-polymorphic inbox emits one PTB
+  per `C`; a mismatched `Receiving<T>` aborts in `0x2::transfer::receive_impl`.
+- **`borrow` middles take the asset by reference** (`&Asset`/`&mut Asset`). The rare
+  by-value-and-return-intact case drops to the primitives — see [`concepts/borrow.md`](./concepts/borrow.md).
+- **Dependent writes need separate txs.** `rent` → wait the handover window → `borrow`
+  cannot share one PTB; `u.batch`/`build` only compose *independent* writes.
+- **`u.batch` collides on same-type mints.** Batching two `rent`s executes atomically
+  but the returned handles can't be attributed from shared effects — use separate `.send()`s.
+- **Reads are live, lazy.** No fetch-time photo; each `read.*` hits the chain. Take a
+  coherent cross-section with `escrow.read.snapshot()`.
+
+
+<!-- ─────────── source: concepts/cookbook.md ─────────── -->
+
+# Cookbook — complete, runnable recipes
+
+> Dry, self-contained recipes for the common tasks — copy one and adapt. Each is
+> distilled from a testnet-validated script in [`scripts/`](../scripts), with the
+> test scaffolding (ephemeral funding, asserts) stripped. Every recipe assumes the
+> **setup block** below; all chain calls are `async`.
+
+```ts
+import { usufruct, SUI, coinTag } from '@usufruct-protocol/sdk';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+
+// signer = identity + signing. Swap for { account } (read-only) or { executor }
+// (wallet/Ledger/sponsor/multisig). network picks the RPC + GraphQL endpoints.
+const u = usufruct({ network: 'testnet', signer: Ed25519Keypair.generate() });
+const me = u.address!;                       // your address (identity)
+```
+
+## 1. Connect and read state
+
+```ts
+const escrow = await u.nav.escrow('0xESCROW');     // resolve a handle (identity only, no fetch-time photo)
+
+const state = await escrow.read.assetState();      // a discriminated union — narrows per phase
+switch (state.kind) {
+  case 'idle':     state.floor; break;                                  // rentable at the floor
+  case 'occupied': state.usufructuary; state.stake; state.expiresAt; break;
+  case 'demand':   state.challenger; state.bid; state.handoverExpiresAt; break;
+  case 'descent':  state.from; state.floor; state.expiresAt; break;     // Dutch auction
+  case 'retired':  break;
+}
+
+const floor  = await escrow.read.floorPrice();     // a Price, in the escrow's own coin
+const market = await escrow.read.market();          // the full mutable policy
+console.log(floor.format(), market.tenure);
+```
+
+## 2. List an asset (integrate) and read it back
+
+```ts
+// `coin` is the escrow's immutable payment coin (a CoinTag). For a non-SUI coin,
+// either fetch its metadata on-chain, or build the tag synchronously if you know
+// the decimals/symbol:
+//   const USDC = await u.coinType('0x…::usdc::USDC');                              // async, fetches metadata
+//   const USDC = coinTag({ type: '0x…::usdc::USDC', decimals: 6, symbol: 'USDC' }); // sync, no round-trip
+const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
+  asset: '0xASSET',                 // an owned object id (key + store)
+  coin: SUI,
+  market: {
+    restPrice: SUI(0.01),           // floor when idle
+    tenure: '1h',                   // Duration: ms/s/m/h/d, or a number of ms
+    multiTenure: true,
+    creditShape: 'linear',
+    auctionShape: 'linear',
+    descent: 'off',                 // or a Duration for a Dutch auction
+    handover: '5m',                 // 'off' | 'fullTenure' | Duration
+    escalation: { fixed: SUI(0.001) },
+    retireCommitment: 'immediate',  // or { deferredFor: '7d' }
+    ensembleCommitment: 'immediate',
+  },
+}).send();
+
+console.log(escrow.id, governanceCap.capId, earningsInbox.inboxId);
+console.log((await escrow.read.assetState()).kind);   // 'idle'
+// the three handles are independent bearer objects — move any of them.
+```
+
+## 3. Rent and use the asset (borrow)
+
+```ts
+const escrow = await u.nav.escrow('0xESCROW');
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // pays the floor; `pay` to overpay → stake
+// rent on behalf of a buyer (cap lands with them, you pay): rent({ tenures: 1, to: '0xBUYER' })
+
+// Status after rent: renting an IDLE escrow seats you immediately → 'active' (you
+// can borrow in the same flow). Renting an OCCUPIED escrow makes you the challenger
+// → 'pending' (you get the seat only after the handover window; borrow can't run
+// until then — that's a separate tx). 'stale' = a spent/displaced cap.
+console.log((await cap.read.state()).status);    // 'active' | 'pending' | 'stale'
+
+// borrow hands you the asset mid-PTB; the borrow before and the return after are
+// appended for you, guaranteed. External calls take the asset BY REFERENCE
+// (&Asset / &mut Asset) — never by value.
+const PKG = '0xGAME';
+
+// (a) the common case — a &mut call that mutates in place and returns nothing.
+// Nothing to capture or transfer; just append the call.
+await cap.write.borrow((asset, tx) => {
+  tx.moveCall({ target: `${PKG}::widget::tick`, arguments: [asset] });   // tick(&mut Widget)
+}).send();
+
+// (b) the call produces an artifact you want to keep — capture and transfer it.
+await cap.write.borrow((asset, tx) => {
+  const coupon = tx.moveCall({ target: `${PKG}::game::play`, arguments: [asset] }); // play(&mut Asset): Coupon
+  tx.transferObjects([coupon], me);
+}).send();
+
+// compose several recipes in order, one atomic PTB:
+// await cap.write.borrow(inspect, play(me), play(me)).send();
+```
+
+## 4. Govern a market (update / retire / claim)
+
+```ts
+const gov    = await u.nav.governanceCap('0xGOVCAP');   // authority = holding this cap
+const escrow = '0xESCROW';                              // EscrowRef: an id or an Escrow handle
+
+await gov.write.updateMarket(escrow, { restPrice: SUI(0.02) }).send();   // change the policy
+await gov.write.retire(escrow).send();                                   // stop renting (commitment permitting)
+const { assetId } = await gov.write.claim(escrow).send();                // pull the asset back out → you
+// claim straight to someone else: gov.write.claim(escrow, { to: '0xRECIPIENT' })
+
+// the portfolio this cap governs:
+const mine = await gov.inspect.escrows();               // EscrowListing[] (needs graphql)
+```
+
+## 5. Collect earnings (partitioned by coin)
+
+```ts
+const inbox = await u.nav.earningsInbox('0xINBOX');     // or escrow.nav.earningsInbox()
+
+const pending = await inbox.read.balance();             // [{ coin, amount: Price }] uncollected, per coin
+const collected = await inbox.write.collect().send();   // collect ALL coins (one PTB per coin type, §5.2)
+
+for (const { coin, amount } of collected) console.log(coin, amount.format());
+// the ProtocolFeeInbox is the same shape: const fee = await u.nav.feeInbox();
+```
+
+## 6. Discover and react (no polling)
+
+```ts
+const governed = await u.inspect.governedBy(me);        // escrows I govern NOW (follows the cap)
+const rented   = await u.inspect.rentedBy(me);          // escrows I rent
+const byCoin   = await u.inspect.byCoinType(SUI.type);  // every escrow priced in SUI
+
+const escrow = await u.nav.escrow('0xESCROW');
+
+// continuous: fresh handle on every on-chain change
+const stop = escrow.react.watch(e => render(e));
+// one-shot: resolve the moment a challenge starts, then act on the handle
+const inDemand = await escrow.react.waitFor(async e => (await e.read.assetState()).kind === 'demand');
+await inDemand.write.applyPendingTransitionStates().send();
+// typed events: escrow.react.on('BidPlaced', ev => counterBid(ev.data));
+stop();
+```
+
+## 7. Drive the transaction yourself (Plan: build / batch)
+
+```ts
+// Every write is a Plan: .send() does build+sign+decode. Reach for build/batch when
+// you need one atomic tx across several writes, or to mix raw Sui commands.
+import { Transaction } from '@mysten/sui/transactions';
+import { signerExecutor } from '@usufruct-protocol/sdk';
+
+// (a) ergonomic — several independent writes, one atomic tx:
+const [a, b] = await u.batch(
+  govA.write.updateMarket(eA, { restPrice: SUI(0.02) }),
+  govB.write.updateMarket(eB, { restPrice: SUI(0.03) }),
+).send();
+
+// (b) full control — append to your own PTB, mix raw commands, execute once:
+const tx = new Transaction();
+const rentPlan = escrow.write.rent({ tenures: 1 });
+await rentPlan.build(tx, me);
+tx.transferObjects([tx.splitCoins(tx.gas, [1_000])[0]!], '0xTREASURY');  // raw command, mid-PTB
+const res = await signerExecutor(/* client */ undefined as any, signer).execute(tx);
+const cap = await rentPlan.decode(res);
+```
+
+> Pitfalls: `inspect.*` needs `graphql` (on by default); `collect` is one PTB per
+> coin type; `borrow` middles take the asset by reference; dependent writes (rent →
+> wait handover → borrow) need separate txs; reads are live and lazy (no fetch-time
+> photo). See [api design](./api-design.md), [write model](./write-model.md),
+> [borrow](./borrow.md), and the [API reference](../API.md).
+
+
+<!-- ─────────── source: concepts/faq.md ─────────── -->
+
+# FAQ — what the SDK does that intuition gets wrong
+
+> The questions where DeFi habits lead to a failing tx or a wrong assumption,
+> answered at the SDK level. For the deep protocol economics (escalation math,
+> descent, per-tenure normalization), see the protocol repo's guide:
+> <https://github.com/UsufructProtocol/usufruct-protocol-v1> → `llms.txt`.
+
+**How do I get a funded signer / an asset / a coin to test with?**
+See [testnet bootstrap](./testnet-bootstrap.md). Short version: ephemeral keypair →
+fund via the web faucet (the programmatic one is rate-limited) → re-run. Price test
+escrows in `SUI` so the faucet covers everything.
+
+**Why did my read not change after the tenure expired?**
+Usufruct is **lazy** — nothing settles until a transaction touches the escrow. Reads
+show *real chain state*, not a computed projection: after a tenure lapses but before
+anyone acts, `read.activeUsufructCapId()` still returns the sitting cap. Materialize
+the transition with `escrow.write.applyPendingTransitionStates().send()` (or any
+write). The time-parameterised views (`floorPrice(at)`, `accruedCredit(at)`) *do*
+compute at `t` — but object state only moves when a tx moves it.
+
+**Do I pay the floor once for N tenures?**
+No — the floor is **per tenure**. `rent({ tenures: N })` auto-sources `floor × N`, so
+let it. If you pass `pay` explicitly, send `floor × N` — sending one floor for `N > 1`
+underpays and aborts (`InsufficientPayment`). Read the live floor first
+(`await escrow.read.floorPrice()`) and derive with `Price` arithmetic (`.scale`/`.plus`).
+
+**Does renting an idle escrow pay an escalated price?**
+No. Escalation is **per-displacement**, not per-cycle — it only gates a bid that
+displaces a sitting tenant. Renting an `idle` (or `descent`) escrow pays the floor (or
+the current descending price), no escalation.
+
+**I rented but `borrow` won't run — why?**
+You probably challenged an **occupied** escrow, so your cap is `pending` (the
+challenger seat), not `active`. You get the seat only after the handover window —
+`borrow` can't run until then, and it's a separate transaction. Renting an **idle**
+escrow seats you `active` immediately. Check with `await cap.read.state()` → `.status`.
+
+**Why does `collect()` sometimes do more than one transaction?**
+An inbox is **coin-polymorphic**, so `collect` partitions messages by coin type and
+emits **one PTB per coin** — a mismatched `Receiving<T>` would abort inside
+`0x2::transfer::receive_impl`. You get back one `{ coin, amount }` per coin collected.
+
+**`inspect.*` throws — what's wrong?**
+`inspect.*` (history, discovery, ledgers) needs a **GraphQL** endpoint. It defaults
+from the network; you only see this if you passed `graphql: false`. `read`/`write`/
+`react` don't need it.
+
+**How do I price in my own coin (not SUI)?**
+The coin is fixed at `integrate` (a `phantom CoinType`, immutable). Build the tag with
+`await u.coinType('0x…')` (fetches decimals/symbol) or `coinTag({ type, decimals,
+symbol })` (synchronous), and pass it as `coin`. A governor's portfolio can hold
+escrows of different coins all paying one inbox.
+
+**Where did my cap/asset go after `rent`/`claim`/`integrate`?**
+To **you** (the sender) by default — the SDK appends the transfer. Pass `to` to send
+it elsewhere atomically: `rent({ …, to })`, `claim(escrow, { to })`,
+`integrate({ …, to: { governanceCap, earningsInbox } })`. The Move calls return the
+object by value; "it lands in my wallet" is the SDK's default, not protocol behaviour.
+
+**How is authority decided — is there a login/role?**
+No. Authority is **possession** of a bearer object (`key + store`). Holding the
+`GovernanceCap` makes you the governor; holding the `UsufructCap` makes you the
+usufructuary. `transfer` moves the object → moves the role. Ask the canonical views
+(`isRetired`, `cap.read.isActive()`, `u.inspect.governedBy(me)`), not a `role()`.
+
+**Can I do several writes in one transaction?**
+Independent writes: yes — `u.batch(a, b).send()` (one atomic tx) or `plan.build(tx,
+sender)` to drive the PTB yourself. **Dependent** writes (rent → wait the handover →
+borrow) need separate transactions — that's the protocol, not the SDK.
+
+**Should I trust a read I cached?**
+Reads are **live and lazy** — there's no fetch-time photo; each `read.*` hits the
+chain when called. For a coherent cross-section at one instant, take
+`escrow.read.snapshot()`. Don't hold a value across a write and assume it still holds.

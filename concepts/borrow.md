@@ -11,7 +11,7 @@
 > - **`cap.write.borrow(...uses)`** — a `Plan` that runs one `Use`, or composes several
 >   in order, inside the single `borrow_asset … return_asset` bracket. `.send()`
 >   signs & sends it; `.build(tx, sender)` drops the bracket into a PTB you drive
->   (see [write paths](./write-paths.md)).
+>   (see [write model](./write-model.md)).
 >
 > There is nothing else to learn: a lambda is a `Use`, a named constant is a
 > `Use`, a factory returns a `Use`, a routine is a `Use[]`. The raw
@@ -119,7 +119,7 @@ Because it is an array, you compose it with ordinary JavaScript —
 `cap.write.borrow(...)` is a `Plan`. `.send()` does build + execute + decode; `.build(tx,
 sender)` does only the build — it appends the bracket to a transaction you own, so
 you run execute yourself. Reach for `.build` when you need the transaction in your
-own hands. (This is the general write seam — see [write paths](./write-paths.md).)
+own hands. (This is the general write seam — see [write model](./write-model.md).)
 
 | | `await cap.write.borrow(...).send()` | `await cap.write.borrow(...).build(tx, me)` |
 |---|---|---|
@@ -163,6 +163,29 @@ arbiter — external calls must take the asset **by reference** (`&Asset` /
 `&mut Asset`); consuming it by value leaves nothing to return and the PTB is
 rejected at resolution.
 
-See [the object model](./object-model.md) for why `borrow` proves the cap belongs
-to its escrow, and [read · write · inspect · react](./read-write-inspect-react.md)
-for where `borrow` sits among the four verbs.
+## The by-value escape hatch — drop to the primitives
+
+`cap.write.borrow` is `&Asset`/`&mut Asset` on purpose: it returns the *same*
+handle it borrowed, so its bracket is unbreakable — you cannot fail to return the
+right object. The rare case is a Move fn that takes the asset **by value** and
+returns it intact (`fun f(a: Asset): Asset`). The protocol allows it — `return_asset`
+only asserts the returned object has the **same id** (else `EReturnedDifferentAsset`)
+— but the high-level bracket can't express it (a by-value move spends the handle
+the auto-`return` reuses). For that one case, drop to the bare actions and thread
+the returned handle into `return_asset` yourself:
+
+```ts
+import { borrowToPtb, returnAssetToPtb } from '@usufruct-protocol/sdk/actions/borrow.js';
+
+const [asset, receipt] = borrowToPtb()(tx, ptbArgs);
+const moved = tx.moveCall({ target: `${PKG}::game::play`, arguments: [asset] }); // play(a: Asset): Asset
+returnAssetToPtb(tx, { pkg, escrowId, asset: moved, receipt, typeArguments });    // give back the moved handle
+```
+
+This is deliberately **not** a second high-level method: it would duplicate `borrow`
+on the handle while shedding its one guarantee (you'd drive the return either way).
+The primitives are the honest home — full PTB control, the chain enforces the id.
+
+See [api design](./api-design.md) for why possession is the role (why `borrow`
+proves the cap belongs to its escrow) and where `borrow` sits among the five verbs,
+and [primitives](./primitives.md) for the by-value escape hatch in context.

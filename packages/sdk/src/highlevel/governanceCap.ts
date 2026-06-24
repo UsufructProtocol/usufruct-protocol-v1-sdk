@@ -57,10 +57,10 @@ export interface GovernanceReactVerb {
 export interface GovernanceWriteVerb {
   updateMarket(escrow: EscrowRef, changes: Partial<Market>): Plan<{ digest: string }>;
   retire(escrow: EscrowRef): Plan<{ digest: string }>;
-  claim(escrow: EscrowRef): Plan<{ assetId: string; digest: string }>;
+  claim(escrow: EscrowRef, opts?: { to?: string }): Plan<{ assetId: string; digest: string }>;
   extendRetireCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
   extendEnsembleCommitment(escrow: EscrowRef, until: Commitment): Plan<{ digest: string }>;
-  renounce(): Plan<{ digest: string }>;
+  renounceGovernance(): Plan<{ digest: string }>;
   transfer(to: string): Plan<{ digest: string }>;
   integrateIntoPortfolio(asset: string, coin: CoinTag, market: Market, opts: { earningsInbox: string }): Plan<Escrow>;
 }
@@ -152,7 +152,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
       );
     },
 
-    claim(ref) {
+    claim(ref, opts) {
       // A claimed asset is *unwrapped* (not "Created" in effects), so its id is
       // read from the escrow's view at build time and carried into decode.
       let assetId = '';
@@ -167,13 +167,14 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
           });
           assetId = String(await reader.assetId());
           const asset = claimAssetToPtb()(tx, { pkg, escrowId: r.escrowId, governanceCapId: govId, typeArguments: r.typeArguments });
-          tx.transferObjects([asset], sender);
+          // `to` directs the unwrapped asset (default: the sender), in this same PTB.
+          tx.transferObjects([asset], opts?.to ?? sender);
         },
         decode: async (res) => ({ assetId, digest: res.digest }),
       });
     },
 
-    renounce() {
+    renounceGovernance() {
       return digestPlan(
         () => ctx.defaultExecutor,
         (tx) => renounceGovernanceToPtb(tx, { pkg, governanceCapId: capId }),
@@ -278,7 +279,7 @@ export function createGovernanceCap(ctx: HandleCtx, capId: string): GovernanceCa
     claim: g.claim,
     extendRetireCommitment: g.extendRetireCommitment,
     extendEnsembleCommitment: g.extendEnsembleCommitment,
-    renounce: g.renounce,
+    renounceGovernance: g.renounceGovernance,
     transfer: g.transfer,
     integrateIntoPortfolio: g.integrateIntoPortfolio,
   };

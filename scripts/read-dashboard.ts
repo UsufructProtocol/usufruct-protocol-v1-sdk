@@ -93,8 +93,8 @@ async function main(): Promise<void> {
   const pending = await pendingCapHandle!.read.state();
   const activeUsufructuaryAddr = await e.read.activeUsufructuary();
   console.log(`  active: who=${activeUsufructuaryAddr?.slice(0, 10)}… stake=${active.stake?.format()} time=${active.timeRemainingMs}ms accruing=${active.creditAccruing}`);
-  console.log(`  pending: stake=${pending.stake?.format()} role=${pending.role}`);
-  check('escrow.nav.activeCap/pendingCap resolve the seats', active.role === 'active' && pending.role === 'pending');
+  console.log(`  pending: stake=${pending.stake?.format()} status=${pending.status}`);
+  check('escrow.nav.activeCap/pendingCap resolve the seats', active.status === 'active' && pending.status === 'pending');
 
   step('③ the MARKET / policy — escrow.market() (one call, coin-aware)');
   const mkt = noCeremony('escrow.market()', await e.read.market());
@@ -143,10 +143,10 @@ async function main(): Promise<void> {
 
   step('⑨ react on the seat — usufructCap.react.watch() (the renter watches their own seat)');
   const seen: string[] = [];
-  const stop = activeCapHandle!.react.watch((s) => seen.push(s.role));
+  const stop = activeCapHandle!.react.watch((s) => seen.push(s.status));
   await sleep(4000); // let the initial state land
   stop();
-  check('cap.watch emitted the seat state', seen.length >= 1, `roles=${seen.join(',')}`);
+  check('cap.watch emitted the seat state', seen.length >= 1, `statuses=${seen.join(',')}`);
 
   step('⑩ inspect the cap — usufructCap.inspect.history() (its slice of the timeline)');
   // The indexer trails the fullnode; poll briefly for the fresh cap's events.

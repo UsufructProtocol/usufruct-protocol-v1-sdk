@@ -7,14 +7,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
-## [1.0.0-rc.1] — 2026-06-23
+## [1.0.0-rc.1] — 2026-06-24
 
 The handle API is reshaped into one fractal, navigable form: every object is its
 **identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
 write`** — repeated identically on the root `u` and on every handle. This is the v1.0
-shape (release candidate).
+shape (release candidate), the first published version.
+
+### Added
+
+- **`to` on the minting writes — direct the created object's destination.** `rent`,
+  `integrate`, and `claim` mint owned objects and transfer them to the sender by
+  default; pass `to` to redirect them atomically in the *same* transaction (rent on
+  behalf of a buyer, list with the cap going to a cold governor and earnings to a
+  treasury, claim straight to a recipient — no second transfer). `rent({ …, to })`
+  and `claim(escrow, { to })` take an address; `integrate({ …, to })` takes a
+  structured `{ governanceCap?, earningsInbox? }` since it mints two. Default is
+  unchanged (the sender). Deep PTB composition (routing a minted value into another
+  Move call) stays in the bare actions (`u.primitives` / `…/actions`). Live-validated.
 
 ### Changed (breaking)
+
+- **`UsufructCapRole` → `UsufructCapStatus`; `state.role` → `state.status`; the
+  `'unknown'` member is gone.** A held cap is always `active`, `pending`, or `stale`
+  — those three are exhaustive, so `state()` now throws on a cap that is neither a
+  seat nor stale (a wrong cap/escrow pairing) instead of returning a phantom status.
+  "Status", not "role": authority is object possession, not a permission read (the
+  same reason `escrow.read.role()` was removed).
+- **`governanceCap.write.renounce()` → `renounceGovernance()`.** An irreversible
+  burn deserves an unambiguous name, matching the Move entry `cap::renounce_governance`.
 
 - **Handles are identity + verbs only.** The flat surface is gone:
   `escrow.status`/`floorPrice`/`rent()`/`activeCap`/… → `escrow.read.assetState()`

@@ -13,10 +13,12 @@ rental lifecycle, explaining each step.
 ## 1. Install
 
 ```bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui
 ```
 
-The SDK's only runtime dependency is `@mysten/sui`, so `npm i @usufruct-protocol/sdk`
+This is a **release candidate**, published under the `next` dist-tag — so the `@next`
+is required (a bare `npm i @usufruct-protocol/sdk` won't resolve a pre-release). The
+SDK's only runtime dependency is `@mysten/sui`, so `npm i @usufruct-protocol/sdk@next`
 pulls it for you — install it explicitly too, since you'll import its types directly
 (`Ed25519Keypair`, `Transaction`, …).
 
@@ -114,6 +116,29 @@ const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
 - The handles are independent: move `governanceCap` and the income still flows to
   `earningsInbox`. **Moving the object moves the role.**
 
+**`Duration` — the time fields** (`tenure`, `handover`, `descent`, `deferredFor`, …)
+take a suffixed string or a raw number of **milliseconds**:
+
+```ts
+type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;
+```
+
+| Suffix | Unit | Example → ms |
+|---|---|---|
+| `ms` | milliseconds | `'500ms'` → 500 |
+| `s` | seconds | `'25s'` → 25 000 |
+| `m` | **minutes** | `'30m'` → 1 800 000 |
+| `h` | hours | `'1h'` → 3 600 000 |
+| `d` | days | `'7d'` → 604 800 000 |
+
+- The suffix for **minutes is `m`, not `min`** — `'30min'` is rejected (the type
+  won't compile; a dynamically-built string throws `invalid duration: 30min`).
+- `'30m'` (minutes) vs `'30ms'` (milliseconds) are unambiguous — `ms` is matched first.
+- A raw number is milliseconds: `{ deferredFor: 1_800_000 }` ≡ `'30m'`.
+- Durations are **relative spans**. The contract turns them absolute on-chain by
+  reading Sui's `Clock` at execution time (e.g. `deferredFor: '7d'` → `unlock_at =
+  anchor + 604 800 000 ms`) — your machine's clock is never involved.
+
 ### 4.2 Read the state (`read.assetState`)
 
 `assetState()` is a discriminated union — it narrows to each phase's data:
@@ -149,11 +174,20 @@ await escrow.read.nextBoundaryAt();// the next phase boundary (a keeper schedule
 const cap = await escrow.write.rent({ tenures: 1 }).send();   // pays the floor by default
 // overpay → the surplus becomes stake (more credit / time):
 const cap = await escrow.write.rent({ tenures: 1, pay: escrow.coin(0.5) }).send();
+// rent on behalf of someone — the cap lands with `to`, atomically (you still pay):
+const cap = await escrow.write.rent({ tenures: 1, to: buyerAddress }).send();
 
 cap.id;                 // the UsufructCap object id (your right of use)
 cap.receipt?.paid;      // a Price — what you paid
 cap.receipt?.expiresAt; // when this tenure ends
 ```
+
+> **`to` directs the minted object.** `rent`, `integrate`, and `claim` mint owned
+> objects and send them to the sender by default — pass `to` to redirect them in the
+> *same* transaction (atomic, no second transfer). `integrate` takes a structured
+> `to: { governanceCap?, earningsInbox? }` since it mints two. For routing a minted
+> object straight into another Move call, drop to the bare actions (`u.primitives` /
+> `@usufruct-protocol/sdk/actions`).
 
 `rent` returns a `UsufructCap` handle. The coin is the escrow's own — auto-sourced
 from your balance; you only choose the number.
@@ -287,14 +321,15 @@ await reader.accruedCreditMist(Date.now());   // any of the ~80 deployed views, 
 
 ## 10. Where next
 
-- [`journeys/read-write-inspect-react.md`](./journeys/read-write-inspect-react.md) — the
-  fractal, navigable API in depth.
-- [`journeys/object-model.md`](./journeys/object-model.md) — why possession is the role.
-- [`journeys/write-paths.md`](./journeys/write-paths.md) — `Plan`, `send` vs `build`,
+- [`API.md`](./API.md) — the complete public API surface (every handle, verb, signature).
+- [`concepts/api-design.md`](./concepts/api-design.md) — drift-zero · object-centric ·
+  navigable · the five verbs (and why possession is the role).
+- [`concepts/write-model.md`](./concepts/write-model.md) — `Plan`, `send` vs `build`,
   sponsored/multisig signing.
-- [`journeys/borrow-composition.md`](./journeys/borrow-composition.md) — composing code
-  around the borrowed asset.
-- [`examples/`](./examples) — runnable, testnet-validated probes of every flow.
+- [`concepts/borrow.md`](./concepts/borrow.md) — composing code around the borrowed asset.
+- [`concepts/primitives.md`](./concepts/primitives.md) — primitives vs high-level.
+- [`scripts/`](./scripts) — runnable, testnet-validated examples of every flow.
+- [`llms-full.txt`](./llms-full.txt) — the self-contained payload for AI agents.
 
 > Live on Sui **testnet** (`v1.4.7`), source-verified on-chain. Don't assume code works
 > by reading it — build against testnet and let the chain be the arbiter.
