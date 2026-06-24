@@ -47,8 +47,10 @@ await escrow.write.rent({ tenures: 1 }).send();      // pay the floor → a Usuf
 Every object is its **identity** (the object's name) plus five verbs —
 **`nav · read · inspect · react · write`** — and the shape is **fractal**: the same
 five sit on the root `u` and on every handle (escrow / cap / governanceCap / inbox).
-See [the fractal, navigable API](./journeys/read-write-inspect-react.md). Full
-quickstart in the [core package README](./packages/sdk/README.md).
+
+**Start here:** [`QUICKSTART.md`](./QUICKSTART.md) — install → a full rental lifecycle,
+step by step. Then [the fractal, navigable API](./journeys/read-write-inspect-react.md)
+for the model in depth.
 
 ## Design & reference
 
