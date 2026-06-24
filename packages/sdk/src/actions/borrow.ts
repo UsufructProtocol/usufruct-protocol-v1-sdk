@@ -73,9 +73,12 @@ export function returnAssetToPtb(tx: Transaction, args: ReturnPtbArgs): Transact
  * `use` runs while the PTB is being built — whatever commands it appends land
  * between the borrow and the return, with the borrowed asset handle as their
  * argument. The user never touches the receipt, so the well-formed hot-potato
- * PTB is the only one this can produce. External APIs must take the asset by
- * reference (`&Asset` / `&mut Asset`): consuming it by value leaves nothing to
- * return and the chain rejects the PTB at resolution.
+ * PTB is the only one this can produce. Because the SAME borrowed handle is what
+ * gets returned, the middle must take the asset by reference (`&Asset` /
+ * `&mut Asset`): consuming it by value leaves nothing to return and the chain
+ * rejects the PTB at resolution. The rare by-value-and-return-intact case (`fun
+ * f(a: Asset): Asset`) drops to the bare `borrowToPtb`/`returnAssetToPtb` pair,
+ * threading the returned handle into `return_asset` yourself.
  *
  * Returns whatever `use` returns (e.g. artifact handles to transfer). Brackets
  * nest for cross-escrow composition — one per escrow/cap pair.

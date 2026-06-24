@@ -114,6 +114,29 @@ const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
 - The handles are independent: move `governanceCap` and the income still flows to
   `earningsInbox`. **Moving the object moves the role.**
 
+**`Duration` — the time fields** (`tenure`, `handover`, `descent`, `deferredFor`, …)
+take a suffixed string or a raw number of **milliseconds**:
+
+```ts
+type Duration = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | number;
+```
+
+| Suffix | Unit | Example → ms |
+|---|---|---|
+| `ms` | milliseconds | `'500ms'` → 500 |
+| `s` | seconds | `'25s'` → 25 000 |
+| `m` | **minutes** | `'30m'` → 1 800 000 |
+| `h` | hours | `'1h'` → 3 600 000 |
+| `d` | days | `'7d'` → 604 800 000 |
+
+- The suffix for **minutes is `m`, not `min`** — `'30min'` is rejected (the type
+  won't compile; a dynamically-built string throws `invalid duration: 30min`).
+- `'30m'` (minutes) vs `'30ms'` (milliseconds) are unambiguous — `ms` is matched first.
+- A raw number is milliseconds: `{ deferredFor: 1_800_000 }` ≡ `'30m'`.
+- Durations are **relative spans**. The contract turns them absolute on-chain by
+  reading Sui's `Clock` at execution time (e.g. `deferredFor: '7d'` → `unlock_at =
+  anchor + 604 800 000 ms`) — your machine's clock is never involved.
+
 ### 4.2 Read the state (`read.assetState`)
 
 `assetState()` is a discriminated union — it narrows to each phase's data:
