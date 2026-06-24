@@ -1775,7 +1775,7 @@ MOVE_ABORTS;
 > **setup block** below; all chain calls are `async`.
 
 ```ts
-import { usufruct, SUI } from '@usufruct-protocol/sdk';
+import { usufruct, SUI, coinTag } from '@usufruct-protocol/sdk';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 // signer = identity + signing. Swap for { account } (read-only) or { executor }
@@ -1806,8 +1806,11 @@ console.log(floor.format(), market.tenure);
 ## 2. List an asset (integrate) and read it back
 
 ```ts
-// `coin` is the escrow's immutable payment coin (a CoinTag). For a non-SUI coin:
-//   const USDC = await u.coinType('0x…::usdc::USDC');
+// `coin` is the escrow's immutable payment coin (a CoinTag). For a non-SUI coin,
+// either fetch its metadata on-chain, or build the tag synchronously if you know
+// the decimals/symbol:
+//   const USDC = await u.coinType('0x…::usdc::USDC');                              // async, fetches metadata
+//   const USDC = coinTag({ type: '0x…::usdc::USDC', decimals: 6, symbol: 'USDC' }); // sync, no round-trip
 const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
   asset: '0xASSET',                 // an owned object id (key + store)
   coin: SUI,
