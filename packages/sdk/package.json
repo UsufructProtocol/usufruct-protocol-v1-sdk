@@ -24,7 +24,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk.git"
+    "url": "git+https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk.git",
+    "directory": "packages/sdk"
   },
   "homepage": "https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk#readme",
   "bugs": {
