@@ -7,7 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); thi
 project adheres to [Semantic Versioning](https://semver.org/). Both packages are
 versioned together while pre-1.0.
 
-## [Unreleased]
+## [1.0.0-rc.1] — 2026-06-24
+
+The handle API is reshaped into one fractal, navigable form: every object is its
+**identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
+write`** — repeated identically on the root `u` and on every handle. This is the v1.0
+shape (release candidate), the first published version.
 
 ### Added
 
@@ -31,15 +36,6 @@ versioned together while pre-1.0.
   same reason `escrow.read.role()` was removed).
 - **`governanceCap.write.renounce()` → `renounceGovernance()`.** An irreversible
   burn deserves an unambiguous name, matching the Move entry `cap::renounce_governance`.
-
-## [1.0.0-rc.1] — 2026-06-23
-
-The handle API is reshaped into one fractal, navigable form: every object is its
-**identity** (the object's name) plus five verbs — **`nav · read · inspect · react ·
-write`** — repeated identically on the root `u` and on every handle. This is the v1.0
-shape (release candidate).
-
-### Changed (breaking)
 
 - **Handles are identity + verbs only.** The flat surface is gone:
   `escrow.status`/`floorPrice`/`rent()`/`activeCap`/… → `escrow.read.assetState()`

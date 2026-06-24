@@ -29,7 +29,7 @@ core" and [`SPEC.md`](./SPEC.md) §2.1/§12.
 ## Quickstart
 
 ```bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the `next` tag
 ```
 
 ```ts

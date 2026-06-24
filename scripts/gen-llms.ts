@@ -44,7 +44,7 @@ const PREAMBLE = `# Usufruct Protocol SDK — full context for AI agents
 ## Install & a canonical setup
 
 \`\`\`bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the \`next\` tag
 \`\`\`
 
 \`\`\`ts

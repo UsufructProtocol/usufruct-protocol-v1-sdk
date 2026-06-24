@@ -34,7 +34,7 @@ for the opt-in mirror [`@usufruct-protocol/sim`](https://www.npmjs.com/package/@
 ## Install
 
 ```bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the `next` tag
 ```
 
 `@mysten/sui` (v2) is a peer you bring — the SDK is transport-agnostic over its

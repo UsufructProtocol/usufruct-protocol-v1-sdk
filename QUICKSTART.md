@@ -13,10 +13,12 @@ rental lifecycle, explaining each step.
 ## 1. Install
 
 ```bash
-npm i @usufruct-protocol/sdk @mysten/sui
+npm i @usufruct-protocol/sdk@next @mysten/sui
 ```
 
-The SDK's only runtime dependency is `@mysten/sui`, so `npm i @usufruct-protocol/sdk`
+This is a **release candidate**, published under the `next` dist-tag — so the `@next`
+is required (a bare `npm i @usufruct-protocol/sdk` won't resolve a pre-release). The
+SDK's only runtime dependency is `@mysten/sui`, so `npm i @usufruct-protocol/sdk@next`
 pulls it for you — install it explicitly too, since you'll import its types directly
 (`Ed25519Keypair`, `Transaction`, …).
 
