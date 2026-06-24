@@ -149,11 +149,20 @@ await escrow.read.nextBoundaryAt();// the next phase boundary (a keeper schedule
 const cap = await escrow.write.rent({ tenures: 1 }).send();   // pays the floor by default
 // overpay → the surplus becomes stake (more credit / time):
 const cap = await escrow.write.rent({ tenures: 1, pay: escrow.coin(0.5) }).send();
+// rent on behalf of someone — the cap lands with `to`, atomically (you still pay):
+const cap = await escrow.write.rent({ tenures: 1, to: buyerAddress }).send();
 
 cap.id;                 // the UsufructCap object id (your right of use)
 cap.receipt?.paid;      // a Price — what you paid
 cap.receipt?.expiresAt; // when this tenure ends
 ```
+
+> **`to` directs the minted object.** `rent`, `integrate`, and `claim` mint owned
+> objects and send them to the sender by default — pass `to` to redirect them in the
+> *same* transaction (atomic, no second transfer). `integrate` takes a structured
+> `to: { governanceCap?, earningsInbox? }` since it mints two. For routing a minted
+> object straight into another Move call, drop to the bare actions (`u.primitives` /
+> `@usufruct-protocol/sdk/actions`).
 
 `rent` returns a `UsufructCap` handle. The coin is the escrow's own — auto-sourced
 from your balance; you only choose the number.

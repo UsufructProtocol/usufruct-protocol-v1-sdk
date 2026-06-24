@@ -138,7 +138,18 @@ export interface RootReactVerb {
 }
 /** write — genesis: bring an escrow into existence. */
 export interface RootWriteVerb {
-  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{
+  /**
+   * List an asset into a fresh escrow. `to` directs the two minted owned objects —
+   * the `GovernanceCap` and the `EarningsInbox` — independently (default: the
+   * sender for each), atomically in this same transaction. The `Escrow` itself is
+   * a shared object (placed by the contract), so it has no destination.
+   */
+  integrate(args: {
+    asset: string;
+    coin: CoinTag;
+    market: Market;
+    to?: { governanceCap?: string; earningsInbox?: string };
+  }): Plan<{
     escrow: Escrow;
     governanceCap: GovernanceCap;
     earningsInbox: EarningsInbox;
@@ -177,7 +188,7 @@ interface UsufructFlat {
   escrow(id: string, opts?: { at?: When }): Promise<Escrow>;
   escrows(ids: string[], opts?: { at?: When }): Promise<Escrow[]>;
   watchMany(escrowIds: string[], onChange: (e: Escrow) => void, opts?: { intervalMs?: number }): PortfolioWatch;
-  integrate(args: { asset: string; coin: CoinTag; market: Market }): Plan<{ escrow: Escrow; governanceCap: GovernanceCap; earningsInbox: EarningsInbox }>;
+  integrate(args: { asset: string; coin: CoinTag; market: Market; to?: { governanceCap?: string; earningsInbox?: string } }): Plan<{ escrow: Escrow; governanceCap: GovernanceCap; earningsInbox: EarningsInbox }>;
   batch<T extends readonly Plan<unknown>[]>(...plans: T): Plan<{ -readonly [K in keyof T]: T[K] extends Plan<infer U> ? U : never }>;
   usufructCap(id: string): Promise<UsufructCap>;
   governanceCap(id: string): GovernanceCap;
@@ -302,12 +313,12 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
       return watchMany(ctx(), escrowIds, onChange, opts);
     },
 
-    integrate({ asset, coin, market }) {
+    integrate({ asset, coin, market, to }) {
       const { ensemble, retireCommitment, ensembleCommitment } = toEnsembleConfig(market);
       const coinType = coin.type;
       return makePlan({
         defaultExecutor: () => resolveExecutor(),
-        // build: list the asset's type, append the integrate, keep cap + inbox.
+        // build: list the asset's type, append the integrate, route cap + inbox.
         build: async (tx, sender) => {
           const { object } = await client.core.getObject({ objectId: asset });
           const assetType = object.type;
@@ -318,7 +329,10 @@ export function usufruct(config: UsufructConfig = {}): Usufruct {
             assetType,
             coinType,
           })(tx, { pkg: { packageId, feeRefId }, asset, typeArguments: [assetType, coinType] });
-          tx.transferObjects([created[0]!, created[1]!], sender); // [GovernanceCap, EarningsInbox]
+          // The two owned objects go independently to `to` (default: the sender);
+          // the Escrow is shared by the contract, so it has no destination here.
+          tx.transferObjects([created[0]!], to?.governanceCap ?? sender); // GovernanceCap
+          tx.transferObjects([created[1]!], to?.earningsInbox ?? sender); // EarningsInbox
         },
         // decode: the three created objects → resolved handles.
         decode: async (res) => {

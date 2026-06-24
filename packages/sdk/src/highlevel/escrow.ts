@@ -147,7 +147,11 @@ export interface EscrowReactVerb {
 
 /** write — the protocol's write functions (PTB / Plan). */
 export interface EscrowWriteVerb {
-  rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap>;
+  /**
+   * Acquire the right of use. `to` directs the minted `UsufructCap` (default: the
+   * sender), atomically in the same transaction — e.g. rent on behalf of a buyer.
+   */
+  rent(args: { tenures: number; pay?: Price; to?: string }): Plan<UsufructCap>;
   applyPendingTransitionStates(): Plan<{ digest: string }>;
 }
 
@@ -251,7 +255,7 @@ export async function createEscrow(
   const capHandle = (capId: string | null): UsufructCap | null =>
     capId == null ? null : createCap(ctx, { capId, escrowId: idStr, typeArguments, receipt: null });
 
-  function rent(args: { tenures: number; pay?: Price }): Plan<UsufructCap> {
+  function rent(args: { tenures: number; pay?: Price; to?: string }): Plan<UsufructCap> {
     const count = BigInt(args.tenures);
     // The decision: pay the floor (default) or overpay (surplus → stake). The
     // coin is the escrow's own — auto-sourced; the renter only chooses the number.
@@ -261,7 +265,8 @@ export async function createEscrow(
       // default execution = the handle's configured executor; null ⇒ read-only.
       defaultExecutor: () => defaultExecutor,
 
-      // phase 1 — build: source the payment from `sender`, mint, keep the cap.
+      // phase 1 — build: source the payment from `sender`, mint, send the cap to
+      // `to` (default the sender) — atomically, in this same PTB.
       build: async (tx, sender) => {
         if (!args.pay) paidMist = (await reader.floorPriceMist(await resolveWhen(client, 'now'))) * count;
         const payment = await sourceCoin(tx, client, sender, { coinType, amountMist: paidMist });
@@ -271,7 +276,7 @@ export async function createEscrow(
           payment,
           typeArguments,
         });
-        tx.transferObjects([minted], sender);
+        tx.transferObjects([minted], args.to ?? sender);
       },
 
       // phase 3 — decode: created cap id (from effects) + a post-exec read for expiry.

@@ -9,6 +9,18 @@ versioned together while pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **`to` on the minting writes — direct the created object's destination.** `rent`,
+  `integrate`, and `claim` mint owned objects and transfer them to the sender by
+  default; pass `to` to redirect them atomically in the *same* transaction (rent on
+  behalf of a buyer, list with the cap going to a cold governor and earnings to a
+  treasury, claim straight to a recipient — no second transfer). `rent({ …, to })`
+  and `claim(escrow, { to })` take an address; `integrate({ …, to })` takes a
+  structured `{ governanceCap?, earningsInbox? }` since it mints two. Default is
+  unchanged (the sender). Deep PTB composition (routing a minted value into another
+  Move call) stays in the bare actions (`u.primitives` / `…/actions`). Live-validated.
+
 ### Changed (breaking)
 
 - **`UsufructCapRole` → `UsufructCapStatus`; `state.role` → `state.status`; the
