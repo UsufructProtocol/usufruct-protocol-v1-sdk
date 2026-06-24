@@ -17,12 +17,14 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // primitives line → the complete reference. Each file already opens with its H1.
 const SOURCES = [
   'QUICKSTART.md',
+  'concepts/testnet-bootstrap.md',
   'concepts/api-design.md',
   'concepts/write-model.md',
   'concepts/borrow.md',
   'concepts/primitives.md',
   'API.md',
   'concepts/cookbook.md',
+  'concepts/faq.md',
 ];
 
 const PREAMBLE = `# Usufruct Protocol SDK — full context for AI agents
@@ -31,9 +33,13 @@ const PREAMBLE = `# Usufruct Protocol SDK — full context for AI agents
 > the official TypeScript SDK for the Usufruct Protocol — an on-chain rental market
 > primitive for any Sui asset, priced in any payment coin. Load it into an agent's
 > context to write working Usufruct scripts. It concatenates, in reading order:
-> QUICKSTART, the four concept docs (api-design, write-model, borrow, primitives),
-> the complete API reference, and a cookbook of runnable recipes. Cross-document
-> links are relative to the repo.
+> QUICKSTART, testnet bootstrap, the concept docs (api-design, write-model, borrow,
+> primitives), the complete API reference, a cookbook of runnable recipes, and a
+> FAQ. Cross-document links are relative to the repo.
+>
+> This file is the SDK *how-to*. For *what Usufruct is* and the protocol economics,
+> see the protocol repo's agent guide:
+> https://github.com/UsufructProtocol/usufruct-protocol-v1 → llms.txt
 
 ## Install & a canonical setup
 

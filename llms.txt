@@ -12,6 +12,7 @@ below, concatenated inline). The links here are the curated map.
 ## Start here
 
 - [QUICKSTART](./QUICKSTART.md): install → a full rental lifecycle, step by step.
+- [Testnet bootstrap](./concepts/testnet-bootstrap.md): a funded signer, an asset, a coin — zero to running.
 - [API reference](./API.md): the complete public surface — every handle, verb, signature, return type.
 
 ## Concepts
@@ -21,6 +22,11 @@ below, concatenated inline). The links here are the curated map.
 - [Borrow](./concepts/borrow.md): composing code around the rented asset (the `Use` middle, the bracket, the by-value escape hatch).
 - [Primitives](./concepts/primitives.md): the kernel layer the high-level composes from, and when to drop down.
 - [Cookbook](./concepts/cookbook.md): complete, runnable recipes for the common tasks (rent, borrow, govern, collect, discover, batch).
+- [FAQ](./concepts/faq.md): what the SDK does that intuition gets wrong (lazy state, per-tenure pricing, possession, coin-partitioned collect).
+
+## What is Usufruct (the protocol)
+
+- [Protocol repo](https://github.com/UsufructProtocol/usufruct-protocol-v1): the on-chain primitive itself; its `llms.txt` is an agent guide to *what Usufruct is* and the economics. This SDK doc set is the *how-to* over it.
 
 ## Design reference
 

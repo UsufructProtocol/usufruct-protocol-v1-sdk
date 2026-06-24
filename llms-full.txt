@@ -4,9 +4,13 @@
 > the official TypeScript SDK for the Usufruct Protocol — an on-chain rental market
 > primitive for any Sui asset, priced in any payment coin. Load it into an agent's
 > context to write working Usufruct scripts. It concatenates, in reading order:
-> QUICKSTART, the four concept docs (api-design, write-model, borrow, primitives),
-> the complete API reference, and a cookbook of runnable recipes. Cross-document
-> links are relative to the repo.
+> QUICKSTART, testnet bootstrap, the concept docs (api-design, write-model, borrow,
+> primitives), the complete API reference, a cookbook of runnable recipes, and a
+> FAQ. Cross-document links are relative to the repo.
+>
+> This file is the SDK *how-to*. For *what Usufruct is* and the protocol economics,
+> see the protocol repo's agent guide:
+> https://github.com/UsufructProtocol/usufruct-protocol-v1 → llms.txt
 
 ## Install & a canonical setup
 
@@ -376,6 +380,97 @@ await reader.accruedCreditMist(Date.now());   // any of the ~80 deployed views, 
 
 > Live on Sui **testnet** (`v1.4.7`), source-verified on-chain. Don't assume code works
 > by reading it — build against testnet and let the chain be the arbiter.
+
+
+<!-- ─────────── source: concepts/testnet-bootstrap.md ─────────── -->
+
+# Testnet bootstrap — a funded signer, an asset, a coin
+
+> Before any script runs you need three things: a **funded signer**, an **asset** to
+> list, and the **coin** rent is priced in. This is the zero-to-running path on Sui
+> testnet. (For *what Usufruct is* and the protocol economics, see the protocol
+> repo's agent guide: <https://github.com/UsufructProtocol/usufruct-protocol-v1> →
+> `llms.txt`. This doc is the SDK how-to.)
+
+## ⛔ The one rule — testnet only
+
+Every example here is **Sui testnet**, faucet SUI, zero real value. Default to a
+**fresh, ephemeral keypair** — never load a user's existing mainnet keys to sign
+SDK writes. If a dev wants to act as themselves, take their **address** (`account`,
+identity only) and let their wallet sign (`executor`); the SDK never needs private
+keys.
+
+## 1. A funded signer
+
+A generated keypair starts empty. The programmatic faucet is heavily rate-limited
+and usually refuses — so **print the address + the faucet link, let the dev fund it
+in the browser, then re-run**:
+
+```ts
+import { usufruct } from '@usufruct-protocol/sdk';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+
+const signer = Ed25519Keypair.generate();           // ephemeral — persist the secret if you want to reuse it
+const me = signer.toSuiAddress();
+
+await requestSuiFromFaucetV2({ host: getFaucetHost('testnet'), recipient: me }).catch(() => {});
+console.log(`Fund this address, then re-run:\n  https://faucet.sui.io/?network=testnet&address=${me}`);
+
+const u = usufruct({ network: 'testnet', signer });  // ready once the address has SUI for gas
+```
+
+To **reuse** a funded address across runs, persist the secret key
+(`signer.getSecretKey()`) and rebuild with `Ed25519Keypair.fromSecretKey(...)`, or
+load the Sui CLI keystore — anything that yields a `Signer`/`Ed25519Keypair`.
+
+## 2. An asset and a coin — usufruct is doubly generic
+
+`Escrow<Asset, CoinType>` is **agnostic to both**: *any* `key + store` object can be
+listed, priced in *any* `Coin<C>`. The test defaults below are just zero-friction —
+the faucet hands out SUI, and the dummy asset/coin publish freely. **Neither is
+privileged.** If the dev owns a `key + store` object on testnet, list *that*; if they
+have their own coin, price in *that*.
+
+```ts
+import { SUI, coinTag } from '@usufruct-protocol/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+
+// Coin: SUI is the zero-friction default (the faucet funds it directly). For another
+// coin, resolve metadata on-chain (await u.coinType('0x…')) or build the tag synchronously.
+const DUMMY_COIN = coinTag({
+  type: '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96::dummy_coin::DUMMY_COIN',
+  decimals: 9, symbol: 'DUMMY',
+});
+
+// Asset: mint a free test asset to get an object id to list. Replace with any
+// key+store object the dev already owns.
+const DUMMY_ASSET_PKG = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a';
+async function mintTestAsset(client, signer): Promise<string> {
+  const tx = new Transaction();
+  tx.transferObjects([tx.moveCall({ target: `${DUMMY_ASSET_PKG}::dummy_asset::mint` })], me);
+  const res = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true } });
+  // the created DummyAsset's id is in the effects (the one object of type ::dummy_asset::DummyAsset)
+  return /* createdObjectId(res, '::dummy_asset::DummyAsset') */ '0x…';
+}
+```
+
+> **Price test escrows in `SUI`** when you can — the faucet funds it directly, so a
+> renter needs no extra step. Pricing in `DUMMY` (or any non-faucet coin) means the
+> renter must also hold that coin (the dummy coin has a public `mint`).
+
+## 3. Now you're ready
+
+With a funded `signer`, an `assetId`, and a `coin`, the rest is the
+[cookbook](./cookbook.md): `integrate` the asset → `rent` it → `borrow` to use it →
+`collect` earnings. The [api design](./api-design.md) is the model;
+[`API.md`](../API.md) is the full surface.
+
+```ts
+const { escrow } = await u.write.integrate({ asset: assetId, coin: SUI, market: { /* … */ } }).send();
+const cap = await escrow.write.rent({ tenures: 1 }).send();
+await cap.write.borrow((asset, tx) => { /* use the asset */ }).send();
+```
 
 
 <!-- ─────────── source: concepts/api-design.md ─────────── -->
@@ -1940,3 +2035,81 @@ const cap = await rentPlan.decode(res);
 > wait handover → borrow) need separate txs; reads are live and lazy (no fetch-time
 > photo). See [api design](./api-design.md), [write model](./write-model.md),
 > [borrow](./borrow.md), and the [API reference](../API.md).
+
+
+<!-- ─────────── source: concepts/faq.md ─────────── -->
+
+# FAQ — what the SDK does that intuition gets wrong
+
+> The questions where DeFi habits lead to a failing tx or a wrong assumption,
+> answered at the SDK level. For the deep protocol economics (escalation math,
+> descent, per-tenure normalization), see the protocol repo's guide:
+> <https://github.com/UsufructProtocol/usufruct-protocol-v1> → `llms.txt`.
+
+**How do I get a funded signer / an asset / a coin to test with?**
+See [testnet bootstrap](./testnet-bootstrap.md). Short version: ephemeral keypair →
+fund via the web faucet (the programmatic one is rate-limited) → re-run. Price test
+escrows in `SUI` so the faucet covers everything.
+
+**Why did my read not change after the tenure expired?**
+Usufruct is **lazy** — nothing settles until a transaction touches the escrow. Reads
+show *real chain state*, not a computed projection: after a tenure lapses but before
+anyone acts, `read.activeUsufructCapId()` still returns the sitting cap. Materialize
+the transition with `escrow.write.applyPendingTransitionStates().send()` (or any
+write). The time-parameterised views (`floorPrice(at)`, `accruedCredit(at)`) *do*
+compute at `t` — but object state only moves when a tx moves it.
+
+**Do I pay the floor once for N tenures?**
+No — the floor is **per tenure**. `rent({ tenures: N })` auto-sources `floor × N`, so
+let it. If you pass `pay` explicitly, send `floor × N` — sending one floor for `N > 1`
+underpays and aborts (`InsufficientPayment`). Read the live floor first
+(`await escrow.read.floorPrice()`) and derive with `Price` arithmetic (`.scale`/`.plus`).
+
+**Does renting an idle escrow pay an escalated price?**
+No. Escalation is **per-displacement**, not per-cycle — it only gates a bid that
+displaces a sitting tenant. Renting an `idle` (or `descent`) escrow pays the floor (or
+the current descending price), no escalation.
+
+**I rented but `borrow` won't run — why?**
+You probably challenged an **occupied** escrow, so your cap is `pending` (the
+challenger seat), not `active`. You get the seat only after the handover window —
+`borrow` can't run until then, and it's a separate transaction. Renting an **idle**
+escrow seats you `active` immediately. Check with `await cap.read.state()` → `.status`.
+
+**Why does `collect()` sometimes do more than one transaction?**
+An inbox is **coin-polymorphic**, so `collect` partitions messages by coin type and
+emits **one PTB per coin** — a mismatched `Receiving<T>` would abort inside
+`0x2::transfer::receive_impl`. You get back one `{ coin, amount }` per coin collected.
+
+**`inspect.*` throws — what's wrong?**
+`inspect.*` (history, discovery, ledgers) needs a **GraphQL** endpoint. It defaults
+from the network; you only see this if you passed `graphql: false`. `read`/`write`/
+`react` don't need it.
+
+**How do I price in my own coin (not SUI)?**
+The coin is fixed at `integrate` (a `phantom CoinType`, immutable). Build the tag with
+`await u.coinType('0x…')` (fetches decimals/symbol) or `coinTag({ type, decimals,
+symbol })` (synchronous), and pass it as `coin`. A governor's portfolio can hold
+escrows of different coins all paying one inbox.
+
+**Where did my cap/asset go after `rent`/`claim`/`integrate`?**
+To **you** (the sender) by default — the SDK appends the transfer. Pass `to` to send
+it elsewhere atomically: `rent({ …, to })`, `claim(escrow, { to })`,
+`integrate({ …, to: { governanceCap, earningsInbox } })`. The Move calls return the
+object by value; "it lands in my wallet" is the SDK's default, not protocol behaviour.
+
+**How is authority decided — is there a login/role?**
+No. Authority is **possession** of a bearer object (`key + store`). Holding the
+`GovernanceCap` makes you the governor; holding the `UsufructCap` makes you the
+usufructuary. `transfer` moves the object → moves the role. Ask the canonical views
+(`isRetired`, `cap.read.isActive()`, `u.inspect.governedBy(me)`), not a `role()`.
+
+**Can I do several writes in one transaction?**
+Independent writes: yes — `u.batch(a, b).send()` (one atomic tx) or `plan.build(tx,
+sender)` to drive the PTB yourself. **Dependent** writes (rent → wait the handover →
+borrow) need separate transactions — that's the protocol, not the SDK.
+
+**Should I trust a read I cached?**
+Reads are **live and lazy** — there's no fetch-time photo; each `read.*` hits the
+chain when called. For a coherent cross-section at one instant, take
+`escrow.read.snapshot()`. Don't hold a value across a write and assume it still holds.
