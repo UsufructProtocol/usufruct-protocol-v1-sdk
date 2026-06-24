@@ -20,6 +20,7 @@ below, concatenated inline). The links here are the curated map.
 - [Write model](./concepts/write-model.md): the `Plan` write seam — `send` vs `build`, `batch`, sponsored/multisig signing.
 - [Borrow](./concepts/borrow.md): composing code around the rented asset (the `Use` middle, the bracket, the by-value escape hatch).
 - [Primitives](./concepts/primitives.md): the kernel layer the high-level composes from, and when to drop down.
+- [Cookbook](./concepts/cookbook.md): complete, runnable recipes for the common tasks (rent, borrow, govern, collect, discover, batch).
 
 ## Design reference
 

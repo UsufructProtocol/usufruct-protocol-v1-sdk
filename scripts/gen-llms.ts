@@ -22,6 +22,7 @@ const SOURCES = [
   'concepts/borrow.md',
   'concepts/primitives.md',
   'API.md',
+  'concepts/cookbook.md',
 ];
 
 const PREAMBLE = `# Usufruct Protocol SDK — full context for AI agents
@@ -31,7 +32,8 @@ const PREAMBLE = `# Usufruct Protocol SDK — full context for AI agents
 > primitive for any Sui asset, priced in any payment coin. Load it into an agent's
 > context to write working Usufruct scripts. It concatenates, in reading order:
 > QUICKSTART, the four concept docs (api-design, write-model, borrow, primitives),
-> and the complete API reference. Cross-document links are relative to the repo.
+> the complete API reference, and a cookbook of runnable recipes. Cross-document
+> links are relative to the repo.
 
 ## Install & a canonical setup
 
