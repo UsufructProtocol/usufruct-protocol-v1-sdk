@@ -1,127 +1,69 @@
 # @usufruct-protocol/sdk
 
+[![npm](https://img.shields.io/npm/v/@usufruct-protocol/sdk/next?color=cb3837&logo=npm&label=npm%20%40next)](https://www.npmjs.com/package/@usufruct-protocol/sdk)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![npm](https://img.shields.io/npm/v/@usufruct-protocol/sdk.svg)](https://www.npmjs.com/package/@usufruct-protocol/sdk)
+[![Built for Sui](https://img.shields.io/badge/Built_for-Sui-6fbcf0)](https://sui.io)
 
-The **drift-zero core** of the TypeScript SDK for the **Usufruct Protocol** — an
-on-chain rental market primitive for any Sui asset, priced in any payment coin.
-Always-liquid, with handover protection, lazy state transitions, and composable
-with any Sui protocol.
-
-A governor wraps any owned object (`key + store`) into an **escrow** and sets the
-market. Usufructuaries pay to acquire the right of use, receiving a `UsufructCap`.
-A challenger can bid at any time; the current usufructuary is guaranteed a handover
-window before displacement. State transitions execute lazily on the next
-transaction that touches the escrow — no keeper, no cron.
-
-- Protocol: https://github.com/UsufructProtocol/usufruct-protocol-v1
-- Live on Sui **testnet** (`v1.4.7`), source-verified on-chain.
-
-## Drift-zero by construction
-
-This package **cannot drift from the contract**. It only ever (a) decodes BCS,
-(b) does IO through `Source`, (c) reads *effective* values through the on-chain
-`Reader` — which evaluates the deployed Move views via `simulateTransaction`, so
-every read is the bytecode's own answer — and (d) builds PTBs via `Action.toPtb`.
-It never re-derives the protocol's math in TypeScript.
-
-That's possible because `usufruct` exposes its **entire runtime** as ~124 pure,
-total, `&Clock`-free views. If you need to *re-derive* the protocol off-chain
-(forward simulation across time, what-if analysis, a fully-offline testbed), reach
-for the opt-in mirror [`@usufruct-protocol/sim`](https://www.npmjs.com/package/@usufruct-protocol/sim)
-— golden-tested against this core.
+The official TypeScript SDK for the **Usufruct Protocol** — an on-chain rental
+market primitive for **any Sui asset, priced in any payment coin**. Always-liquid,
+with handover protection, lazy state transitions, and composable with any Sui protocol.
 
 ## Install
 
 ```bash
-npm i @usufruct-protocol/sdk@next @mysten/sui   # release candidate, under the `next` tag
+npm i @usufruct-protocol/sdk@next @mysten/sui
 ```
 
-`@mysten/sui` (v2) is a peer you bring — the SDK is transport-agnostic over its
-clients (gRPC, JSON-RPC, GraphQL).
+> **Release candidate** — published under the `next` dist-tag, so the `@next` is
+> required (a bare `npm i` won't resolve a pre-release). The only runtime dependency
+> is `@mysten/sui`; install it explicitly too, since you'll import its types
+> (`Ed25519Keypair`, `Transaction`, …).
 
-## Quickstart
+## 60-second example
 
 ```ts
 import { usufruct } from '@usufruct-protocol/sdk';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-// Reads need no signer; writes do. `network` also picks the GraphQL endpoint that
-// powers `inspect.*` discovery/history — pass `graphql` only to override it.
-const u = usufruct({
-  network: 'testnet',
-  signer: Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!),
-});
-
-const escrow = await u.nav.escrow('0x…');       // resolve the handle (identity only)
-const s = await escrow.read.assetState();       // live: a discriminated union
-s.kind;              // 'idle' | 'descent' | 'occupied' | 'demand' | 'retired'
-await escrow.read.floorPrice();                 // a Price, rendered in the escrow's own coin
-(await u.inspect.governedBy(myAddr)).some(l => l.escrowId === escrow.id); // do I govern it?
+const u = usufruct({ network: 'testnet', signer });           // signer = your keypair
+const escrow = await u.nav.escrow('0x…');
+const cap = await escrow.write.rent({ tenures: 1 }).send();   // → a UsufructCap
+await cap.write.borrow((asset, tx) => { /* use the asset, mid-PTB */ }).send();
 ```
 
-## Identity + five verbs
+## What you can build
 
-Every object is its **identity** (the object's name — `escrow.id`, `cap.escrowId`,
-`inbox.inboxId`) plus five verbs. Every verb is **object-centric** (ask the object,
-it answers) and **decode-free** (no asset schema needed). The shape is **fractal** —
-the same five sit on the root `u` and on every handle.
+- **Rent the *use* of any asset** — NFTs, game items, capabilities, RWAs: any
+  `key + store` object, priced in any `Coin<C>`.
+- **A tradable right of use** — the `UsufructCap` is a bearer object: sell it, lend
+  it, route it. Possession is the role.
+- **Compose with all of Sui** — `borrow` hands you the asset mid-PTB to feed into any
+  Move call (staking, AMMs, games), with a guaranteed return.
 
-| Verb | What | Delivery | Example |
-|---|---|---|---|
-| **nav** | walk to a related object | the object graph | `escrow.nav.activeCap()`, `u.nav.escrow(id)` |
-| **read** | the chain *as it is now* | `simulateTransaction` | `escrow.read.assetState()`, `inbox.read.balance()` |
-| **inspect** | what *happened* | pull (GraphQL) | `escrow.inspect.history()`, `u.inspect.governedBy(addr)` |
-| **react** | what *happens* | push (gRPC) | `escrow.react.watch/on`, `escrow.react.waitFor/next` |
-| **write** | make it *different* | a transaction | `escrow.write.rent()`, `gov.write.updateMarket()`, `inbox.write.collect()` |
+## The shape, in one breath
 
-```ts
-// NAV — edges between objects (each is IO, so awaited); the root opens the first handle
-const escrow = await u.nav.escrow(id);
-const seat   = await escrow.nav.activeCap();        // the current seat, or null
+Every object is its **identity** plus five verbs — **`nav · read · inspect · react ·
+write`** — identical on the root `u` and on every handle (`Escrow` / `UsufructCap` /
+`GovernanceCap` / inboxes). Reads are **drift-zero** (the deployed Move views, live).
+Writes are **`Plan`s**: `.send()` runs build + sign + decode; `.build(tx, sender)` lets
+you drive the PTB.
 
-// READ — the deployed views, live & coin-rendered (no fetch-time photo, nothing stale)
-await escrow.read.market();                         // the full policy
-await escrow.read.creditCurve();                    // the current tenure's curve, sampled live
-// raw kernel reader (un-rendered) lives at the root escape hatch, not on the handle:
-await u.primitives.reader({ packageId, escrowId: escrow.id, typeArguments: [escrow.assetType, escrow.coinType] }).accruedCreditMist(Date.now());
+## Docs
 
-// WRITE — each write lives on the object that authorizes it; authority is possession
-await escrow.write.rent({ tenures: 1 }).send();     // pay the floor (`pay` to overpay → stake)
-await gov.write.updateMarket(escrow, { restPrice: escrow.coin(0.02) }).send();
-await inbox.write.collect().send();                 // 90% governor cut, partitioned by coin
-await gov.write.transfer(treasury).send();          // move the object → move the role
+- [QUICKSTART](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/blob/main/QUICKSTART.md) — install → a full rental lifecycle, step by step.
+- [API reference](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/blob/main/API.md) — the complete public surface (every handle, verb, signature).
+- [Concepts](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/tree/main/concepts) — api-design · write-model · borrow · primitives · cookbook · faq.
+- [SPEC](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/blob/main/SPEC.md) · [ARCHITECTURE](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/blob/main/ARCHITECTURE.md) — the drift-zero design.
+- **AI agents:** [`llms-full.txt`](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk/blob/main/llms-full.txt) — a self-contained payload; load it and an agent writes working scripts without learning the API by hand.
 
-// INSPECT — pull the typed event log, decode-free
-await u.inspect.governedBy(u.address!);             // escrows whose GovernanceCap I hold
-await escrow.inspect.history();                     // one escrow's lifecycle, time-ordered
+## Two packages, one drift-zero seam
 
-// REACT — server-push over the gRPC checkpoint firehose
-const stop = escrow.react.watch(e => render(e));    // every on-chain change → fresh handle
-await escrow.react.next('BidPlaced', { timeoutMs: 120_000 });  // one-shot typed event
-```
+This is the **drift-zero core** — decode + `Source` IO + the on-chain `Reader`
+(evaluates the deployed Move views via `simulateTransaction`) + `Action.toPtb`. The
+high-level API lives here and reads through the `Reader`, so it **cannot drift** from
+the contract. The opt-in mirror **`@usufruct-protocol/sim`** (off-chain re-derivation
+for simulation/what-if) is a separate package, golden-tested against this core.
 
-### Genesis — list an asset
-
-```ts
-const { escrow, governanceCap, earningsInbox } = await u.write.integrate({
-  asset: '0x…',                              // an owned object id (key + store)
-  coin: await u.coinType('0x2::sui::SUI'),   // immutable payment coin (decimals from chain)
-  market: { /* floor, rest price, handover window, curve … */ },
-});
-```
-
-`integrate` mints three **independent** bearer objects — the escrow, the
-`GovernanceCap`, and the `EarningsInbox` — all initially yours and transferable
-apart. Moving any of them moves the role it carries.
-
-## Design & reference
-
-See the [repository](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk):
-`API.md` (the complete surface), `concepts/` (the [api design](../../concepts/api-design.md) —
-drift-zero · object-centric · navigable · `nav · read · inspect · react · write`),
-`SPEC.md` (authoritative design), and `ARCHITECTURE.md` (the drift-zero core / mirror
-seam and the four primitives). `llms-full.txt` is the self-contained payload for AI agents.
+Live on Sui **testnet** (`v1.4.7`), source-verified on-chain.
 
 ## License
 
