@@ -3,6 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@usufruct-protocol/sdk/next?color=cb3837&logo=npm&label=npm%20%40next)](https://www.npmjs.com/package/@usufruct-protocol/sdk)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Built for Sui](https://img.shields.io/badge/Built_for-Sui-6fbcf0)](https://sui.io)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/aQpBtnE6v)
 
 **`@usufruct-protocol/sdk`** — the official TypeScript SDK for the **Usufruct
 Protocol**, an on-chain rental market primitive for **any Sui asset, priced in any
@@ -128,3 +129,9 @@ This is the **drift-zero core** — decode + `Source` IO + the on-chain `Reader`
 high-level API lives here and reads through the `Reader`, so it **cannot drift** from
 the contract. The opt-in mirror **`@usufruct-protocol/sim`** (off-chain re-derivation
 for simulation/what-if) is a separate package, golden-tested against this core.
+
+## Community
+
+Questions, ideas, or shipping something on Usufruct? Join the
+[**Discord**](https://discord.com/invite/aQpBtnE6v) — the **#sdk** channel is where
+the SDK ships: releases, examples, and direct support.
